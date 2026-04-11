@@ -18,6 +18,8 @@ module core_top #(
     // 外部配置接口
     input  logic                                start,        // 启动一次计算
     input  logic [3:0]                          kernel_size,  // 卷积核大小 (如 9)
+    input  logic [3:0]                          kernel_dim,   // 卷积核边长 (如 3)
+    input  logic [15:0]                         image_width,  // 图像宽度
     input  logic [7:0]                          num_pixels,   // 一批次计算像素数 (如 32)
     
     // 外部SRAM写入接口 (用于测试加载)
@@ -147,6 +149,8 @@ module core_top #(
         .rst_n          (rst_n),
         .start          (start),
         .kernel_size    (kernel_size),
+        .kernel_dim     (kernel_dim),
+        .image_width    (image_width),
         .num_pixels     (num_pixels),
         
         .wb_re          (wb_re),

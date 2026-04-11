@@ -44,9 +44,14 @@ module arf_buffer #(
         end
     end
     
-    // ARF读取逻辑 (组合逻辑送出)
+    // ARF读取逻辑 (组合逻辑送出，支持写入当拍的前馈 Bypass)
     always_comb begin
-        act_out_vec = arf_ram[arf_read_addr];
+        if (arf_flush_en && (arf_flush_addr == arf_read_addr)) begin
+            // 当流水线中“读SRAM、写ARF、并同时计算”在同一个周期发生时，直接把数据前馈给 MAC
+            act_out_vec = arf_flush_data;
+        end else begin
+            act_out_vec = arf_ram[arf_read_addr];
+        end
     end
 
 endmodule

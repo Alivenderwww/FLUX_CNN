@@ -13,7 +13,9 @@ module core_ctrl #(
     
     // 配置信号 (从顶层控制)
     input  logic                                start,        // 启动计算信号
-    input  logic [3:0]                          kernel_size,  // 卷积核大小 (如 3x3=9)
+    input  logic [3:0]                          kernel_size,  // 卷积核大小总和 (如 3x3=9)
+    input  logic [3:0]                          kernel_dim,   // 卷积核边长 (如 3)
+    input  logic [15:0]                         image_width,  // 图像宽度 (用于计算换行偏移)
     input  logic [7:0]                          num_pixels,   // 连续计算像素数 (通常等于 PARF_DEPTH)
     
     // SRAM 控制接口
@@ -48,66 +50,66 @@ module core_ctrl #(
     // 1. 状态机定义
     //=============================================================================
     typedef enum logic [2:0] {
-        IDLE,           // 等待开始
-        LOAD_WEIGHTS,   // 将所有 3x3 权重从 WB 搬运到 WRF (9 个周期)
-        FLUSH_ARF,      // 换行刷新，从 IFB 读取首批 32 个像素 (32 个周期)
-        COMPUTE_TILE    // 计算基础块，固定权重算 32 像素，切换权重算 9 轮
+        IDLE,                // 等待开始
+        LOAD_WEIGHTS,        // 搬运所有权重到WRF
+        PRE_READ_ROW,        // 发起首个SRAM像素读取 (1周期读延迟预取)
+        COMPUTE_ROW_NEW,     // 换行首次读取(32周期流水线：发读->收写ARF+算)
+        PRE_SHIFT,           // 权轴滑动，发起移位补充读取 (1周期预取)
+        SHIFT_WAIT,          // 接收SRAM数据，触发ARF整体移位 (1周期等待)
+        COMPUTE_ROW_SHIFTED  // 已补充完1像素，纯计算当前ARF中的32个像素
     } state_t;
     
     state_t current_state, next_state;
     
-    // 状态寄存器
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            current_state <= IDLE;
-        end else begin
-            current_state <= next_state;
-        end
+        if (!rst_n) current_state <= IDLE;
+        else current_state <= next_state;
     end
 
     //=============================================================================
     // 2. 内部计数器
     //=============================================================================
-    logic [3:0]  weight_cnt;      // 记录已加载/计算的权重位置 (0~8)
-    logic [7:0]  pixel_cnt;       // 记录已读取/计算的像素数 (0~31)
+    logic [3:0]  weight_cnt; // 全局权重索引 (0~kernel_size-1)
+    logic [3:0]  kx, ky;     // 二维权重坐标 (0~kernel_dim-1)
+    logic [7:0]  pixel_cnt;  // 当前计算/读取的像素索引 (0~num_pixels-1)
     
-    // 计数器逻辑
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             weight_cnt <= '0;
+            kx <= '0;
+            ky <= '0;
             pixel_cnt  <= '0;
         end else begin
             case (current_state)
                 IDLE: begin
                     weight_cnt <= '0;
+                    kx <= '0;
+                    ky <= '0;
                     pixel_cnt  <= '0;
                 end
                 
                 LOAD_WEIGHTS: begin
-                    // 每个周期加载一个位置的权重
-                    if (weight_cnt == kernel_size - 1) begin
-                        weight_cnt <= '0;
-                    end else begin
-                        weight_cnt <= weight_cnt + 1'b1;
-                    end
+                    if (weight_cnt == kernel_size - 1) weight_cnt <= '0; // 算前重置
+                    else weight_cnt <= weight_cnt + 1'b1;
                 end
                 
-                FLUSH_ARF: begin
-                    // 从IFB读取32个像素
+                COMPUTE_ROW_NEW, COMPUTE_ROW_SHIFTED: begin
+                    // 在计算周期的每一个节拍累加pixel_cnt
                     if (pixel_cnt == num_pixels - 1) begin
                         pixel_cnt <= '0;
-                    end else begin
-                        pixel_cnt <= pixel_cnt + 1'b1;
-                    end
-                end
-                
-                COMPUTE_TILE: begin
-                    // 嵌套循环：外层权重(0~8)，内层像素(0~31)
-                    if (pixel_cnt == num_pixels - 1) begin
-                        pixel_cnt <= '0;
-                        if (weight_cnt == kernel_size - 1) begin
-                            weight_cnt <= '0;
+                        
+                        // 32 个像素算完，切权重
+                        if (kx == kernel_dim - 1) begin
+                            kx <= '0;
+                            if (ky == kernel_dim - 1) begin
+                                ky <= '0;
+                                weight_cnt <= '0; // 所有权重循环结束
+                            end else begin
+                                ky <= ky + 1'b1;  // 换权重行
+                                weight_cnt <= weight_cnt + 1'b1;
+                            end
                         end else begin
+                            kx <= kx + 1'b1;      // 同行切换权重
                             weight_cnt <= weight_cnt + 1'b1;
                         end
                     end else begin
@@ -115,45 +117,70 @@ module core_ctrl #(
                     end
                 end
                 
-                default: begin
-                    weight_cnt <= '0;
-                    pixel_cnt  <= '0;
-                end
+                // 其他状态保持计数器不变
+                default: ; 
             endcase
         end
     end
 
     //=============================================================================
-    // 3. 状态转移组合逻辑
+    // 2.5 写权重延迟寄存器 (匹配SRAM的1拍读延迟)
+    //=============================================================================
+    logic [63:0]                         wrf_we_d1;
+    logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr_d1;
+    
+    always_ff @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            wrf_we_d1    <= '0;
+            wrf_waddr_d1 <= '0;
+        end else begin
+            if (current_state == LOAD_WEIGHTS) begin
+                wrf_we_d1    <= '1;
+                wrf_waddr_d1 <= weight_cnt;
+            end else begin
+                wrf_we_d1    <= '0;
+                wrf_waddr_d1 <= '0;
+            end
+        end
+    end
     //=============================================================================
     always_comb begin
-        next_state = current_state; // 默认保持当前状态
+        next_state = current_state; 
         
         case (current_state)
             IDLE: begin
-                if (start) begin
-                    next_state = LOAD_WEIGHTS;
-                end
+                if (start) next_state = LOAD_WEIGHTS;
             end
             
             LOAD_WEIGHTS: begin
-                // 如果权重加载完成，进入刷新ARF阶段
-                if (weight_cnt == kernel_size - 1) begin
-                    next_state = FLUSH_ARF;
-                end
+                if (weight_cnt == kernel_size - 1) next_state = PRE_READ_ROW;
             end
             
-            FLUSH_ARF: begin
-                // 如果初次32个像素读取完成，进入计算
+            PRE_READ_ROW: begin
+                next_state = COMPUTE_ROW_NEW; // 预取完1周期直接进入计算流水
+            end
+            
+            COMPUTE_ROW_NEW: begin
                 if (pixel_cnt == num_pixels - 1) begin
-                    next_state = COMPUTE_TILE;
+                    if (kx == kernel_dim - 1 && ky == kernel_dim - 1) next_state = IDLE;
+                    else if (kx == kernel_dim - 1) next_state = PRE_READ_ROW; // ky变了，换行重读
+                    else next_state = PRE_SHIFT;                              // ky没变，同行移位
                 end
             end
             
-            COMPUTE_TILE: begin
-                // 32 像素 x 9 个位置计算完成，回到IDLE
-                if ((pixel_cnt == num_pixels - 1) && (weight_cnt == kernel_size - 1)) begin
-                    next_state = IDLE;
+            PRE_SHIFT: begin
+                next_state = SHIFT_WAIT; // 发完读地址等一拍数据
+            end
+            
+            SHIFT_WAIT: begin
+                next_state = COMPUTE_ROW_SHIFTED; // 收到数据并移位后，进行纯算
+            end
+            
+            COMPUTE_ROW_SHIFTED: begin
+                if (pixel_cnt == num_pixels - 1) begin
+                    if (kx == kernel_dim - 1 && ky == kernel_dim - 1) next_state = IDLE;
+                    else if (kx == kernel_dim - 1) next_state = PRE_READ_ROW; // 换行
+                    else next_state = PRE_SHIFT;                              // 移位
                 end
             end
             
@@ -165,79 +192,92 @@ module core_ctrl #(
     // 4. 控制信号输出逻辑
     //=============================================================================
     always_comb begin
-        // 默认初始化所有输出信号
+        // 默认初始化
         wb_re          = 1'b0;
         wb_raddr       = '0;
-        
         ifb_re         = 1'b0;
         ifb_raddr      = '0;
-        
-        wrf_we         = '0;
-        wrf_waddr      = '0;
-        
+        wrf_we         = wrf_we_d1;    // 延迟1拍写入
+        wrf_waddr      = wrf_waddr_d1; // 延迟1拍地址
         arf_shift_en   = 1'b0;
         arf_flush_en   = 1'b0;
         arf_flush_addr = '0;
         arf_read_addr  = '0;
-        
         compute_en     = 1'b0;
         wrf_raddr      = '0;
         parf_addr      = '0;
         parf_clear     = 1'b0;
         parf_we        = 1'b0;
-        
         done           = 1'b0;
 
         case (current_state)
             LOAD_WEIGHTS: begin
-                // 从 WB 读取，写入 WRF。全亮WE表示广播给所有PE
                 wb_re     = 1'b1;
                 wb_raddr  = weight_cnt;
-                wrf_we    = '1;
-                wrf_waddr = weight_cnt;
+                // wrf_we 和 wrf_waddr 在组合逻辑中被赋值为对应的 _d1 寄存器输出，以匹配 SRAM 延迟
             end
             
-            FLUSH_ARF: begin
-                // 从 IFB 读取初始 32 像素
-                ifb_re         = 1'b1;
-                // 假设输入特征从地址0开始连续存放
-                ifb_raddr      = pixel_cnt;
+            PRE_READ_ROW: begin
+                // 发出 ky 行第 0 个像素的读请求 (预取)
+                ifb_re    = 1'b1;
+                ifb_raddr = (ky * image_width);
+            end
+            
+            COMPUTE_ROW_NEW: begin
+                // 流水线设计: 发起对pixel_cnt+1的读请求，同时接收pixel_cnt的数据并计算
+                
+                // 1. 发起下一次读请求 (除非已经是最后一次读了)
+                if (pixel_cnt < num_pixels - 1) begin
+                    ifb_re    = 1'b1;
+                    ifb_raddr = (ky * image_width) + pixel_cnt + 1;
+                end
+                
+                // 2. 接收来自 SRAM 的数据并写入 ARF
                 arf_flush_en   = 1'b1;
                 arf_flush_addr = pixel_cnt;
-            end
-            
-            COMPUTE_TILE: begin
-                // 激活 MAC 计算
+                
+                // 3. 计算使能 (由于有 Bypass 逻辑，act_out_vec 当前拍就是 SRAM 数据)
                 compute_en    = 1'b1;
-                
-                // 1. 读取对应位置权重
                 wrf_raddr     = weight_cnt;
-                
-                // 2. ARF提供输入数据，按像素索引滑动
-                arf_read_addr = pixel_cnt;
-                
-                // 3. PARF累加地址 (对应当前计算的像素)
+                arf_read_addr = pixel_cnt; // 读刚写入的同地址，触发 Bypass
                 parf_addr     = pixel_cnt;
                 parf_we       = 1'b1;
                 
-                // 4. 当计算第0个权重(第一轮)时，PARF需要清零历史无用数据
-                if (weight_cnt == 0) begin
+                // 仅在第一个权重的计算轮次清空对应像素的历史 PARF
+                if (kx == 0 && ky == 0) begin
                     parf_clear = 1'b1;
-                end
-                
-                // 5. 数据复用：换行移位逻辑
-                // 如果当前像素达到末尾，且需要读取新的像素用于下一轮核位置滑动，
-                // 则触发ARF移位并从IFB读取1个新像素 (这里简化：仅供参考，不涉及复杂跨行)
-                if (pixel_cnt == num_pixels - 1) begin
-                    // TODO: 对于复杂的行间滑动，在此处启动 ifb_re 和 arf_shift_en
-                    // 此处保留给完整系统集成
                 end
             end
             
-            default: ; // IDLE state is covered by default assigns
+            PRE_SHIFT: begin
+                // 同行滑动，只发读最右边新窗口的 1 个像素的请求
+                ifb_re    = 1'b1;
+                ifb_raddr = (ky * image_width) + (num_pixels - 1) + kx;
+            end
+            
+            SHIFT_WAIT: begin
+                // 收到新像素，打入 ARF 末尾，全体左移 1 位
+                arf_shift_en = 1'b1;
+            end
+            
+            COMPUTE_ROW_SHIFTED: begin
+                // 纯计算状态，ARF已就绪
+                compute_en    = 1'b1;
+                wrf_raddr     = weight_cnt;
+                arf_read_addr = pixel_cnt;
+                parf_addr     = pixel_cnt;
+                parf_we       = 1'b1;
+                
+                // 后续权重均是在同行/同像素上做累加，不清空 PARF
+                parf_clear    = 1'b0;
+            end
+            
+            default: ; 
         endcase
         
-        if ((current_state == COMPUTE_TILE) && (pixel_cnt == num_pixels - 1) && (weight_cnt == kernel_size - 1)) begin
+        // 生成完成信号
+        if ((current_state == COMPUTE_ROW_NEW || current_state == COMPUTE_ROW_SHIFTED) && 
+            (pixel_cnt == num_pixels - 1) && (kx == kernel_dim - 1) && (ky == kernel_dim - 1)) begin
             done = 1'b1;
         end
     end

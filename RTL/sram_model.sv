@@ -25,12 +25,12 @@ module sram_model #(
         end
     end
     
-    // 同步读 (SRAM一般延迟1拍，为对齐当前无等待状态机改为组合逻辑)
-    always_comb begin
+    // 同步读 (修改为标准的1拍读延迟模型)
+    always_ff @(posedge clk) begin
         if (re) begin
-            rdata = mem[raddr];
+            rdata <= mem[raddr];
         end else begin
-            rdata = '0;
+            rdata <= '0;
         end
     end
 

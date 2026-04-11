@@ -3,3 +3,5 @@ sim/tb_core_top/modelsim.ini
 sim/tb_core_top/sim_results.txt
 sim/tb_core_top/transcript
 sim/tb_core_top/vsim.wlf
+sim/tb_core_top/*.txt
+work

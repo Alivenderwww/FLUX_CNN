@@ -1,0 +1,1 @@
+vsim -do tb_core_top.tcl

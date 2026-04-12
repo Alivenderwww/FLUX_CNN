@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 
-// 基础乘加单元 (Multiply-Accumulate Processing Element)
-// 包含一个乘法器和一个局部的权重寄存器堆 (WRF)
+// 核心乘加单元 (Multiply-Accumulate Processing Element)
+// 包含一个乘法器和一个局部权重寄存器堆 (WRF)
 module mac_pe #(
     parameter int DATA_WIDTH = 8,  // 输入数据和权重的位宽
     parameter int WRF_DEPTH  = 32  // 权重寄存器堆的深度
@@ -24,28 +24,29 @@ module mac_pe #(
 );
 
     // 权重寄存器堆 (Weight Register File)
-    logic signed [DATA_WIDTH-1:0] wrf [0:WRF_DEPTH-1];
+    logic [DATA_WIDTH-1:0] active_weight_us;
     
-    // 权重写入逻辑 (时序逻辑)
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int i = 0; i < WRF_DEPTH; i++) begin
-                wrf[i] <= '0;
-            end
-        end else if (wrf_we) begin
-            wrf[wrf_waddr] <= signed'(wrf_wdata);
-            $display("Time=%0t, PE written! waddr=%0d, wdata=%h", $time, wrf_waddr, wrf_wdata);
-        end
-    end
+    std_rf #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .DEPTH(WRF_DEPTH)
+    ) u_wrf (
+        .clk   (clk),
+        .rst_n (rst_n),
+        .we    (wrf_we),
+        .waddr (wrf_waddr),
+        .wdata (wrf_wdata),
+        .raddr (wrf_raddr),
+        .rdata (active_weight_us)
+    );
     
-    // 权重读取逻辑 (组合逻辑)
+    // 当前激活的权重 (用于计算)
     logic signed [DATA_WIDTH-1:0] active_weight;
     always_comb begin
-        active_weight = wrf[wrf_raddr];
+        active_weight = signed'(active_weight_us);
     end
     
     // 乘法器逻辑 (时序逻辑)
-    // 乘法结果打一拍，提高频率，将关键路径切断
+    // 乘法打一拍，减轻组合逻辑关键路径判断
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             prod_out <= '0;

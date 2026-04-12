@@ -1,7 +1,7 @@
-sim/tb_core_top/work
-sim/tb_core_top/modelsim.ini
-sim/tb_core_top/sim_results.txt
-sim/tb_core_top/transcript
-sim/tb_core_top/vsim.wlf
-sim/tb_core_top/*.txt
+sim/*/work
+sim/*/modelsim.ini
+sim/*/sim_results.txt
+sim/*/transcript
+sim/*/vsim.wlf
+sim/*/*.txt
 work

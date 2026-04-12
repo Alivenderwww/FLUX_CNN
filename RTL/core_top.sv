@@ -10,17 +10,19 @@ module core_top #(
     parameter int WRF_DEPTH   = 32,      // 权重RF深度
     parameter int ARF_DEPTH   = 32,      // 激活值RF深度
     parameter int PARF_DEPTH  = 32,      // PARF深度
-    parameter int SRAM_DEPTH  = 1024     // SRAM深度
+    parameter int SRAM_DEPTH  = 1024,    // SRAM深度
+    parameter int INST_DEPTH  = 1024     // 指令SRAM深度
 )(
     input  logic                                clk,
     input  logic                                rst_n,
     
     // 外部配置接口
     input  logic                                start,        // 启动一次计算
-    input  logic [3:0]                          kernel_size,  // 卷积核大小 (如 9)
-    input  logic [3:0]                          kernel_dim,   // 卷积核边长 (如 3)
-    input  logic [15:0]                         image_width,  // 图像宽度
-    input  logic [7:0]                          num_pixels,   // 一批次计算像素数 (如 32)
+    
+    // 指令SRAM写入接口 (用于加载程序)
+    input  logic                                inst_we_ext,
+    input  logic [$clog2(INST_DEPTH)-1:0]       inst_waddr_ext,
+    input  logic [63:0]                         inst_wdata_ext,
     
     // 外部SRAM写入接口 (用于测试加载)
     input  logic                                ifb_we_ext,
@@ -56,10 +58,27 @@ module core_top #(
     logic                                parf_we;
 
     //=============================================================================
-    // 2. SRAM 例化 (IFB & WB)
+    // 2. SRAM 例化 (INST_SRAM, IFB & WB)
     //=============================================================================
+    logic [63:0]  inst_rdata;
     logic [63:0]  ifb_rdata;
     logic [511:0] wb_rdata;
+    
+    logic                                inst_re;
+    logic [$clog2(INST_DEPTH)-1:0]       inst_raddr;
+
+    sram_model #(
+        .DEPTH(INST_DEPTH),
+        .DATA_WIDTH(64)
+    ) u_inst_sram (
+        .clk   (clk),
+        .we    (inst_we_ext),
+        .waddr (inst_waddr_ext),
+        .wdata (inst_wdata_ext),
+        .re    (inst_re),
+        .raddr (inst_raddr),
+        .rdata (inst_rdata)
+    );
     
     sram_model #(
         .DEPTH(SRAM_DEPTH),
@@ -143,15 +162,16 @@ module core_top #(
         .WRF_DEPTH(WRF_DEPTH),
         .ARF_DEPTH(ARF_DEPTH),
         .PARF_DEPTH(PARF_DEPTH),
-        .SRAM_DEPTH(SRAM_DEPTH)
+        .SRAM_DEPTH(SRAM_DEPTH),
+        .INST_DEPTH(INST_DEPTH)
     ) u_ctrl (
         .clk            (clk),
         .rst_n          (rst_n),
         .start          (start),
-        .kernel_size    (kernel_size),
-        .kernel_dim     (kernel_dim),
-        .image_width    (image_width),
-        .num_pixels     (num_pixels),
+        
+        .inst_re        (inst_re),
+        .inst_addr      (inst_raddr),
+        .inst_data      (core_isa_pkg::inst_t'(inst_rdata)),
         
         .wb_re          (wb_re),
         .wb_raddr       (wb_raddr),

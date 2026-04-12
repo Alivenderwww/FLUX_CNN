@@ -91,7 +91,7 @@ module mac_col #(
     //=============================================================================
     // 3. Psum累加与 PARF (Psum Adder RF)
     //=============================================================================
-    logic signed [PSUM_WIDTH-1:0] parf_ram [0:PARF_DEPTH-1];
+    logic [PSUM_WIDTH-1:0] parf_rdata;
     
     // 读地址和写地址保持一致 (就地累加)
     logic [$clog2(PARF_DEPTH)-1:0] parf_addr_d1, parf_addr_reg; // 延迟信号以对齐计算流水线
@@ -120,36 +120,41 @@ module mac_col #(
         end
     end
 
+    // 时间累加器声明
+    logic signed [PSUM_WIDTH-1:0] accum_out;
+
+    // 实例化标准RF作为PARF存储
+    std_rf #(
+        .DATA_WIDTH(PSUM_WIDTH),
+        .DEPTH(PARF_DEPTH)
+    ) u_parf (
+        .clk   (clk),
+        .rst_n (rst_n),
+        .we    (parf_we_reg),
+        .waddr (parf_addr_reg),
+        .wdata (accum_out),
+        .raddr (parf_addr_reg),
+        .rdata (parf_rdata)
+    );
+
     // 读取PARF旧值组合逻辑
     logic signed [PSUM_WIDTH-1:0] parf_old_val;
     always_comb begin
         if (parf_clear_reg) begin
             parf_old_val = '0; // 换层或通道块刷新时，历史值为0
         end else begin
-            parf_old_val = parf_ram[parf_addr_reg];
+            parf_old_val = signed'(parf_rdata);
         end
     end
     
     // 时间累加 (Temporal Accumulation)
-    logic signed [PSUM_WIDTH-1:0] accum_out;
     always_comb begin
         accum_out = parf_old_val + adder_tree_reg;
     end
     
-    // 写回 PARF 时序逻辑
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            for (int j = 0; j < PARF_DEPTH; j++) begin
-                parf_ram[j] <= '0;
-            end
-        end else if (parf_we_reg) begin
-            parf_ram[parf_addr_reg] <= accum_out;
-        end
-    end
-
     // 列输出 (直接连接最后计算结果或PARF特定地址)
     always_comb begin
-        psum_out = parf_ram[parf_addr_reg]; 
+        psum_out = signed'(parf_rdata); 
     end
 
 endmodule

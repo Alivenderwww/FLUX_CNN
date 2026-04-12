@@ -54,4 +54,24 @@ module arf_buffer #(
         end
     end
 
+    // synthesis translate_off
+    int flush_cnt = 0;
+    int shift_cnt = 0;
+    always_ff @(posedge clk) begin
+        if (rst_n && arf_flush_en) begin
+            if (flush_cnt < 3) begin
+                $display("Time=%0t, %m flushed! addr=%0d, data=%x", $time, arf_flush_addr, arf_flush_data);
+                flush_cnt++;
+                if (flush_cnt == 3) $display("%m: ... (Further flush messages suppressed)");
+            end
+        end else if (rst_n && arf_shift_en) begin
+            if (shift_cnt < 3) begin
+                $display("Time=%0t, %m shifted! new_pixel=%x", $time, new_pixel_in);
+                shift_cnt++;
+                if (shift_cnt == 3) $display("%m: ... (Further shift messages suppressed)");
+            end
+        end
+    end
+    // synthesis translate_on
+
 endmodule

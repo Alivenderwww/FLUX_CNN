@@ -1,0 +1,11 @@
++incdir+../../RTL
+../../RTL/core_isa_pkg.sv
+../../RTL/std_rf.sv
+../../RTL/arf_buffer.sv
+../../RTL/core_ctrl.sv
+../../RTL/core_top.sv
+../../RTL/mac_array.sv
+../../RTL/mac_col.sv
+../../RTL/mac_pe.sv
+../../RTL/sram_model.sv
+tb_core_isa.sv

@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.1 (win64) Build 3865809 Sun May  7 15:05:29 MDT 2023
+| Date         : Mon Apr 13 14:56:19 2026
+| Host         : DESKTOP-73784OM running 64-bit major release  (build 9200)
+| Command      : report_utilization -file C:/_Project/CNN_Acc/opencode_CNN/Syn/reports/utilization_synth.rpt -hierarchical -hierarchical_depth 4
+| Design       : core_top
+| Device       : xcku060-ffva1156-2-e
+| Speed File   : -2
+| Design State : Synthesized
+-------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| Instance | Module | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++----------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| core_top |  (top) |      17612 |      17612 |       0 |    0 | 28334 |    156 |      3 |    0 |          0 |
++----------+--------+------------+------------+---------+------+-------+--------+--------+------+------------+
+
+

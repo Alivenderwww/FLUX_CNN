@@ -6,7 +6,14 @@ sim/*/vsim.wlf
 sim/*/vsim_run.wlf
 sim/*/*.txt
 sim/*/wlft*
+sim/*/__pycache__/
 work
+
+# Vivado synthesis artifacts (keep scripts and reports, ignore runtime files)
+Syn/*.log
+Syn/*.backup.log
+Syn/*.jou
+Syn/syn_run*.log
 
 # 根目录下误生成的仿真数据文件（应在 sim/tb_core_isa/ 下运行 Python 脚本）
 /ifb.txt

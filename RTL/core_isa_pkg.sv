@@ -13,8 +13,18 @@ package core_isa_pkg;
         OP_ST_OFM    = 4'd4,  // Store Output Feature Map from PARF to Outmap Buffer
         OP_MAC_RUN   = 4'd5,  // Execute MAC Pipeline
         OP_LD1MAC    = 4'd6,  // Load 1 pixel to ARF[ld_arf_addr] AND run MAC simultaneously (kx-switch optimization)
-        OP_LD32MAC   = 4'd7   // Load N pixels from IFB into ARF AND run MAC simultaneously (initial-load optimization)
+        OP_LD32MAC   = 4'd7,  // Load N pixels from IFB into ARF AND run MAC simultaneously (initial-load optimization)
                               // State runs length+1 cycles: cycle 0 = IFB prefetch, cycles 1..length = load+MAC overlap
+
+        // ---- Scalar Control Flow Instructions (resolved in DECODE, zero execution cycles) ----
+        // Register convention: r0=IFB base offset, r1=OFB base offset, r2-r7 general purpose
+        // Field reuse: arf_addr[2:0]=rd/rs  wgt_rf_addr[2:0]=rs1  parf_addr[2:0]=rs2
+        //              length[15:0]=imm16   sram_addr[14:0]=jump target PC
+        //              clr_parf=alu_op(0=add/1=sub)  sdp_en=use_imm(0=reg/1=imm)
+        OP_LI        = 4'd8,  // Load Immediate:     scalar_rf[rd] <- imm16
+        OP_ALU       = 4'd9,  // Scalar ALU:         rd <- rs1 +/- rs2  or  rd <- rs1 +/- imm16
+        OP_JMP       = 4'd10, // Unconditional Jump: PC <- target_pc (in sram_addr field)
+        OP_BNZ       = 4'd11  // Branch if Not Zero: if rs!=0: rs--, PC<-target_pc
     } opcode_e;
 
     // --- 2. Instruction Format (64-bit) ---

@@ -87,6 +87,12 @@ module core_ctrl #(
     logic [$clog2(SRAM_DEPTH)-1:0] ofb_waddr_d1, ofb_waddr_d2;
     logic                          sdp_en_d1, sdp_en_d2;
     
+    // 标量寄存器文件 (8 x 16-bit)
+    // r0 = IFB 基址偏移（自动叠加到所有 IFB 读地址）
+    // r1 = OFB 基址偏移（自动叠加到所有 OFB 写地址）
+    // r2-r7 = 通用（循环计数器、临时变量等）
+    logic [15:0]                   scalar_rf [0:7];
+    
     //=============================================================================
     // 3. 时序逻辑更新
     //=============================================================================
@@ -108,6 +114,7 @@ module core_ctrl #(
             ofb_waddr_d2      <= '0;
             sdp_en_d1         <= '0;
             sdp_en_d2         <= '0;
+            for (int i = 0; i < 8; i++) scalar_rf[i] <= '0;
         end else begin
             current_state <= next_state;
             
@@ -139,7 +146,7 @@ module core_ctrl #(
             // 写入 OFB 时的 2 拍延迟同步 (从发送 parf_addr 到 psum_out_vec 可用需要 2 拍)
             if (current_state == EXEC_ST_OFM && cnt < inst_reg.length) begin
                 ofb_we_d1    <= 1'b1;
-                ofb_waddr_d1 <= inst_reg.sram_addr + cnt[14:0];
+                ofb_waddr_d1 <= scalar_rf[1][14:0] + inst_reg.sram_addr + cnt[14:0];  // r1 = OFB 基址偏移
                 sdp_en_d1    <= inst_reg.sdp_en;
             end else begin
                 ofb_we_d1    <= 1'b0;
@@ -164,10 +171,52 @@ module core_ctrl #(
                 DECODE: begin
                     inst_reg <= inst_data; // 锁存指令
                     cnt      <= '0;
-                    // 如果是 OP_NOP，我们在 DECODE 里就增加 PC，状态机自己会跳回 FETCH
-                    if (inst_data.opcode == OP_NOP) begin
-                        pc <= pc + 1'b1;
-                    end
+                    // DECODE 内直接完成的指令：NOP、标量运算、跳转
+                    case (inst_data.opcode)
+                        OP_NOP: begin
+                            pc <= pc + 1'b1;
+                        end
+
+                        OP_LI: begin
+                            // scalar_rf[rd] <- imm16（rd 在 arf_addr[2:0]，imm16 在 length 字段）
+                            scalar_rf[inst_data.arf_addr[2:0]] <= inst_data.length;
+                            pc <= pc + 1'b1;
+                        end
+
+                        OP_ALU: begin
+                            // clr_parf=0: 加法；clr_parf=1: 减法
+                            // sdp_en=0: 寄存器模式；sdp_en=1: 立即数模式（imm16 在 length 字段）
+                            if (!inst_data.sdp_en) begin  // 寄存器模式: rd <- rs1 op rs2
+                                scalar_rf[inst_data.arf_addr[2:0]] <= !inst_data.clr_parf
+                                    ? (scalar_rf[inst_data.wgt_rf_addr[2:0]] + scalar_rf[inst_data.parf_addr[2:0]])
+                                    : (scalar_rf[inst_data.wgt_rf_addr[2:0]] - scalar_rf[inst_data.parf_addr[2:0]]);
+                            end else begin                 // 立即数模式: rd <- rs1 op imm16
+                                scalar_rf[inst_data.arf_addr[2:0]] <= !inst_data.clr_parf
+                                    ? (scalar_rf[inst_data.wgt_rf_addr[2:0]] + inst_data.length)
+                                    : (scalar_rf[inst_data.wgt_rf_addr[2:0]] - inst_data.length);
+                            end
+                            pc <= pc + 1'b1;
+                        end
+
+                        OP_JMP: begin
+                            // 无条件跳转：PC <- target_pc（target 在 sram_addr 字段）
+                            pc <= inst_data.sram_addr[$clog2(INST_DEPTH)-1:0];
+                        end
+
+                        OP_BNZ: begin
+                            // 递减并按需跳转PC：rs 在 arf_addr[2:0]，target 在 sram_addr
+                            if (scalar_rf[inst_data.arf_addr[2:0]] != '0) begin
+                                scalar_rf[inst_data.arf_addr[2:0]] <= scalar_rf[inst_data.arf_addr[2:0]] - 1'b1;
+                                pc <= inst_data.sram_addr[$clog2(INST_DEPTH)-1:0];
+                            end else begin
+                                pc <= pc + 1'b1;
+                            end
+                        end
+
+                        default: begin
+                            // 其他 opcode 进 EXEC 状态，pc 由 EXEC 退出时更新
+                        end
+                    endcase
                 end
                 
                 EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM, EXEC_LD1MAC: begin
@@ -223,7 +272,12 @@ module core_ctrl #(
                     OP_ST_OFM:    next_state = EXEC_ST_OFM;
                     OP_LD1MAC:    next_state = EXEC_LD1MAC;
                     OP_LD32MAC:   next_state = EXEC_LD32MAC;
-                    // 如果遇到未定义的 opcode 或者结束指令标志，视为结束
+                    // 标量指令全部在 DECODE 内完成，直接回 FETCH
+                    OP_LI,
+                    OP_ALU,
+                    OP_JMP,
+                    OP_BNZ:       next_state = FETCH;
+                    // 其他（包括 OP_FINISH）进 FINISH
                     default:      next_state = FINISH;
                 endcase
             end
@@ -295,10 +349,10 @@ module core_ctrl #(
             end
             
             EXEC_LD_ARF: begin
-                // 发起 IFB 读请求
+                // 发起 IFB 读请求（r0 为 IFB 基址偏移）
                 if (cnt < inst_reg.length) begin
                     ifb_re    = 1'b1;
-                    ifb_raddr = inst_reg.sram_addr + cnt[14:0];
+                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + cnt[14:0];
                 end
             end
             
@@ -327,7 +381,7 @@ module core_ctrl #(
                 // 仅在第 0 拍发起 IFB 单像素读（d1 流水线负责 ARF 实际写入）
                 if (cnt == 0) begin
                     ifb_re    = 1'b1;
-                    ifb_raddr = inst_reg.sram_addr;
+                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr;
                 end
 
                 // MAC 全程运行（与上面的 IFB 读并行）
@@ -347,10 +401,10 @@ module core_ctrl #(
                 //   - bypass MUX（core_top）检测写读地址相同时直接前向传给 MAC
                 //   - MAC 读 arf_read_addr=arf_addr+(cnt-1)，得到 pixel[cnt-1] ✓
 
-                // IFB 连续读（cnt=0..length-1）
+                // IFB 连续读（cnt=0..length-1）（r0 为 IFB 基址偏移）
                 if (cnt < inst_reg.length) begin
                     ifb_re    = 1'b1;
-                    ifb_raddr = inst_reg.sram_addr + cnt[14:0];
+                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + cnt[14:0];
                 end
 
                 // MAC 从 cnt=1 开始运行（pixel[0] 在 cnt=1 的 d1 写入时才可用）

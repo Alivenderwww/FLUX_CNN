@@ -1,7 +1,7 @@
 vlib work
 vmap work work
 vlog -sv -work work -mfcu -incr -suppress 2902 -f sim_file_list.f
-vsim -suppress 3486,3680,3781 -voptargs="+acc" +nowarn1 -c -sva -wlf vsim_run.wlf -L work work.tb_core_isa
+vsim -suppress 3486,3680,3781 -voptargs="+acc" +nowarn1 -c -sva -wlf vsim_run.wlf -f sim_params.f -L work work.tb_core_isa
 add wave -position insertpoint sim:/tb_core_isa/u_core_top/clk
 add wave -position insertpoint sim:/tb_core_isa/u_core_top/rst_n
 add wave -position insertpoint sim:/tb_core_isa/u_core_top/start

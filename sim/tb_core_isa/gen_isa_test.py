@@ -2,11 +2,12 @@
 gen_isa_test.py -- CNN Accelerator ISA Test Generator
 
 Usage:
-  python gen_isa_test.py [--h_in H] [--w_in W] [--k K]
-                         [--num_cin C] [--num_cout N] [--tile_w T] [--seed S]
+  python gen_isa_test.py [--h_in H] [--w_in W] [--k K] [--stride S]
+                         [--num_cin C] [--num_cout N] [--tile_w T] [--seed SD]
+                         [--shift SH]
 
-  H_OUT = H_IN - K + 1  (padding=0, stride=1)
-  W_OUT = W_IN - K + 1
+  H_OUT = (H_IN - K) // stride + 1  (padding=0)
+  W_OUT = (W_IN - K) // stride + 1
 
 Weight scheduling:
   WRF_DEPTH = 32 (hardware fixed, 5-bit wgt_rf_addr).
@@ -17,6 +18,13 @@ Weight scheduling:
     loop body at each round boundary (weight-reload / weight-streaming).
   ARF state carries over between rounds: the sliding-window ARF is not reset
   by LD_WGT, so mid-row round transitions work correctly.
+
+Stride handling:
+  stride=1: LD32MAC (kx=0) + LD1MAC sliding-window optimisation (no change).
+  stride>1: every (ky,kx) uses LD32MAC with inst.stride field set to stride.
+            HW computes ifb_raddr = r0 + sram_addr + cnt * stride.
+            LD1MAC is not used because the sliding-window shortcut only works
+            when consecutive output pixels share all but one input column.
 """
 import argparse
 import sys
@@ -45,7 +53,7 @@ WRF_DEPTH = 32   # Hardware fixed: 5-bit wgt_rf_addr field (max address = 31)
 # Instruction packing helpers
 # ---------------------------------------------------------------------------
 def pack_inst(opcode, clr_parf=0, sdp_en=0, arf_addr=0, wgt_addr=0,
-              parf_addr=0, sram_addr=0, length=0, ld_arf_addr=0):
+              parf_addr=0, sram_addr=0, length=0, stride=0, ld_arf_addr=0):
     inst  = (opcode      & 0xF)    << 60
     inst |= (clr_parf    & 0x1)    << 59
     inst |= (sdp_en      & 0x1)    << 58
@@ -54,6 +62,8 @@ def pack_inst(opcode, clr_parf=0, sdp_en=0, arf_addr=0, wgt_addr=0,
     inst |= (parf_addr   & 0x1F)   << 43
     inst |= (sram_addr   & 0x7FFF) << 28
     inst |= (length      & 0xFFFF) << 12
+    # [11:8] reserved = 0
+    inst |= (stride      & 0x7)    << 5
     inst |= (ld_arf_addr & 0x1F)
     return f"{inst:016X}"
 
@@ -86,6 +96,7 @@ def parse_args():
     p.add_argument('--h_in',     type=int, default=123, help='Input height  (default 123)')
     p.add_argument('--w_in',     type=int, default=45,  help='Input width   (default 45)')
     p.add_argument('--k',        type=int, default=3,   help='Kernel size KxK (default 3)')
+    p.add_argument('--stride',   type=int, default=1,   help='Convolution stride (default 1, max 7)')
     p.add_argument('--num_cin',  type=int, default=8,   help='Input channels  (default 8)')
     p.add_argument('--num_cout', type=int, default=8,   help='Output channels (default 8)')
     p.add_argument('--tile_w',   type=int, default=32,  help='ARF tile width  (default 32)')
@@ -97,16 +108,31 @@ def parse_args():
 # ---------------------------------------------------------------------------
 # Main generation
 # ---------------------------------------------------------------------------
-def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
+def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride=1):
     import random
     random.seed(seed)
 
-    H_OUT = H_IN - K + 1
-    W_OUT = W_IN - K + 1
+    if stride < 1 or stride > 7:
+        sys.exit(f"ERROR: stride={stride} out of range [1..7].")
+
+    # H_OUT / W_OUT for arbitrary stride (padding=0)
+    H_OUT = (H_IN - K) // stride + 1
+    W_OUT = (W_IN - K) // stride + 1
 
     if H_OUT <= 0 or W_OUT <= 0:
-        sys.exit(f"ERROR: K={K}x{K} too large for {H_IN}x{W_IN} "
+        sys.exit(f"ERROR: K={K}x{K} stride={stride} too large for {H_IN}x{W_IN} "
                  f"(output {H_OUT}x{W_OUT} is invalid).")
+
+    # SRAM capacity check (must match SRAM_DEPTH in testbench / core_top)
+    SRAM_DEPTH = 8192
+    ifb_size = H_IN * W_IN
+    ofb_size = H_OUT * W_OUT
+    if ifb_size > SRAM_DEPTH:
+        sys.exit(f"ERROR: IFB overflow! H_IN*W_IN = {ifb_size} > SRAM_DEPTH = {SRAM_DEPTH}. "
+                 f"Max H_IN for W_IN={W_IN}: {SRAM_DEPTH // W_IN}")
+    if ofb_size > SRAM_DEPTH:
+        sys.exit(f"ERROR: OFB overflow! H_OUT*W_OUT = {ofb_size} > SRAM_DEPTH = {SRAM_DEPTH}. "
+                 f"Max H_OUT for W_OUT={W_OUT}: {SRAM_DEPTH // W_OUT}")
 
     # ------------------------------------------------------------------
     # Split K*K kernel positions into WRF_DEPTH-sized rounds
@@ -117,7 +143,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
     num_rounds = len(rounds)
     num_tiles  = (W_OUT + TILE_W - 1) // TILE_W
 
-    print(f"Config : H_IN={H_IN}, W_IN={W_IN}, K={K}x{K}, "
+    print(f"Config : H_IN={H_IN}, W_IN={W_IN}, K={K}x{K}, stride={stride}, "
           f"Cin={NUM_CIN}, Cout={NUM_COUT}, TILE_W={TILE_W}")
     print(f"Output : H_OUT={H_OUT}, W_OUT={W_OUT}, "
           f"TOTAL_OFM={H_OUT*W_OUT}, tiles/row={num_tiles}")
@@ -165,15 +191,16 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
     # 3. Instructions (loop-compressed, multi-round weight scheduling)
     # ------------------------------------------------------------------
     # Register convention:
-    #   r0 = IFB base addr offset  (HW adds to every ifb_raddr)
-    #   r1 = OFB base addr offset  (HW adds to every ofb_waddr)
+    #   r0 = IFB row base (stride=1: r0+=W_IN per row; stride>1: r0+=stride*W_IN per row)
+    #   r1 = OFB base addr offset (r1 += W_OUT per row)
     #   r2 = yout loop counter
-    # sram_addr in MAC/ST instructions is RELATIVE to base register:
-    #   actual_ifb = r0 + inst.sram_addr [+ cnt]
-    #   actual_ofb = r1 + inst.sram_addr [+ cnt]
+    # sram_addr in MAC/ST instructions is RELATIVE to r0/r1:
+    #   stride=1 : actual_ifb = r0 + ky*W_IN + x_tile_out [+ cnt]
+    #   stride>1 : actual_ifb = r0 + ky*W_IN + x_tile_in  [+ cnt*stride]
+    #              where x_tile_in = x_tile_out * stride
     instructions = []
 
-    # --- SDP 配置：反量化右移量（每层仅执行一次，在权重加载前） ---
+    # --- SDP config (once per layer) ---
     instructions.append(pack_ld_sdp(shift_amt))
 
     # --- Single-round: LD_WGT ONCE before the loop (true weight-stationary) ---
@@ -189,15 +216,14 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
     # --- Loop body start ---
     LOOP_START = len(instructions)
 
-    for x_tile in range(0, W_OUT, TILE_W):              # unrolled (few tiles)
-        valid_w   = min(TILE_W, W_OUT - x_tile)
-        first_mac = True   # clr_parf=1 only for the first MAC of each x_tile
+    for x_tile_out in range(0, W_OUT, TILE_W):          # unrolled over output tiles
+        valid_w     = min(TILE_W, W_OUT - x_tile_out)
+        x_tile_in   = x_tile_out * stride               # corresponding input column
+        first_mac   = True   # clr_parf=1 only for the first MAC of each x_tile
 
         for round_idx, round_pos in enumerate(rounds):
             round_global_start = round_idx * WRF_DEPTH
 
-            # Multi-round: reload WRF from WB at each round boundary.
-            # LD_WGT uses absolute WB address (not affected by r0/r1).
             if num_rounds > 1:
                 instructions.append(
                     pack_inst(OP_LD_WGT, wgt_addr=0,
@@ -208,34 +234,50 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
                 clr       = 1 if first_mac else 0
                 first_mac = False
 
-                if kx == 0:
-                    # LD32MAC: load TILE_W pixels from this IFB row into ARF,
-                    # MAC runs in parallel starting from cnt=1.
-                    # relative sram_addr = ky*W_IN + x_tile  (added to r0 by HW)
-                    rel = ky * W_IN + x_tile
+                if stride == 1:
+                    # --------------------------------------------------
+                    # stride=1: use LD32MAC (kx=0) + LD1MAC sliding window
+                    # --------------------------------------------------
+                    if kx == 0:
+                        # LD32MAC: load TILE_W pixels; stride field = 0 (hw treats as 1)
+                        rel = ky * W_IN + x_tile_in
+                        instructions.append(pack_inst(
+                            OP_LD32MAC, clr_parf=clr,
+                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                            sram_addr=rel, length=TILE_W, stride=0))
+                    else:
+                        # LD1MAC: load 1 pixel into ARF[kx-1], MAC reads ARF[kx..kx+TILE_W-1]
+                        rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
+                        instructions.append(pack_inst(
+                            OP_LD1MAC, clr_parf=clr,
+                            wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
+                            sram_addr=rel, length=TILE_W,
+                            ld_arf_addr=kx - 1))
+                else:
+                    # --------------------------------------------------
+                    # stride>1: every (ky,kx) uses LD32MAC with stride field
+                    # sram_addr points to the first input pixel for this
+                    # kernel tap and this output tile's first pixel:
+                    #   r0 + ky*W_IN + x_tile_in + kx
+                    # HW reads: r0 + sram_addr + cnt*stride  (cnt=0..TILE_W-1)
+                    # => pixel for output p = r0 + ky*W_IN + x_tile_in + kx + p*stride
+                    #                       = ifm[yout*stride + ky][x_tile_in + kx + p*stride]
+                    # --------------------------------------------------
+                    rel = ky * W_IN + x_tile_in + kx
                     instructions.append(pack_inst(
                         OP_LD32MAC, clr_parf=clr,
                         wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                        sram_addr=rel, length=TILE_W))
-                else:
-                    # LD1MAC: load 1 new pixel into ARF[kx-1], MAC reads
-                    # ARF[kx .. kx+TILE_W-1] (sliding window, no hazard).
-                    # relative sram_addr = ky*W_IN + x_tile + TILE_W + kx - 1
-                    rel = ky * W_IN + x_tile + TILE_W + kx - 1
-                    instructions.append(pack_inst(
-                        OP_LD1MAC, clr_parf=clr,
-                        wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
-                        sram_addr=rel, length=TILE_W,
-                        ld_arf_addr=kx - 1))
+                        sram_addr=rel, length=TILE_W, stride=stride))
 
         # ST_OFM: write valid_w pixels to OFB (addr relative to r1)
         instructions.append(pack_inst(
             OP_ST_OFM, sdp_en=1, parf_addr=0,
-            sram_addr=x_tile, length=valid_w))
+            sram_addr=x_tile_out, length=valid_w))
 
     # --- Loop tail ---
-    instructions.append(pack_alu(rd=0, rs1=0, op='+', imm=W_IN))   # r0 += W_IN
-    instructions.append(pack_alu(rd=1, rs1=1, op='+', imm=W_OUT))  # r1 += W_OUT
+    # r0 advances by stride*W_IN per output row (input row step = stride rows)
+    instructions.append(pack_alu(rd=0, rs1=0, op='+', imm=stride * W_IN))
+    instructions.append(pack_alu(rd=1, rs1=1, op='+', imm=W_OUT))
     instructions.append(pack_bnz(rs=2, target_pc=LOOP_START))
 
     instructions.append(pack_inst(OP_FINISH))
@@ -259,8 +301,11 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
                 for ky in range(K):
                     for kx in range(K):
                         for cin in range(NUM_CIN):
-                            psum += ifm_arr[yout+ky][px+kx][cin] * w_arr[ky][kx][cout][cin]
-                act = max(0, min(255, psum >> shift_amt))   # Dequant(>>shift) + ReLU + 8-bit clip
+                            # input pixel: top-left = (yout*stride, px*stride)
+                            iy = yout * stride + ky
+                            ix = px   * stride + kx
+                            psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
+                act = max(0, min(255, psum >> shift_amt))
                 pixel_val |= (act & 0xFF) << (cout * 8)
             expected_ofm.append(f"{pixel_val:016X}")
     with open('expected_ofm.txt', 'w') as f:
@@ -270,7 +315,6 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
     # Summary
     # ------------------------------------------------------------------
     n = len(instructions)
-    body = n - (1 if num_rounds == 1 else 0) - 3 - 3 - 1  # rough body count
     print(f"Instructions : {n} total  (LOOP_START=PC {LOOP_START}, "
           f"runs {H_OUT} times)")
     print(f"Files written: ifb.txt  wb.txt  inst.txt  expected_ofm.txt  sim_params.f")
@@ -282,4 +326,5 @@ if __name__ == '__main__':
     args = parse_args()
     generate(H_IN=args.h_in, W_IN=args.w_in, K=args.k,
              NUM_CIN=args.num_cin, NUM_COUT=args.num_cout,
-             TILE_W=args.tile_w, seed=args.seed, shift_amt=args.shift)
+             TILE_W=args.tile_w, seed=args.seed,
+             shift_amt=args.shift, stride=args.stride)

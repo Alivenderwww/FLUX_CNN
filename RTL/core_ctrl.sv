@@ -90,7 +90,11 @@ module core_ctrl #(
     logic                          ofb_we_d1, ofb_we_d2;
     logic [$clog2(SRAM_DEPTH)-1:0] ofb_waddr_d1, ofb_waddr_d2;
     logic                          sdp_en_d1, sdp_en_d2;
-    
+
+    // EXEC_LD32MAC 步进计算临时变量 (模块级以避免 always_comb 内变量声明问题)
+    logic [2:0]  eff_stride;
+    logic [14:0] strided_off;
+
     // 标量寄存器文件 (8 x 16-bit)
     // r0 = IFB 基址偏移（自动叠加到所有 IFB 读地址）
     // r1 = OFB 基址偏移（自动叠加到所有 OFB 写地址）
@@ -424,11 +428,16 @@ module core_ctrl #(
                 //   - d1 流水将 pixel[cnt-1] 写入 ARF[arf_addr+cnt-1]
                 //   - bypass MUX（core_top）检测写读地址相同时直接前向传给 MAC
                 //   - MAC 读 arf_read_addr=arf_addr+(cnt-1)，得到 pixel[cnt-1] ✓
+                //
+                // stride: inst_reg.stride==0 视为 stride=1（默认）
+                //   ifb_raddr = r0 + sram_addr + cnt * effective_stride
+                eff_stride  = (inst_reg.stride == 3'd0) ? 3'd1 : inst_reg.stride;
+                strided_off = cnt[14:0] * {12'b0, eff_stride};
 
                 // IFB 连续读（cnt=0..length-1）（r0 为 IFB 基址偏移）
                 if (cnt < inst_reg.length) begin
                     ifb_re    = 1'b1;
-                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + cnt[14:0];
+                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + strided_off;
                 end
 
                 // MAC 从 cnt=1 开始运行（pixel[0] 在 cnt=1 的 d1 写入时才可用）

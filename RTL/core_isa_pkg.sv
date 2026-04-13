@@ -37,9 +37,10 @@ package core_isa_pkg;
     // Bit layout (MSB→LSB):
     //   [63:60] opcode      [59] clr_parf   [58] sdp_en
     //   [57:53] arf_addr    [52:48] wgt_rf_addr  [47:43] parf_addr
-    //   [42:28] sram_addr   [27:12] length   [11:5] stride_hi  [4:0] ld_arf_addr
+    //   [42:28] sram_addr   [27:12] length   [11:8] reserved  [7:5] stride  [4:0] ld_arf_addr
     //
-    // ld_arf_addr (stride[4:0]): OP_LD1MAC 专用 —— 单像素写入 ARF 的目标地址
+    //   stride[2:0]: OP_LD32MAC input column stride (0 or 1 = stride-1, 2 = stride-2, ..., 7 = stride-7)
+    //   ld_arf_addr: OP_LD1MAC  -- ARF write address for the single loaded pixel
     typedef struct packed {
         opcode_e       opcode;      // [63:60] Opcode
 
@@ -55,7 +56,8 @@ package core_isa_pkg;
         // --- External/Buffer Addressing & Control ---
         logic [14:0]   sram_addr;   // [42:28] (15-bit) Base address in Ifmap/Outmap Buffer
         logic [15:0]   length;      // [27:12] (16-bit) Length of continuous operation (e.g., 32 cycles)
-        logic [6:0]    stride_hi;   // [11:5]  Reserved
+        logic [3:0]    reserved;    // [11:8]  Reserved for future use
+        logic [2:0]    stride;      // [7:5]   OP_LD32MAC: input stride (0=1, 1=1, 2=2, ..., 7=7)
         logic [4:0]    ld_arf_addr; // [4:0]   OP_LD1MAC: ARF write address for the single loaded pixel
     } inst_t;
 

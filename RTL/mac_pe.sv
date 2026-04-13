@@ -47,6 +47,15 @@ module mac_pe #(
     
     // 乘法器逻辑 (时序逻辑)
     // 乘法打一拍，减轻组合逻辑关键路径判断
+    // synthesis translate_off
+    int mac_ops_cnt = 0;
+    always_ff @(posedge clk) begin
+        if (rst_n && compute_en) begin
+            mac_ops_cnt++;
+        end
+    end
+    // synthesis translate_on
+    
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             prod_out <= '0;

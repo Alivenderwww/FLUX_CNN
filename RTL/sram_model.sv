@@ -18,6 +18,15 @@ module sram_model #(
 
     logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
     
+    // synthesis translate_off
+    int sram_read_cnt = 0;
+    int sram_write_cnt = 0;
+    always_ff @(posedge clk) begin
+        if (we) sram_write_cnt++;
+        if (re) sram_read_cnt++;
+    end
+    // synthesis translate_on
+
     // 同步写
     always @(posedge clk) begin
         if (we) begin

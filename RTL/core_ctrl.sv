@@ -29,14 +29,18 @@ module core_ctrl #(
     output logic                                ifb_re,       // IFB 读使能
     output logic [$clog2(SRAM_DEPTH)-1:0]       ifb_raddr,    // IFB 读地址
     
+    // OFB 控制接口
+    output logic                                ofb_we,       // OFB 写使能
+    output logic [$clog2(SRAM_DEPTH)-1:0]       ofb_waddr,    // OFB 写地址
+    output logic                                sdp_en_out,   // 输出给后处理的 SDP 使能
+    
     // WRF 控制接口 (Weight Register File)
     output logic [63:0]                         wrf_we,       // 所有PE的写使能
     output logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr,    // 写地址
     
     // ARF 控制接口 (Activation Register File)
-    output logic                                arf_shift_en, // 移位使能
-    output logic                                arf_flush_en, // 刷新使能 (加载新数据)
-    output logic [$clog2(ARF_DEPTH)-1:0]        arf_flush_addr,// 刷新写入地址
+    output logic                                arf_we,       // ARF 写使能
+    output logic [$clog2(ARF_DEPTH)-1:0]        arf_waddr,    // ARF 写地址
     output logic [$clog2(ARF_DEPTH)-1:0]        arf_read_addr, // 读出到MAC的地址
     
     // MAC & PARF 控制接口
@@ -56,10 +60,10 @@ module core_ctrl #(
         DECODE,
         EXEC_LD_WGT,
         EXEC_LD_ARF,
-        PRE_MAC_SHIFT,
-        WAIT_MAC_SHIFT,
         EXEC_MAC,
         EXEC_ST_OFM,
+        EXEC_LD1MAC,  // Load 1 pixel to ARF[ld_arf_addr] AND run MAC simultaneously
+        EXEC_LD32MAC, // Load N pixels into ARF AND run MAC simultaneously (length+1 cycles total)
         FINISH
     } state_t;
     
@@ -75,9 +79,13 @@ module core_ctrl #(
     // 延迟匹配寄存器 (为了匹配 SRAM 的 1 周期读延迟)
     logic [63:0]                   wrf_we_d1;
     logic [$clog2(WRF_DEPTH)-1:0]  wrf_waddr_d1;
-    logic                          arf_flush_en_d1;
-    logic [$clog2(ARF_DEPTH)-1:0]  arf_flush_addr_d1;
-    logic                          arf_shift_en_d1;
+    logic                          arf_we_d1;
+    logic [$clog2(ARF_DEPTH)-1:0]  arf_waddr_d1;
+    
+    // OFB 延迟寄存器 (PARF 读出需要 2 周期)
+    logic                          ofb_we_d1, ofb_we_d2;
+    logic [$clog2(SRAM_DEPTH)-1:0] ofb_waddr_d1, ofb_waddr_d2;
+    logic                          sdp_en_d1, sdp_en_d2;
     
     //=============================================================================
     // 3. 时序逻辑更新
@@ -91,9 +99,15 @@ module core_ctrl #(
             
             wrf_we_d1         <= '0;
             wrf_waddr_d1      <= '0;
-            arf_flush_en_d1   <= '0;
-            arf_flush_addr_d1 <= '0;
-            arf_shift_en_d1   <= '0;
+            arf_we_d1         <= '0;
+            arf_waddr_d1      <= '0;
+            
+            ofb_we_d1         <= '0;
+            ofb_waddr_d1      <= '0;
+            ofb_we_d2         <= '0;
+            ofb_waddr_d2      <= '0;
+            sdp_en_d1         <= '0;
+            sdp_en_d2         <= '0;
         end else begin
             current_state <= next_state;
             
@@ -107,19 +121,35 @@ module core_ctrl #(
             end
             
             // 写入 ARF 时的 1 拍延迟同步 (从 IFB 读出需要 1 拍)
-            if (current_state == EXEC_LD_ARF && cnt < inst_reg.length) begin
-                arf_flush_en_d1   <= 1'b1;
-                arf_flush_addr_d1 <= cnt[4:0];
+            // EXEC_LD_ARF:  连续写入 length 个像素
+            // EXEC_LD1MAC:  仅在 cnt=0 写入 1 个像素到 ld_arf_addr（与 MAC 并行）
+            // EXEC_LD32MAC: 连续写入 length 个像素（cnt=0..length-1），MAC 在 cnt=1..length 同步运行
+            if ((current_state == EXEC_LD_ARF  && cnt < inst_reg.length) ||
+                (current_state == EXEC_LD32MAC  && cnt < inst_reg.length)) begin
+                arf_we_d1    <= 1'b1;
+                arf_waddr_d1 <= inst_reg.arf_addr + cnt[4:0];
+            end else if (current_state == EXEC_LD1MAC && cnt == 0) begin
+                arf_we_d1    <= 1'b1;
+                arf_waddr_d1 <= inst_reg.ld_arf_addr;
             end else begin
-                arf_flush_en_d1   <= 1'b0;
-                arf_flush_addr_d1 <= '0;
+                arf_we_d1    <= 1'b0;
+                arf_waddr_d1 <= '0;
+            end
+
+            // 写入 OFB 时的 2 拍延迟同步 (从发送 parf_addr 到 psum_out_vec 可用需要 2 拍)
+            if (current_state == EXEC_ST_OFM && cnt < inst_reg.length) begin
+                ofb_we_d1    <= 1'b1;
+                ofb_waddr_d1 <= inst_reg.sram_addr + cnt[14:0];
+                sdp_en_d1    <= inst_reg.sdp_en;
+            end else begin
+                ofb_we_d1    <= 1'b0;
+                ofb_waddr_d1 <= '0;
+                sdp_en_d1    <= 1'b0;
             end
             
-            if (current_state == PRE_MAC_SHIFT) begin
-                arf_shift_en_d1 <= 1'b1;
-            end else begin
-                arf_shift_en_d1 <= 1'b0;
-            end
+            ofb_we_d2    <= ofb_we_d1;
+            ofb_waddr_d2 <= ofb_waddr_d1;
+            sdp_en_d2    <= sdp_en_d1;
 
             case (current_state)
                 IDLE: begin
@@ -140,7 +170,7 @@ module core_ctrl #(
                     end
                 end
                 
-                EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
+                EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM, EXEC_LD1MAC: begin
                     if (cnt == inst_reg.length - 1) begin
                         cnt <= '0;
                         pc  <= pc + 1'b1; // 执行完指令，PC 自增
@@ -148,9 +178,15 @@ module core_ctrl #(
                         cnt <= cnt + 1'b1;
                     end
                 end
-                
-                PRE_MAC_SHIFT: begin
-                    // 只有 1 个周期的预取
+
+                EXEC_LD32MAC: begin
+                    // 比普通 EXEC 多跑 1 拍（cnt=0 为 IFB 预取，cnt=1..length 为 MAC）
+                    if (cnt == inst_reg.length) begin
+                        cnt <= '0;
+                        pc  <= pc + 1'b1;
+                    end else begin
+                        cnt <= cnt + 1'b1;
+                    end
                 end
                 
                 FINISH: begin
@@ -183,27 +219,21 @@ module core_ctrl #(
                     OP_NOP:       next_state = FETCH; // 忽略 NOP，继续取指
                     OP_LD_WGT:    next_state = EXEC_LD_WGT;
                     OP_LD_ARF:    next_state = EXEC_LD_ARF;
-                    OP_MAC_RUN:   begin
-                        // 如果带移位，需先发一次读取请求并等待
-                        if (inst_data.shift_arf) next_state = PRE_MAC_SHIFT;
-                        else                     next_state = EXEC_MAC;
-                    end
+                    OP_MAC_RUN:   next_state = EXEC_MAC;
                     OP_ST_OFM:    next_state = EXEC_ST_OFM;
+                    OP_LD1MAC:    next_state = EXEC_LD1MAC;
+                    OP_LD32MAC:   next_state = EXEC_LD32MAC;
                     // 如果遇到未定义的 opcode 或者结束指令标志，视为结束
-                    default:      next_state = FINISH; 
+                    default:      next_state = FINISH;
                 endcase
             end
             
-            EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
+            EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM, EXEC_LD1MAC: begin
                 if (cnt == inst_reg.length - 1) next_state = FETCH;
             end
-            
-            PRE_MAC_SHIFT: begin
-                next_state = WAIT_MAC_SHIFT;
-            end
-            
-            WAIT_MAC_SHIFT: begin
-                next_state = EXEC_MAC;
+
+            EXEC_LD32MAC: begin
+                if (cnt == inst_reg.length) next_state = FETCH; // 多跑 1 拍
             end
             
             FINISH: begin
@@ -228,11 +258,14 @@ module core_ctrl #(
         ifb_raddr      = '0;
         
         // 延迟写的信号直接赋给端口
+        ofb_we         = ofb_we_d2;
+        ofb_waddr      = ofb_waddr_d2;
+        sdp_en_out     = sdp_en_d2;
+        
         wrf_we         = wrf_we_d1;
         wrf_waddr      = wrf_waddr_d1;
-        arf_flush_en   = arf_flush_en_d1;
-        arf_flush_addr = arf_flush_addr_d1;
-        arf_shift_en   = arf_shift_en_d1;
+        arf_we         = arf_we_d1;
+        arf_waddr      = arf_waddr_d1;
         
         arf_read_addr  = '0;
         
@@ -269,23 +302,11 @@ module core_ctrl #(
                 end
             end
             
-            PRE_MAC_SHIFT: begin
-                // 取需移入的一个新像素 (约定的 sram_addr)
-                ifb_re    = 1'b1;
-                ifb_raddr = inst_reg.sram_addr; 
-            end
-            
-            WAIT_MAC_SHIFT: begin
-                // 空闲一拍，等待 IFB 数据准备好，同时也给 ARF 足够的时间移位
-            end
-            
             EXEC_MAC: begin
-                // 到这里时，ARF 已经完成了移位（如果有），可以安全地进行计算
-                
                 // 开始纯计算
                 compute_en    = 1'b1;
                 wrf_raddr     = inst_reg.wgt_rf_addr;          // 从指令获取使用哪个权重
-                arf_read_addr = cnt[4:0];                      // MAC 一次算 length 拍，依次读 ARF
+                arf_read_addr = inst_reg.arf_addr + cnt[4:0];  // NEW: use arf_addr
                 parf_addr     = inst_reg.parf_addr + cnt[4:0]; // 写入 PARF 的对应位置
                 parf_we       = 1'b1;
                 
@@ -294,9 +315,55 @@ module core_ctrl #(
             end
             
             EXEC_ST_OFM: begin
-                // TODO: Store 到外部，需要实现 Outmap Buffer 控制。暂为空。
+                // 发起 PARF 读请求（通过直接设置 parf_addr）
+                // MAC 阵列会在 2 拍后将 psum_out_vec 吐出，ofb_we 和 ofb_waddr 的延迟管线会同时到达
+                parf_addr = inst_reg.parf_addr + cnt[4:0];
             end
-            
+
+            EXEC_LD1MAC: begin
+                // 单像素 kx 切换优化：写 ARF[ld_arf_addr] 与 MAC 计算同时进行
+                // ARF 写入地址（ld_arf_addr）与 MAC 读取地址（arf_addr+cnt）不重叠，无冒险
+
+                // 仅在第 0 拍发起 IFB 单像素读（d1 流水线负责 ARF 实际写入）
+                if (cnt == 0) begin
+                    ifb_re    = 1'b1;
+                    ifb_raddr = inst_reg.sram_addr;
+                end
+
+                // MAC 全程运行（与上面的 IFB 读并行）
+                compute_en    = 1'b1;
+                wrf_raddr     = inst_reg.wgt_rf_addr;
+                arf_read_addr = inst_reg.arf_addr + cnt[4:0];
+                parf_addr     = inst_reg.parf_addr + cnt[4:0];
+                parf_we       = 1'b1;
+                if (inst_reg.clr_parf) parf_clear = 1'b1;
+            end
+
+            EXEC_LD32MAC: begin
+                // 初始加载优化：从 IFB 连续读 length 个像素写入 ARF，同时 MAC 并行运行。
+                //
+                // 时序：cnt=0 为 IFB 预取拍（无 MAC）；cnt=1..length 为重叠拍：
+                //   - d1 流水将 pixel[cnt-1] 写入 ARF[arf_addr+cnt-1]
+                //   - bypass MUX（core_top）检测写读地址相同时直接前向传给 MAC
+                //   - MAC 读 arf_read_addr=arf_addr+(cnt-1)，得到 pixel[cnt-1] ✓
+
+                // IFB 连续读（cnt=0..length-1）
+                if (cnt < inst_reg.length) begin
+                    ifb_re    = 1'b1;
+                    ifb_raddr = inst_reg.sram_addr + cnt[14:0];
+                end
+
+                // MAC 从 cnt=1 开始运行（pixel[0] 在 cnt=1 的 d1 写入时才可用）
+                if (cnt > 0) begin
+                    compute_en    = 1'b1;
+                    wrf_raddr     = inst_reg.wgt_rf_addr;
+                    arf_read_addr = inst_reg.arf_addr + (cnt[4:0] - 1'b1);
+                    parf_addr     = inst_reg.parf_addr + (cnt[4:0] - 1'b1);
+                    parf_we       = 1'b1;
+                    if (inst_reg.clr_parf) parf_clear = 1'b1;
+                end
+            end
+
             FINISH: begin
                 done = 1'b1;
             end

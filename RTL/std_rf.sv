@@ -37,9 +37,11 @@ module std_rf #(
     end
 
     // synthesis translate_off
+    int total_write_ops = 0;
     int write_cnt = 0;
     always_ff @(posedge clk) begin
         if (rst_n && we) begin
+            total_write_ops++;
             if (write_cnt < 1) begin
                 $display("Time=%0t, %m written! waddr=%0d, wdata=%x", $time, waddr, wdata);
                 write_cnt++;

@@ -33,6 +33,11 @@ module core_top #(
     input  logic [$clog2(SRAM_DEPTH)-1:0]       wb_waddr_ext,
     input  logic [511:0]                        wb_wdata_ext,
     
+    // OFB读取接口 (用于测试提取结果)
+    input  logic                                ofb_re_ext,
+    input  logic [$clog2(SRAM_DEPTH)-1:0]       ofb_raddr_ext,
+    output logic [63:0]                         ofb_rdata_ext,
+    
     // 输出
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
     output logic                                 done
@@ -45,11 +50,13 @@ module core_top #(
     logic [$clog2(SRAM_DEPTH)-1:0]       wb_raddr;
     logic                                ifb_re;
     logic [$clog2(SRAM_DEPTH)-1:0]       ifb_raddr;
+    logic                                ofb_we;
+    logic [$clog2(SRAM_DEPTH)-1:0]       ofb_waddr;
+    logic                                sdp_en;
     logic [63:0]                         wrf_we;
     logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr;
-    logic                                arf_shift_en;
-    logic                                arf_flush_en;
-    logic [$clog2(ARF_DEPTH)-1:0]        arf_flush_addr;
+    logic                                arf_we;
+    logic [$clog2(ARF_DEPTH)-1:0]        arf_waddr;
     logic [$clog2(ARF_DEPTH)-1:0]        arf_read_addr;
     logic                                compute_en;
     logic [$clog2(WRF_DEPTH)-1:0]        wrf_raddr;
@@ -63,6 +70,7 @@ module core_top #(
     logic [63:0]  inst_rdata;
     logic [63:0]  ifb_rdata;
     logic [511:0] wb_rdata;
+    logic [63:0]  ofb_wdata;
     
     logic                                inst_re;
     logic [$clog2(INST_DEPTH)-1:0]       inst_raddr;
@@ -106,25 +114,47 @@ module core_top #(
         .rdata (wb_rdata)
     );
 
+    sram_model #(
+        .DEPTH(SRAM_DEPTH),
+        .DATA_WIDTH(64)
+    ) u_ofb (
+        .clk   (clk),
+        .we    (ofb_we),
+        .waddr (ofb_waddr),
+        .wdata (ofb_wdata),
+        .re    (ofb_re_ext),
+        .raddr (ofb_raddr_ext),
+        .rdata (ofb_rdata_ext)
+    );
+
     //=============================================================================
     // 3. ARF 例化 (Activation Register File)
     //=============================================================================
     logic [63:0] act_out_vec;
-    
-    arf_buffer #(
-        .ARF_DEPTH(ARF_DEPTH),
-        .DATA_WIDTH(64)
+    logic [63:0] act_to_mac;   // ARF 输出 + LD32MAC bypass 前向路径
+
+    std_rf #(
+        .DEPTH(ARF_DEPTH),
+        .DATA_WIDTH(NUM_PE*DATA_WIDTH)
     ) u_arf (
-        .clk           (clk),
-        .rst_n         (rst_n),
-        .arf_shift_en  (arf_shift_en),
-        .new_pixel_in  (ifb_rdata),       // 从IFB读取的新像素补入末端
-        .arf_flush_en  (arf_flush_en),
-        .arf_flush_addr(arf_flush_addr),
-        .arf_flush_data(ifb_rdata),       // 刷新写入的初始像素数据
-        .arf_read_addr (arf_read_addr),
-        .act_out_vec   (act_out_vec)
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .we         (arf_we),
+        .waddr      (arf_waddr),
+        .wdata      (ifb_rdata),
+        .raddr      (arf_read_addr),
+        .rdata      (act_out_vec)
     );
+
+    // LD32MAC bypass：当 ARF 正在写入的地址与 MAC 读取地址相同时（读写同周期），
+    // 直接将 ifb_rdata 前向传给 MAC，避免读到 std_rf 的旧值。
+    // 其余情况（arf_we=0，或地址不同）正常走 ARF 输出。
+    always_comb begin
+        if (arf_we && (arf_waddr == arf_read_addr))
+            act_to_mac = ifb_rdata;
+        else
+            act_to_mac = act_out_vec;
+    end
 
     //=============================================================================
     // 4. MAC阵列 例化
@@ -145,7 +175,7 @@ module core_top #(
         .wrf_wdata  (wb_rdata),       // 从Weight Buffer平铺写入
         
         .wrf_raddr  (wrf_raddr),
-        .act_in_vec (act_out_vec),    // 从ARF读取的8通道输入
+        .act_in_vec (act_to_mac),    // ARF 输出（含 LD32MAC bypass）
         .compute_en (compute_en),
         
         .parf_addr  (parf_addr),
@@ -156,7 +186,35 @@ module core_top #(
     );
 
     //=============================================================================
-    // 5. 控制器 例化
+    // 5. SDP 单数据处理器 & OFB 写回逻辑 (纯组合逻辑)
+    //=============================================================================
+    logic signed [PSUM_WIDTH-1:0] psum_array [0:NUM_COL-1];
+    logic [7:0]                   sdp_out_array [0:NUM_COL-1];
+    
+    always_comb begin
+        for (int c = 0; c < NUM_COL; c++) begin
+            psum_array[c] = psum_out_vec[c*PSUM_WIDTH +: PSUM_WIDTH];
+            
+            if (sdp_en) begin
+                // ReLU + 截断到 8-bit uint
+                if (psum_array[c] < 0) begin
+                    sdp_out_array[c] = 8'd0;
+                end else if (psum_array[c] > 255) begin
+                    sdp_out_array[c] = 8'd255;
+                end else begin
+                    sdp_out_array[c] = psum_array[c][7:0];
+                end
+            end else begin
+                // 无激活函数，直接截断 (也可用于非ReLU层)
+                sdp_out_array[c] = psum_array[c][7:0];
+            end
+            
+            ofb_wdata[c*8 +: 8] = sdp_out_array[c];
+        end
+    end
+
+    //=============================================================================
+    // 6. 控制器 例化
     //=============================================================================
     core_ctrl #(
         .WRF_DEPTH(WRF_DEPTH),
@@ -178,12 +236,15 @@ module core_top #(
         .ifb_re         (ifb_re),
         .ifb_raddr      (ifb_raddr),
         
+        .ofb_we         (ofb_we),
+        .ofb_waddr      (ofb_waddr),
+        .sdp_en_out     (sdp_en),
+        
         .wrf_we         (wrf_we),
         .wrf_waddr      (wrf_waddr),
         
-        .arf_shift_en   (arf_shift_en),
-        .arf_flush_en   (arf_flush_en),
-        .arf_flush_addr (arf_flush_addr),
+        .arf_we         (arf_we),
+        .arf_waddr      (arf_waddr),
         .arf_read_addr  (arf_read_addr),
         
         .compute_en     (compute_en),

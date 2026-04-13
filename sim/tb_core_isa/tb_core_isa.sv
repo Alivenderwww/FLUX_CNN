@@ -5,14 +5,21 @@ module tb_core_isa;
     // Parameters
     localparam NUM_COL    = 8;
     localparam PSUM_WIDTH = 32;
-    localparam SRAM_DEPTH = 1024;
-    localparam INST_DEPTH = 1024;
+    localparam SRAM_DEPTH = 8192;
+    localparam INST_DEPTH = 8192;
+    
+    // For 121 x 43 test
+    localparam H_OUT = 121;
+    localparam W_OUT = 43;
+    localparam TOTAL_OFM = H_OUT * W_OUT;
 
     logic clk;
     logic rst_n;
     logic start;
     logic done;
     logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec;
+
+    logic [63:0] ofb_rdata_ext;
 
     // Instantiate core
     core_top #(
@@ -38,6 +45,9 @@ module tb_core_isa;
         .wb_we_ext(1'b0),
         .wb_waddr_ext('0),
         .wb_wdata_ext('0),
+        .ofb_re_ext(1'b0),
+        .ofb_raddr_ext('0),
+        .ofb_rdata_ext(ofb_rdata_ext),
         .psum_out_vec(psum_out_vec),
         .done(done)
     );
@@ -53,23 +63,53 @@ module tb_core_isa;
         $readmemh("inst.txt", u_core_top.u_inst_sram.mem);
         $readmemh("ifb.txt",  u_core_top.u_ifb.mem);
         $readmemh("wb.txt",   u_core_top.u_wb.mem);
+        // 清空 OFB
+        for (int i=0; i<SRAM_DEPTH; i++) u_core_top.u_ofb.mem[i] = '0;
     end
 
-    // Output probing array
-    logic signed [31:0] parf_vals [32][8];
-    genvar c_idx, p_idx;
+    // Expected OFM array
+    logic [63:0] expected_ofm_arr [0:8191];
+
+    // Cycle tracking
+    longint total_cycles = 0;
+    logic is_running = 0;
+    always_ff @(posedge clk) begin
+        if (rst_n) begin
+            if (start) is_running <= 1;
+            if (done) is_running <= 0;
+            if (is_running) total_cycles++;
+        end else begin
+            total_cycles <= 0;
+            is_running <= 0;
+        end
+    end
+
+    // Helper arrays for hierarchical counters
+    int pe_mac_cnt_arr [0:NUM_COL-1][0:7];
+    int pe_wrf_write_arr [0:NUM_COL-1][0:7];
+    int parf_write_arr [0:NUM_COL-1];
+
+    genvar gc, gp;
     generate
-        for (c_idx = 0; c_idx < 8; c_idx++) begin : gen_probe_c
-            for (p_idx = 0; p_idx < 32; p_idx++) begin : gen_probe_p
-                assign parf_vals[p_idx][c_idx] = u_core_top.u_mac_array.gen_col[c_idx].u_col.u_parf.ram[p_idx];
+        for (gc = 0; gc < NUM_COL; gc++) begin : perf_col
+            assign parf_write_arr[gc] = u_core_top.u_mac_array.gen_col[gc].u_col.u_parf.total_write_ops;
+            for (gp = 0; gp < 8; gp++) begin : perf_pe
+                assign pe_mac_cnt_arr[gc][gp] = u_core_top.u_mac_array.gen_col[gc].u_col.gen_pe[gp].u_pe.mac_ops_cnt;
+                assign pe_wrf_write_arr[gc][gp] = u_core_top.u_mac_array.gen_col[gc].u_col.gen_pe[gp].u_pe.u_wrf.total_write_ops;
             end
         end
     endgenerate
 
-    // Expected Psum array
-    logic signed [31:0] expected_psum_arr [0:255]; // 32 pixels * 8 channels
-
     // Test sequence
+    initial begin
+        // Watchdog Timer
+        #50000000; // 50ms timeout
+        $display("========================================");
+        $display("FATAL ERROR: Simulation Timeout! The core likely hung in an infinite loop.");
+        $display("========================================");
+        $stop;
+    end
+
     initial begin
         rst_n = 0;
         start = 0;
@@ -78,7 +118,7 @@ module tb_core_isa;
         #10;
         
         // Load expected values
-        $readmemh("expected_psum.txt", expected_psum_arr);
+        $readmemh("expected_ofm.txt", expected_ofm_arr);
         
         $display("========================================");
         $display("Starting Macro-ISA CNN Core...");
@@ -94,37 +134,68 @@ module tb_core_isa;
 
         $display("========================================");
         $display("Macro-ISA Core Execution Finished.");
-        $display("Checking PARF internally computed results...");
+        $display("Checking Outmap Buffer (OFB) computed results...");
         
         begin
             // Count total mismatches
             automatic int mismatch_cnt = 0;
             
-            // Verify results directly from the PARF registers inside MAC Array
-            for (int p = 0; p < 32; p++) begin
-                for (int c = 0; c < 8; c++) begin
-                    // Hierarchical reference to PARF via continuous assignment array
-                    automatic logic signed [31:0] actual = parf_vals[p][c];
-                    
-                    // Read expected Psum
-                    automatic logic signed [31:0] expected = expected_psum_arr[p * 8 + c];
-                    
-                    if (actual !== expected) begin
-                        if (1) begin
-                            $display("FAIL: Pixel[%0d], Output Channel[%0d] | Expected: %0d, Got: %0d", p, c, expected, actual);
-                        end
-                        if (mismatch_cnt == 2) begin
-                            $display("... (Further mismatches suppressed)");
-                        end
-                        mismatch_cnt++;
+            // Verify all expected output pixels
+            for (int addr = 0; addr < TOTAL_OFM; addr++) begin
+                automatic logic [63:0] actual = u_core_top.u_ofb.mem[addr];
+                automatic logic [63:0] expected = expected_ofm_arr[addr];
+                
+                if (actual !== expected) begin
+                    if (mismatch_cnt < 10) begin
+                        $display("FAIL: OFB[%0d] | Expected: %016x, Got: %016x", addr, expected, actual);
                     end
+                    if (mismatch_cnt == 10) begin
+                        $display("... (Further mismatches suppressed)");
+                    end
+                    mismatch_cnt++;
                 end
             end
             
             if (mismatch_cnt == 0) begin
-                $display("Check Complete! 0 mismatches found. ISA simulation passed successfully.");
+                $display("Check Complete! 0 mismatches found. 2D ISA simulation passed successfully.");
             end else begin
                 $display("Check Complete! Found %0d mismatches. Simulation FAILED.", mismatch_cnt);
+            end
+            
+            $display("========================================");
+            $display(" PERFORMANCE & RESOURCE UTILIZATION STATS");
+            $display("========================================");
+            $display("Total Active Cycles:  %0d", total_cycles);
+            $display("");
+            $display("--- SRAM Traffic ---");
+            $display("IFB (Input Data):     Reads = %0d, Writes = %0d", u_core_top.u_ifb.sram_read_cnt, u_core_top.u_ifb.sram_write_cnt);
+            $display("WB  (Weight Data):    Reads = %0d, Writes = %0d", u_core_top.u_wb.sram_read_cnt,  u_core_top.u_wb.sram_write_cnt);
+            $display("OFB (Output Data):    Reads = %0d, Writes = %0d", u_core_top.u_ofb.sram_read_cnt, u_core_top.u_ofb.sram_write_cnt);
+            $display("");
+            
+            begin
+                longint total_mac_ops = 0;
+                longint total_wrf_writes = 0;
+                longint total_parf_writes = 0;
+                
+                for (int c = 0; c < NUM_COL; c++) begin
+                    for (int p = 0; p < 8; p++) begin
+                        total_mac_ops    += pe_mac_cnt_arr[c][p];
+                        total_wrf_writes += pe_wrf_write_arr[c][p];
+                    end
+                    total_parf_writes += parf_write_arr[c];
+                end
+                
+                $display("--- PE Array Utilization ---");
+                $display("Total MAC Ops:        %0d ops", total_mac_ops);
+                $display("Theoretical Max MACs: %0d ops (Total Cycles * 64 PEs)", total_cycles * 64);
+                $display("MAC Utilization Rate: %.2f %%", (real'(total_mac_ops) / (real'(total_cycles) * 64.0)) * 100.0);
+                $display("");
+                $display("--- Register File Traffic ---");
+                $display("ARF  Writes (SRAM Load):   %0d", u_core_top.u_arf.total_write_ops);
+                $display("ARF  Reads  (To MAC):      %0d (Combinational read matching MAC active cycles)", total_mac_ops / 64);
+                $display("WRF  Writes (Weights):     %0d", total_wrf_writes);
+                $display("PARF Writes (Psum Accum):  %0d", total_parf_writes);
             end
         end
         $display("========================================");

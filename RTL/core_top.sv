@@ -186,32 +186,27 @@ module core_top #(
     );
 
     //=============================================================================
-    // 5. SDP 单数据处理器 & OFB 写回逻辑 (纯组合逻辑)
+    // 5. SDP 单数据处理器例化
+    //    输入: psum_out_vec (来自 MAC 阵列 PARF)
+    //    输出: ofb_wdata (打包 uint8, 写入 OFB)
     //=============================================================================
-    logic signed [PSUM_WIDTH-1:0] psum_array [0:NUM_COL-1];
-    logic [7:0]                   sdp_out_array [0:NUM_COL-1];
-    
-    always_comb begin
-        for (int c = 0; c < NUM_COL; c++) begin
-            psum_array[c] = psum_out_vec[c*PSUM_WIDTH +: PSUM_WIDTH];
-            
-            if (sdp_en) begin
-                // ReLU + 截断到 8-bit uint
-                if (psum_array[c] < 0) begin
-                    sdp_out_array[c] = 8'd0;
-                end else if (psum_array[c] > 255) begin
-                    sdp_out_array[c] = 8'd255;
-                end else begin
-                    sdp_out_array[c] = psum_array[c][7:0];
-                end
-            end else begin
-                // 无激活函数，直接截断 (也可用于非ReLU层)
-                sdp_out_array[c] = psum_array[c][7:0];
-            end
-            
-            ofb_wdata[c*8 +: 8] = sdp_out_array[c];
-        end
-    end
+    logic                  sdp_shift_we;
+    logic [4:0]            sdp_shift_wdata;
+
+    sdp #(
+        .NUM_COL   (NUM_COL),
+        .PSUM_WIDTH(PSUM_WIDTH)
+    ) u_sdp (
+        .clk          (clk),
+        .rst_n        (rst_n),
+        .shift_we     (sdp_shift_we),
+        .shift_wdata  (sdp_shift_wdata),
+        .psum_in      (psum_out_vec),
+        .valid_in     (ofb_we),         // ofb_we 已含 d2 延迟，与 psum_out_vec 对齐
+        .relu_en      (sdp_en),
+        .ofm_data     (ofb_wdata),
+        .valid_out    ()                // 当前等同于 ofb_we，暂不接回
+    );
 
     //=============================================================================
     // 6. 控制器 例化
@@ -252,7 +247,10 @@ module core_top #(
         .parf_addr      (parf_addr),
         .parf_clear     (parf_clear),
         .parf_we        (parf_we),
-        
+
+        .sdp_shift_we   (sdp_shift_we),
+        .sdp_shift_wdata(sdp_shift_wdata),
+
         .done           (done)
     );
 

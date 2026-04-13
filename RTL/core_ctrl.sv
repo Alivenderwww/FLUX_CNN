@@ -48,7 +48,11 @@ module core_ctrl #(
     output logic [$clog2(WRF_DEPTH)-1:0]        wrf_raddr,    // MAC读取WRF地址
     output logic [$clog2(PARF_DEPTH)-1:0]       parf_addr,    // PARF当前累加/写入位置
     output logic                                parf_clear,   // 是否清零PARF
-    output logic                                parf_we       // PARF写回使能
+    output logic                                parf_we,      // PARF写回使能
+
+    // SDP 配置接口 (OP_LD_SDP 在 DECODE 内写入，持久保存在 SDP 模块)
+    output logic                                sdp_shift_we,   // SDP shift_amt 写使能
+    output logic [4:0]                          sdp_shift_wdata // 新的 shift_amt 值
 );
 
     //=============================================================================
@@ -213,6 +217,12 @@ module core_ctrl #(
                             end
                         end
 
+                        OP_LD_SDP: begin
+                            // SDP 反量化右移参数：shift_amt <- ld_arf_addr[4:0]
+                            // sdp_shift_we 在组合逻辑输出侧产生，此处只推进 PC
+                            pc <= pc + 1'b1;
+                        end
+
                         default: begin
                             // 其他 opcode 进 EXEC 状态，pc 由 EXEC 退出时更新
                         end
@@ -276,7 +286,8 @@ module core_ctrl #(
                     OP_LI,
                     OP_ALU,
                     OP_JMP,
-                    OP_BNZ:       next_state = FETCH;
+                    OP_BNZ,
+                    OP_LD_SDP:    next_state = FETCH;
                     // 其他（包括 OP_FINISH）进 FINISH
                     default:      next_state = FINISH;
                 endcase
@@ -305,30 +316,34 @@ module core_ctrl #(
         // 默认初始化
         inst_re        = 1'b0;
         inst_addr      = '0;
-        
+
         wb_re          = 1'b0;
         wb_raddr       = '0;
         ifb_re         = 1'b0;
         ifb_raddr      = '0;
-        
+
         // 延迟写的信号直接赋给端口
         ofb_we         = ofb_we_d2;
         ofb_waddr      = ofb_waddr_d2;
         sdp_en_out     = sdp_en_d2;
-        
+
         wrf_we         = wrf_we_d1;
         wrf_waddr      = wrf_waddr_d1;
         arf_we         = arf_we_d1;
         arf_waddr      = arf_waddr_d1;
-        
+
         arf_read_addr  = '0;
-        
+
         compute_en     = 1'b0;
         wrf_raddr      = '0;
         parf_addr      = '0;
         parf_clear     = 1'b0;
         parf_we        = 1'b0;
         done           = 1'b0;
+
+        // SDP 配置默认不写
+        sdp_shift_we    = 1'b0;
+        sdp_shift_wdata = '0;
 
         case (current_state)
             IDLE: begin
@@ -338,6 +353,15 @@ module core_ctrl #(
             FETCH: begin
                 inst_re   = 1'b1;
                 inst_addr = pc;
+            end
+
+            DECODE: begin
+                // OP_LD_SDP: 在 DECODE 状态组合驱动 SDP 写使能
+                // shift_amt 写入 sdp.sv 的寄存器（由 sdp_shift_we 触发 FF 捕获）
+                if (inst_data.opcode == OP_LD_SDP) begin
+                    sdp_shift_we    = 1'b1;
+                    sdp_shift_wdata = inst_data.ld_arf_addr; // [4:0] = shift_amt
+                end
             end
             
             EXEC_LD_WGT: begin

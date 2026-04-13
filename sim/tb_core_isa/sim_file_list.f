@@ -1,6 +1,7 @@
 +incdir+../../RTL
 ../../RTL/core_isa_pkg.sv
 ../../RTL/std_rf.sv
+../../RTL/sdp.sv
 ../../RTL/core_ctrl.sv
 ../../RTL/core_top.sv
 ../../RTL/mac_array.sv

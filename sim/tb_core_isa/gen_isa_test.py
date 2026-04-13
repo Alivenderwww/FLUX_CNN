@@ -37,6 +37,7 @@ OP_LI      = 8   # Load Immediate:     scalar_rf[rd] <- imm16
 OP_ALU     = 9   # Scalar ALU:         rd <- rs1 +/- rs2  or  rd <- rs1 +/- imm16
 OP_JMP     = 10  # Unconditional Jump: PC <- target_pc
 OP_BNZ     = 11  # Branch if Not Zero: if rs!=0: rs--, PC<-target_pc
+OP_LD_SDP  = 12  # Load SDP params:    SDP.shift_amt <- ld_arf_addr[4:0]
 
 WRF_DEPTH = 32   # Hardware fixed: 5-bit wgt_rf_addr field (max address = 31)
 
@@ -73,6 +74,10 @@ def pack_jmp(target_pc):
 def pack_bnz(rs, target_pc):
     return pack_inst(OP_BNZ, arf_addr=rs, sram_addr=target_pc)
 
+def pack_ld_sdp(shift_amt):
+    """OP_LD_SDP: SDP.shift_amt <- shift_amt[4:0]  (ld_arf_addr field)"""
+    return pack_inst(OP_LD_SDP, ld_arf_addr=shift_amt & 0x1F)
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -85,12 +90,14 @@ def parse_args():
     p.add_argument('--num_cout', type=int, default=8,   help='Output channels (default 8)')
     p.add_argument('--tile_w',   type=int, default=32,  help='ARF tile width  (default 32)')
     p.add_argument('--seed',     type=int, default=42,  help='Random seed     (default 42)')
+    p.add_argument('--shift',    type=int, default=0,
+                   help='SDP dequant right-shift amount 0..31 (default 0 = no shift)')
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
 # Main generation
 # ---------------------------------------------------------------------------
-def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed):
+def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0):
     import random
     random.seed(seed)
 
@@ -165,6 +172,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed):
     #   actual_ifb = r0 + inst.sram_addr [+ cnt]
     #   actual_ofb = r1 + inst.sram_addr [+ cnt]
     instructions = []
+
+    # --- SDP 配置：反量化右移量（每层仅执行一次，在权重加载前） ---
+    instructions.append(pack_ld_sdp(shift_amt))
 
     # --- Single-round: LD_WGT ONCE before the loop (true weight-stationary) ---
     if num_rounds == 1:
@@ -250,7 +260,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed):
                     for kx in range(K):
                         for cin in range(NUM_CIN):
                             psum += ifm_arr[yout+ky][px+kx][cin] * w_arr[ky][kx][cout][cin]
-                act = max(0, min(255, psum))   # ReLU + 8-bit saturation
+                act = max(0, min(255, psum >> shift_amt))   # Dequant(>>shift) + ReLU + 8-bit clip
                 pixel_val |= (act & 0xFF) << (cout * 8)
             expected_ofm.append(f"{pixel_val:016X}")
     with open('expected_ofm.txt', 'w') as f:
@@ -272,4 +282,4 @@ if __name__ == '__main__':
     args = parse_args()
     generate(H_IN=args.h_in, W_IN=args.w_in, K=args.k,
              NUM_CIN=args.num_cin, NUM_COUT=args.num_cout,
-             TILE_W=args.tile_w, seed=args.seed)
+             TILE_W=args.tile_w, seed=args.seed, shift_amt=args.shift)

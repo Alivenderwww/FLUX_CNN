@@ -24,7 +24,13 @@ package core_isa_pkg;
         OP_LI        = 4'd8,  // Load Immediate:     scalar_rf[rd] <- imm16
         OP_ALU       = 4'd9,  // Scalar ALU:         rd <- rs1 +/- rs2  or  rd <- rs1 +/- imm16
         OP_JMP       = 4'd10, // Unconditional Jump: PC <- target_pc (in sram_addr field)
-        OP_BNZ       = 4'd11  // Branch if Not Zero: if rs!=0: rs--, PC<-target_pc
+        OP_BNZ       = 4'd11, // Branch if Not Zero: if rs!=0: rs--, PC<-target_pc
+
+        // ---- SDP Configuration (resolved in DECODE, zero execution cycles) ----
+        // ld_arf_addr[4:0] = shift_amt (arithmetic right-shift for dequantization)
+        // sdp_en           = relu_en   (1=apply ReLU on ST_OFM, persists in SDP)
+        // All other fields unused.
+        OP_LD_SDP    = 4'd12  // Load SDP params: SDP.shift_amt <- ld_arf_addr[4:0]
     } opcode_e;
 
     // --- 2. Instruction Format (64-bit) ---

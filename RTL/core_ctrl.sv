@@ -3,6 +3,12 @@ import core_isa_pkg::*;
 
 // 指令译码器与微状态机 (Instruction Decoder & Micro-Sequencer)
 // 负责读取宏指令，并将其展开为底层的微小控制信号
+//
+// 【3级指令流水】IF → ID → EX
+//   在 EX 尾部（cnt == end_cnt-2）提前发出 IF，
+//   cnt == end_cnt-1 锁存 inst_data 到 pf_inst（完成 ID），
+//   cnt == end_cnt   EX 结束，直接切换到下一条指令的 EX，零空泡。
+//   分支（BNZ/JMP）和短指令（end_cnt<2）回退到普通 FETCH 路径。
 module core_ctrl #(
     parameter int WRF_DEPTH   = 32,      // 权重RF深度
     parameter int ARF_DEPTH   = 32,      // 激活值RF深度
@@ -12,37 +18,37 @@ module core_ctrl #(
 )(
     input  logic                                clk,
     input  logic                                rst_n,
-    
+
     // 整体控制信号
     input  logic                                start,        // 启动执行
     output logic                                done,         // 执行完成所有指令
-    
+
     // 指令提取接口 (Instruction Fetch)
     output logic                                inst_re,
     output logic [$clog2(INST_DEPTH)-1:0]       inst_addr,
     input  inst_t                               inst_data,
-    
+
     // SRAM 控制接口
     output logic                                wb_re,        // Weight Buffer 读使能
     output logic [$clog2(SRAM_DEPTH)-1:0]       wb_raddr,     // 权重读取地址
-    
+
     output logic                                ifb_re,       // IFB 读使能
     output logic [$clog2(SRAM_DEPTH)-1:0]       ifb_raddr,    // IFB 读地址
-    
+
     // OFB 控制接口
     output logic                                ofb_we,       // OFB 写使能
     output logic [$clog2(SRAM_DEPTH)-1:0]       ofb_waddr,    // OFB 写地址
     output logic                                sdp_en_out,   // 输出给后处理的 SDP 使能
-    
+
     // WRF 控制接口 (Weight Register File)
     output logic [63:0]                         wrf_we,       // 所有PE的写使能
     output logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr,    // 写地址
-    
+
     // ARF 控制接口 (Activation Register File)
     output logic                                arf_we,       // ARF 写使能
     output logic [$clog2(ARF_DEPTH)-1:0]        arf_waddr,    // ARF 写地址
     output logic [$clog2(ARF_DEPTH)-1:0]        arf_read_addr, // 读出到MAC的地址
-    
+
     // MAC & PARF 控制接口
     output logic                                compute_en,   // MAC计算使能
     output logic [$clog2(WRF_DEPTH)-1:0]        wrf_raddr,    // MAC读取WRF地址
@@ -73,50 +79,109 @@ module core_ctrl #(
                        // Total cycles = mac_len+1;  arf_read_addr = arf_addr + (cnt-1)
         FINISH
     } state_t;
-    
+
     state_t current_state, next_state;
-    
+
     //=============================================================================
-    // 2. 内部寄存器 (指令寄存、程序计数器、循环计数器)
+    // 2. 内部寄存器
     //=============================================================================
-    logic [$clog2(INST_DEPTH)-1:0] pc;          // 程序计数器
-    inst_t                         inst_reg;    // 当前执行的指令
-    logic [15:0]                   cnt;         // 微状态循环计数器 (对应 inst.length)
-    
+    logic [$clog2(INST_DEPTH)-1:0] pc;       // 当前执行指令的 PC
+    inst_t                         inst_reg; // 当前执行的指令
+    logic [15:0]                   cnt;      // 微状态循环计数器
+
     // 延迟匹配寄存器 (为了匹配 SRAM 的 1 周期读延迟)
     logic [63:0]                   wrf_we_d1;
     logic [$clog2(WRF_DEPTH)-1:0]  wrf_waddr_d1;
     logic                          arf_we_d1;
     logic [$clog2(ARF_DEPTH)-1:0]  arf_waddr_d1;
-    
+
     // OFB 延迟寄存器 (PARF 读出需要 2 周期)
     logic                          ofb_we_d1, ofb_we_d2;
     logic [$clog2(SRAM_DEPTH)-1:0] ofb_waddr_d1, ofb_waddr_d2;
     logic                          sdp_en_d1, sdp_en_d2;
 
-    // EXEC_LD32MAC 步进计算临时变量 (模块级以避免 always_comb 内变量声明问题)
+    // EXEC_LDnMAC 步进计算临时变量
     logic [2:0]  eff_stride;
     logic [14:0] strided_off;
 
     // LDnMAC 字段解包（仅对 OP_LDnMAC 有效）
-    // length[15:11] = ld_len-1  → 实际加载像素数 = ld_len (1..32)
-    // length[10:0]  = mac_len   → MAC 计算拍数
-    // 统一时序：cnt=0 纯 IFB 预取，cnt=1..mac_len MAC 激活，总共 mac_len+1 拍
-    logic [5:0]  ldnmac_ld_len;   // 6-bit 避免 ld_len=32 时5-bit溢出（31+1=32=6'b100000）
-    logic [10:0] ldnmac_mac_len;  // 从 inst_reg.length[10:0]  解包
-    logic [15:0] ldnmac_end_cnt;  // cnt 终止值 = mac_len（统一，无特殊分支）
+    logic [5:0]  ldnmac_ld_len;
+    logic [10:0] ldnmac_mac_len;
+    logic [15:0] ldnmac_end_cnt;
     assign ldnmac_ld_len  = {1'b0, inst_reg.length[15:11]} + 6'd1;
     assign ldnmac_mac_len = inst_reg.length[10:0];
-    assign ldnmac_end_cnt = {5'b0, ldnmac_mac_len};  // 固定 = mac_len，无 ld_len=1 特例
+    assign ldnmac_end_cnt = {5'b0, ldnmac_mac_len};
 
     // 标量寄存器文件 (8 x 16-bit)
-    // r0 = IFB 基址偏移（自动叠加到所有 IFB 读地址）
-    // r1 = OFB 基址偏移（自动叠加到所有 OFB 写地址）
-    // r2-r7 = 通用（循环计数器、临时变量等）
-    logic [15:0]                   scalar_rf [0:7];
-    
+    logic [15:0] scalar_rf [0:7];
+
     //=============================================================================
-    // 3. 时序逻辑更新
+    // 3. 【流水线预取】寄存器与控制
+    //=============================================================================
+    // pf_inst      : 预取并完成 ID 的下一条指令字
+    // pf_pc        : 预取指令对应的 PC（即将执行的 pc+1）
+    // pf_valid     : 预取寄存器已就绪，EX 结束时可以直通
+    // pf_if_pending: 已发出 IF 请求，等待下一拍 inst_data 有效
+    inst_t                         pf_inst;
+    logic [$clog2(INST_DEPTH)-1:0] pf_pc;
+    logic                          pf_valid;
+    logic                          pf_if_pending;
+
+    // 当前 EX 指令的 end_cnt（组合逻辑，供预取触发判断）
+    logic [15:0] cur_end_cnt;
+    always_comb begin
+        case (current_state)
+            EXEC_LDnMAC:                      cur_end_cnt = ldnmac_end_cnt;
+            EXEC_LD_WGT, EXEC_LD_ARF,
+            EXEC_MAC,    EXEC_ST_OFM:         cur_end_cnt = inst_reg.length - 16'd1;
+            default:                          cur_end_cnt = 16'hFFFF; // 不会触发
+        endcase
+    end
+
+    // 预取触发：cnt 到达 end_cnt-2 时发出 IF
+    // 条件：EX 状态、end_cnt>=2、预取槽空闲
+    logic pf_trigger;
+    assign pf_trigger = (cnt == cur_end_cnt - 16'd2)
+                      && (cur_end_cnt >= 16'd2)
+                      && !pf_valid && !pf_if_pending
+                      && (current_state inside {EXEC_LDnMAC, EXEC_LD_WGT,
+                                                EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM});
+
+    //=============================================================================
+    // 3b. 流水线直通判断（组合逻辑，供 always_ff 和 next_state 使用）
+    //=============================================================================
+    // opcode→EXEC 状态映射函数
+    function automatic state_t opcode_to_exec_state(input opcode_e op);
+        case (op)
+            OP_LD_WGT:              return EXEC_LD_WGT;
+            OP_LD_ARF:              return EXEC_LD_ARF;
+            OP_MAC_RUN:             return EXEC_MAC;
+            OP_ST_OFM:              return EXEC_ST_OFM;
+            OP_LD1MAC, OP_LDnMAC:   return EXEC_LDnMAC;
+            default:                return FETCH;
+        endcase
+    endfunction
+
+    // pf_inst 是 EXEC 类指令（非标量/FINISH）
+    logic pf_is_exec;
+    assign pf_is_exec = pf_valid && !(pf_inst.opcode inside {
+                            OP_NOP, OP_LI, OP_ALU, OP_JMP, OP_BNZ, OP_LD_SDP,
+                            opcode_e'(4'd15) /* OP_FINISH */ });
+
+    // EXEC 末尾判断
+    logic at_exec_end;
+    assign at_exec_end = (
+        (current_state == EXEC_LDnMAC  && cnt == ldnmac_end_cnt) ||
+        ((current_state inside {EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM})
+         && cnt == inst_reg.length - 1)
+    );
+
+    // EX→EX 直通条件
+    logic pf_direct;
+    assign pf_direct = at_exec_end && pf_is_exec;
+
+    //=============================================================================
+    // 4. 时序逻辑更新
     //=============================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -124,23 +189,52 @@ module core_ctrl #(
             pc            <= '0;
             cnt           <= '0;
             inst_reg      <= '0;
-            
-            wrf_we_d1         <= '0;
-            wrf_waddr_d1      <= '0;
-            arf_we_d1         <= '0;
-            arf_waddr_d1      <= '0;
-            
-            ofb_we_d1         <= '0;
-            ofb_waddr_d1      <= '0;
-            ofb_we_d2         <= '0;
-            ofb_waddr_d2      <= '0;
-            sdp_en_d1         <= '0;
-            sdp_en_d2         <= '0;
+
+            wrf_we_d1     <= '0;  wrf_waddr_d1 <= '0;
+            arf_we_d1     <= '0;  arf_waddr_d1 <= '0;
+            ofb_we_d1     <= '0;  ofb_waddr_d1 <= '0;
+            ofb_we_d2     <= '0;  ofb_waddr_d2 <= '0;
+            sdp_en_d1     <= '0;  sdp_en_d2    <= '0;
+
+            pf_inst       <= '0;
+            pf_pc         <= '0;
+            pf_valid      <= 1'b0;
+            pf_if_pending <= 1'b0;
+
             for (int i = 0; i < 8; i++) scalar_rf[i] <= '0;
         end else begin
             current_state <= next_state;
-            
-            // 写入 WRF 时的 1 拍延迟同步 (从 WB 读出需要 1 拍)
+
+            // ----------------------------------------------------------------
+            // 预取流水线控制（独立于主 FSM）
+            // ----------------------------------------------------------------
+
+            // 步骤1：触发 IF（组合信号 pf_trigger 驱动，此处记录 pending 和 pc）
+            if (pf_trigger) begin
+                pf_if_pending <= 1'b1;
+                pf_pc         <= pc + 1'b1;   // 预取顺序 PC+1（分支另处理）
+            end
+
+            // 步骤2：IF 完成，inst_data 有效，锁存到 pf_inst（完成 ID）
+            if (pf_if_pending) begin
+                pf_inst       <= inst_data;
+                pf_valid      <= 1'b1;
+                pf_if_pending <= 1'b0;
+            end
+
+            // 步骤3：EX→EX 直通——在 EXEC 最后一拍（cnt==end_cnt）时处理
+            // 若 pf_valid：加载 pf_inst，cnt←0，跳过 FETCH/DECODE
+            // 清除 pf_valid 无论走哪条路
+            if (pf_valid && cnt == cur_end_cnt
+                && (current_state inside {EXEC_LDnMAC, EXEC_LD_WGT,
+                                          EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM})) begin
+                pf_valid <= 1'b0;
+                // inst_reg 和 pc 的实际加载在下方主 case 里处理（直通分支）
+            end
+
+            // ----------------------------------------------------------------
+            // WRF 写延迟（WB 读出需要 1 拍）
+            // ----------------------------------------------------------------
             if (current_state == EXEC_LD_WGT && cnt < inst_reg.length) begin
                 wrf_we_d1    <= '1;
                 wrf_waddr_d1 <= inst_reg.wgt_rf_addr + cnt[4:0];
@@ -148,12 +242,10 @@ module core_ctrl #(
                 wrf_we_d1    <= '0;
                 wrf_waddr_d1 <= '0;
             end
-            
-            // 写入 ARF 时的 1 拍延迟同步 (从 IFB 读出需要 1 拍)
-            // EXEC_LD_ARF : 连续写入 length 个像素
-            // EXEC_LDnMAC : 写入 ld_len 个像素到 ARF[ld_arf_addr..ld_arf_addr+ld_len-1]
-            //   ld_len>1：cnt=0..ld_len-1 发 IFB 读，d1 在 cnt=1..ld_len 写 ARF
-            //   ld_len=1：cnt=0 发 IFB 读（1拍），d1 在 cnt=1 写 ARF（即使状态在 cnt=1 仍是 EXEC_LDnMAC）
+
+            // ----------------------------------------------------------------
+            // ARF 写延迟（IFB 读出需要 1 拍）
+            // ----------------------------------------------------------------
             if (current_state == EXEC_LD_ARF && cnt < inst_reg.length) begin
                 arf_we_d1    <= 1'b1;
                 arf_waddr_d1 <= inst_reg.arf_addr + cnt[4:0];
@@ -165,68 +257,62 @@ module core_ctrl #(
                 arf_waddr_d1 <= '0;
             end
 
-            // 写入 OFB 时的 2 拍延迟同步 (从发送 parf_addr 到 psum_out_vec 可用需要 2 拍)
+            // ----------------------------------------------------------------
+            // OFB 写延迟（PARF 读出需要 2 拍）
+            // ----------------------------------------------------------------
             if (current_state == EXEC_ST_OFM && cnt < inst_reg.length) begin
                 ofb_we_d1    <= 1'b1;
-                ofb_waddr_d1 <= scalar_rf[1][14:0] + inst_reg.sram_addr + cnt[14:0];  // r1 = OFB 基址偏移
+                ofb_waddr_d1 <= scalar_rf[1][14:0] + inst_reg.sram_addr + cnt[14:0];
                 sdp_en_d1    <= inst_reg.sdp_en;
             end else begin
                 ofb_we_d1    <= 1'b0;
                 ofb_waddr_d1 <= '0;
                 sdp_en_d1    <= 1'b0;
             end
-            
             ofb_we_d2    <= ofb_we_d1;
             ofb_waddr_d2 <= ofb_waddr_d1;
             sdp_en_d2    <= sdp_en_d1;
 
+            // ----------------------------------------------------------------
+            // 主 FSM 状态动作
+            // ----------------------------------------------------------------
             case (current_state)
                 IDLE: begin
                     pc  <= '0;
                     cnt <= '0;
                 end
-                
+
                 FETCH: begin
-                    // FETCH 状态下只发出读请求
+                    // 只发出读请求（组合逻辑），此处无额外动作
                 end
-                
+
                 DECODE: begin
-                    inst_reg <= inst_data; // 锁存指令
+                    inst_reg <= inst_data;
                     cnt      <= '0;
-                    // DECODE 内直接完成的指令：NOP、标量运算、跳转
                     case (inst_data.opcode)
                         OP_NOP: begin
                             pc <= pc + 1'b1;
                         end
-
                         OP_LI: begin
-                            // scalar_rf[rd] <- imm16（rd 在 arf_addr[2:0]，imm16 在 length 字段）
                             scalar_rf[inst_data.arf_addr[2:0]] <= inst_data.length;
                             pc <= pc + 1'b1;
                         end
-
                         OP_ALU: begin
-                            // clr_parf=0: 加法；clr_parf=1: 减法
-                            // sdp_en=0: 寄存器模式；sdp_en=1: 立即数模式（imm16 在 length 字段）
-                            if (!inst_data.sdp_en) begin  // 寄存器模式: rd <- rs1 op rs2
+                            if (!inst_data.sdp_en) begin
                                 scalar_rf[inst_data.arf_addr[2:0]] <= !inst_data.clr_parf
                                     ? (scalar_rf[inst_data.wgt_rf_addr[2:0]] + scalar_rf[inst_data.parf_addr[2:0]])
                                     : (scalar_rf[inst_data.wgt_rf_addr[2:0]] - scalar_rf[inst_data.parf_addr[2:0]]);
-                            end else begin                 // 立即数模式: rd <- rs1 op imm16
+                            end else begin
                                 scalar_rf[inst_data.arf_addr[2:0]] <= !inst_data.clr_parf
                                     ? (scalar_rf[inst_data.wgt_rf_addr[2:0]] + inst_data.length)
                                     : (scalar_rf[inst_data.wgt_rf_addr[2:0]] - inst_data.length);
                             end
                             pc <= pc + 1'b1;
                         end
-
                         OP_JMP: begin
-                            // 无条件跳转：PC <- target_pc（target 在 sram_addr 字段）
                             pc <= inst_data.sram_addr[$clog2(INST_DEPTH)-1:0];
                         end
-
                         OP_BNZ: begin
-                            // 递减并按需跳转PC：rs 在 arf_addr[2:0]，target 在 sram_addr
                             if (scalar_rf[inst_data.arf_addr[2:0]] != '0) begin
                                 scalar_rf[inst_data.arf_addr[2:0]] <= scalar_rf[inst_data.arf_addr[2:0]] - 1'b1;
                                 pc <= inst_data.sram_addr[$clog2(INST_DEPTH)-1:0];
@@ -234,210 +320,220 @@ module core_ctrl #(
                                 pc <= pc + 1'b1;
                             end
                         end
-
                         OP_LD_SDP: begin
-                            // SDP 反量化右移参数：shift_amt <- ld_arf_addr[4:0]
-                            // sdp_shift_we 在组合逻辑输出侧产生，此处只推进 PC
                             pc <= pc + 1'b1;
                         end
-
                         default: begin
-                            // 其他 opcode 进 EXEC 状态，pc 由 EXEC 退出时更新
+                            // EXEC 类指令：pc 在 EXEC 退出时更新
                         end
                     endcase
                 end
-                
+
                 EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
                     if (cnt == inst_reg.length - 1) begin
-                        cnt <= '0;
-                        pc  <= pc + 1'b1; // 执行完指令，PC 自增
+                        // EX 结束
+                        if (pf_direct) begin
+                            // ---- 流水线直通：pf_inst 是 EXEC 类，零空泡切换 ----
+                            inst_reg <= pf_inst;
+                            pc       <= pf_pc;       // pf_pc = 预取指令本身的 PC
+                            cnt      <= '0;
+                        end else begin
+                            cnt <= '0;
+                            pc  <= pc + 1'b1;
+                            pf_valid <= 1'b0;
+                        end
                     end else begin
                         cnt <= cnt + 1'b1;
                     end
                 end
 
                 EXEC_LDnMAC: begin
-                    // ld_len=1（LD1MAC模式）：运行 mac_len 拍（cnt=0..mac_len-1）
-                    // ld_len>1（LD32MAC模式）：运行 mac_len+1 拍（cnt=0 预取 + cnt=1..mac_len MAC）
                     if (cnt == ldnmac_end_cnt) begin
-                        cnt <= '0;
-                        pc  <= pc + 1'b1;
+                        // EX 结束
+                        if (pf_direct) begin
+                            // ---- 流水线直通：pf_inst 是 EXEC 类，零空泡切换 ----
+                            inst_reg <= pf_inst;
+                            pc       <= pf_pc;
+                            cnt      <= '0;
+                        end else begin
+                            cnt <= '0;
+                            pc  <= pc + 1'b1;
+                            pf_valid <= 1'b0;
+                        end
                     end else begin
                         cnt <= cnt + 1'b1;
                     end
                 end
-                
+
                 FINISH: begin
                     // 保持 FINISH
                 end
-                
+
                 default: ;
             endcase
         end
     end
 
     //=============================================================================
-    // 4. 状态机跳转逻辑
+    // 5. 状态机跳转逻辑（含流水线直通分支）
     //=============================================================================
+
     always_comb begin
         next_state = current_state;
-        
+
         case (current_state)
             IDLE: begin
                 if (start) next_state = FETCH;
             end
-            
+
             FETCH: begin
-                next_state = DECODE; // 等待1周期指令SRAM读出
+                next_state = DECODE;
             end
-            
+
             DECODE: begin
-                // 根据 opcode 跳转到对应的执行状态
                 case (inst_data.opcode)
-                    OP_NOP:       next_state = FETCH; // 忽略 NOP，继续取指
+                    OP_NOP:       next_state = FETCH;
                     OP_LD_WGT:    next_state = EXEC_LD_WGT;
                     OP_LD_ARF:    next_state = EXEC_LD_ARF;
                     OP_MAC_RUN:   next_state = EXEC_MAC;
                     OP_ST_OFM:    next_state = EXEC_ST_OFM;
-                    OP_LD1MAC:    next_state = EXEC_LDnMAC; // LD1MAC 作为 ld_len=1 的 LDnMAC 处理
+                    OP_LD1MAC,
                     OP_LDnMAC:    next_state = EXEC_LDnMAC;
-                    // 标量指令全部在 DECODE 内完成，直接回 FETCH
-                    OP_LI,
-                    OP_ALU,
-                    OP_JMP,
-                    OP_BNZ,
+                    OP_LI, OP_ALU,
+                    OP_JMP, OP_BNZ,
                     OP_LD_SDP:    next_state = FETCH;
-                    // 其他（包括 OP_FINISH）进 FINISH
                     default:      next_state = FINISH;
                 endcase
             end
-            
+
             EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
-                if (cnt == inst_reg.length - 1) next_state = FETCH;
+                if (cnt == inst_reg.length - 1) begin
+                    if (pf_direct)
+                        next_state = opcode_to_exec_state(pf_inst.opcode);
+                    else
+                        next_state = FETCH;  // 标量预取或无预取：正常取指
+                end
             end
 
             EXEC_LDnMAC: begin
-                if (cnt == ldnmac_end_cnt) next_state = FETCH;
+                if (cnt == ldnmac_end_cnt) begin
+                    if (pf_direct)
+                        next_state = opcode_to_exec_state(pf_inst.opcode);
+                    else
+                        next_state = FETCH;
+                end
             end
-            
+
             FINISH: begin
                 next_state = FINISH;
             end
-            
+
             default: next_state = IDLE;
         endcase
     end
 
     //=============================================================================
-    // 5. 输出控制信号逻辑 (纯组合逻辑)
+    // 6. 输出控制信号逻辑 (纯组合逻辑)
     //=============================================================================
     always_comb begin
-        // 默认初始化
-        inst_re        = 1'b0;
-        inst_addr      = '0;
+        // 默认
+        inst_re         = 1'b0;
+        inst_addr       = '0;
+        wb_re           = 1'b0;
+        wb_raddr        = '0;
+        ifb_re          = 1'b0;
+        ifb_raddr       = '0;
 
-        wb_re          = 1'b0;
-        wb_raddr       = '0;
-        ifb_re         = 1'b0;
-        ifb_raddr      = '0;
+        ofb_we          = ofb_we_d2;
+        ofb_waddr       = ofb_waddr_d2;
+        sdp_en_out      = sdp_en_d2;
 
-        // 延迟写的信号直接赋给端口
-        ofb_we         = ofb_we_d2;
-        ofb_waddr      = ofb_waddr_d2;
-        sdp_en_out     = sdp_en_d2;
+        wrf_we          = wrf_we_d1;
+        wrf_waddr       = wrf_waddr_d1;
+        arf_we          = arf_we_d1;
+        arf_waddr       = arf_waddr_d1;
 
-        wrf_we         = wrf_we_d1;
-        wrf_waddr      = wrf_waddr_d1;
-        arf_we         = arf_we_d1;
-        arf_waddr      = arf_waddr_d1;
-
-        arf_read_addr  = '0;
-
-        compute_en     = 1'b0;
-        wrf_raddr      = '0;
-        parf_addr      = '0;
-        parf_clear     = 1'b0;
-        parf_we        = 1'b0;
-        done           = 1'b0;
-
-        // SDP 配置默认不写
+        arf_read_addr   = '0;
+        compute_en      = 1'b0;
+        wrf_raddr       = '0;
+        parf_addr       = '0;
+        parf_clear      = 1'b0;
+        parf_we         = 1'b0;
+        done            = 1'b0;
         sdp_shift_we    = 1'b0;
         sdp_shift_wdata = '0;
 
+        // 预取 IF 请求（优先级高于 FETCH 状态）
+        // pf_trigger 拉高时，组合逻辑立即发出 inst_re 和 inst_addr
+        if (pf_trigger) begin
+            inst_re   = 1'b1;
+            inst_addr = pc + 1'b1;
+        end
+
         case (current_state)
             IDLE: begin
-                // wait
+                // 等待
             end
-            
+
             FETCH: begin
-                inst_re   = 1'b1;
-                inst_addr = pc;
+                // 仅当预取未占用总线时发出 FETCH 的 IF
+                if (!pf_trigger) begin
+                    inst_re   = 1'b1;
+                    inst_addr = pc;
+                end
             end
 
             DECODE: begin
-                // OP_LD_SDP: 在 DECODE 状态组合驱动 SDP 写使能
-                // shift_amt 写入 sdp.sv 的寄存器（由 sdp_shift_we 触发 FF 捕获）
+                // 若预取了标量/FINISH，在此处直接用 pf_inst（已锁存在 pf_inst）
+                // 判断使用 pf_valid 路径还是正常 inst_data 路径
+                // 注意：进入 DECODE 状态有两种方式：
+                //   (a) 正常 FETCH→DECODE：inst_data 是从 INST_SRAM 来的当前指令
+                //   (b) 直通后预取了标量指令：pf_valid && !pf_is_exec
+                // 两种情况下 inst_data（来自 SRAM）的内容都已正确锁存，此处仅驱动 SDP
                 if (inst_data.opcode == OP_LD_SDP) begin
                     sdp_shift_we    = 1'b1;
-                    sdp_shift_wdata = inst_data.ld_arf_addr; // [4:0] = shift_amt
+                    sdp_shift_wdata = inst_data.ld_arf_addr;
                 end
             end
-            
+
             EXEC_LD_WGT: begin
-                // 发起 SRAM 读请求，目标是 Weight Buffer
                 if (cnt < inst_reg.length) begin
                     wb_re    = 1'b1;
                     wb_raddr = inst_reg.sram_addr + cnt[14:0];
                 end
             end
-            
+
             EXEC_LD_ARF: begin
-                // 发起 IFB 读请求（r0 为 IFB 基址偏移）
                 if (cnt < inst_reg.length) begin
                     ifb_re    = 1'b1;
                     ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + cnt[14:0];
                 end
             end
-            
+
             EXEC_MAC: begin
-                // 开始纯计算
                 compute_en    = 1'b1;
-                wrf_raddr     = inst_reg.wgt_rf_addr;          // 从指令获取使用哪个权重
-                arf_read_addr = inst_reg.arf_addr + cnt[4:0];  // NEW: use arf_addr
-                parf_addr     = inst_reg.parf_addr + cnt[4:0]; // 写入 PARF 的对应位置
+                wrf_raddr     = inst_reg.wgt_rf_addr;
+                arf_read_addr = inst_reg.arf_addr + cnt[4:0];
+                parf_addr     = inst_reg.parf_addr + cnt[4:0];
                 parf_we       = 1'b1;
-                
-                // 根据指令决定是否清空累加器，如果为1，则全流水线周期内持续清零对应的PARF历史值
-                if (inst_reg.clr_parf) parf_clear = 1'b1; 
+                if (inst_reg.clr_parf) parf_clear = 1'b1;
             end
-            
+
             EXEC_ST_OFM: begin
-                // 发起 PARF 读请求（通过直接设置 parf_addr）
-                // MAC 阵列会在 2 拍后将 psum_out_vec 吐出，ofb_we 和 ofb_waddr 的延迟管线会同时到达
                 parf_addr = inst_reg.parf_addr + cnt[4:0];
             end
 
             EXEC_LDnMAC: begin
-                // 统一 LDnMAC 时序（所有 ld_len 值完全相同）：
-                //   cnt=0          : 纯 IFB 预取（无 MAC）
-                //   cnt=1..mac_len : IFB 继续加载（若 cnt < ld_len）+ MAC 并行
-                //     arf_read_addr = arf_addr + (cnt - 1)   （相对读指针）
-                // 总计 mac_len+1 拍；ldnmac_end_cnt = mac_len（固定）
-                //
-                // IFB 读步长由 eff_stride 决定：
-                //   stride=0 或 1 → 有效步长 1（相邻像素）
-                //   stride=2..7   → 有效步长 stride（跨列采样）
-
                 eff_stride  = (inst_reg.stride == 3'd0) ? 3'd1 : inst_reg.stride;
                 strided_off = cnt[14:0] * {12'b0, eff_stride};
 
-                // IFB 读：cnt=0..ld_len-1（共 ld_len 拍）
+                // IFB 读：cnt=0..ld_len-1
                 if (cnt < {11'b0, ldnmac_ld_len}) begin
                     ifb_re    = 1'b1;
                     ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + strided_off;
                 end
 
-                // MAC：cnt=1..mac_len（共 mac_len 拍，与 IFB 加载流水重叠）
+                // MAC：cnt=1..mac_len
                 if (cnt > 0) begin
                     compute_en    = 1'b1;
                     wrf_raddr     = inst_reg.wgt_rf_addr;
@@ -451,7 +547,7 @@ module core_ctrl #(
             FINISH: begin
                 done = 1'b1;
             end
-            
+
             default: ;
         endcase
     end

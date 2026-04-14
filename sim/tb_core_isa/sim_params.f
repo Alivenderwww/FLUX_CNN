@@ -1,2 +1,2 @@
-+H_OUT=6
-+W_OUT=6
++H_OUT=94
++W_OUT=14

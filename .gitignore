@@ -7,6 +7,7 @@ sim/*/vsim_run.wlf
 sim/*/*.txt
 sim/*/wlft*
 sim/*/__pycache__/
+sim/*/sim_params.f
 work
 
 # Vivado synthesis artifacts (keep scripts and reports, ignore runtime files)

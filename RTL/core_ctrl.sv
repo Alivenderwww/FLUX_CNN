@@ -66,8 +66,11 @@ module core_ctrl #(
         EXEC_LD_ARF,
         EXEC_MAC,
         EXEC_ST_OFM,
-        EXEC_LD1MAC,  // Load 1 pixel to ARF[ld_arf_addr] AND run MAC simultaneously
-        EXEC_LD32MAC, // Load N pixels into ARF AND run MAC simultaneously (length+1 cycles total)
+        EXEC_LDnMAC,   // Unified Load-n-and-MAC
+                       // ld_len = inst_reg.length[15:11]+1  pixels loaded from IFB into ARF
+                       // mac_len= inst_reg.length[10:0]     MAC active cycles
+                       // Timing: cnt=0 IFB prefetch only; cnt=1..mac_len IFB (if cnt<ld_len) + MAC
+                       // Total cycles = mac_len+1;  arf_read_addr = arf_addr + (cnt-1)
         FINISH
     } state_t;
     
@@ -94,6 +97,17 @@ module core_ctrl #(
     // EXEC_LD32MAC 步进计算临时变量 (模块级以避免 always_comb 内变量声明问题)
     logic [2:0]  eff_stride;
     logic [14:0] strided_off;
+
+    // LDnMAC 字段解包（仅对 OP_LDnMAC 有效）
+    // length[15:11] = ld_len-1  → 实际加载像素数 = ld_len (1..32)
+    // length[10:0]  = mac_len   → MAC 计算拍数
+    // 统一时序：cnt=0 纯 IFB 预取，cnt=1..mac_len MAC 激活，总共 mac_len+1 拍
+    logic [5:0]  ldnmac_ld_len;   // 6-bit 避免 ld_len=32 时5-bit溢出（31+1=32=6'b100000）
+    logic [10:0] ldnmac_mac_len;  // 从 inst_reg.length[10:0]  解包
+    logic [15:0] ldnmac_end_cnt;  // cnt 终止值 = mac_len（统一，无特殊分支）
+    assign ldnmac_ld_len  = {1'b0, inst_reg.length[15:11]} + 6'd1;
+    assign ldnmac_mac_len = inst_reg.length[10:0];
+    assign ldnmac_end_cnt = {5'b0, ldnmac_mac_len};  // 固定 = mac_len，无 ld_len=1 特例
 
     // 标量寄存器文件 (8 x 16-bit)
     // r0 = IFB 基址偏移（自动叠加到所有 IFB 读地址）
@@ -136,16 +150,16 @@ module core_ctrl #(
             end
             
             // 写入 ARF 时的 1 拍延迟同步 (从 IFB 读出需要 1 拍)
-            // EXEC_LD_ARF:  连续写入 length 个像素
-            // EXEC_LD1MAC:  仅在 cnt=0 写入 1 个像素到 ld_arf_addr（与 MAC 并行）
-            // EXEC_LD32MAC: 连续写入 length 个像素（cnt=0..length-1），MAC 在 cnt=1..length 同步运行
-            if ((current_state == EXEC_LD_ARF  && cnt < inst_reg.length) ||
-                (current_state == EXEC_LD32MAC  && cnt < inst_reg.length)) begin
+            // EXEC_LD_ARF : 连续写入 length 个像素
+            // EXEC_LDnMAC : 写入 ld_len 个像素到 ARF[ld_arf_addr..ld_arf_addr+ld_len-1]
+            //   ld_len>1：cnt=0..ld_len-1 发 IFB 读，d1 在 cnt=1..ld_len 写 ARF
+            //   ld_len=1：cnt=0 发 IFB 读（1拍），d1 在 cnt=1 写 ARF（即使状态在 cnt=1 仍是 EXEC_LDnMAC）
+            if (current_state == EXEC_LD_ARF && cnt < inst_reg.length) begin
                 arf_we_d1    <= 1'b1;
                 arf_waddr_d1 <= inst_reg.arf_addr + cnt[4:0];
-            end else if (current_state == EXEC_LD1MAC && cnt == 0) begin
+            end else if (current_state == EXEC_LDnMAC && cnt < {11'b0, ldnmac_ld_len}) begin
                 arf_we_d1    <= 1'b1;
-                arf_waddr_d1 <= inst_reg.ld_arf_addr;
+                arf_waddr_d1 <= inst_reg.ld_arf_addr + cnt[4:0];
             end else begin
                 arf_we_d1    <= 1'b0;
                 arf_waddr_d1 <= '0;
@@ -233,7 +247,7 @@ module core_ctrl #(
                     endcase
                 end
                 
-                EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM, EXEC_LD1MAC: begin
+                EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
                     if (cnt == inst_reg.length - 1) begin
                         cnt <= '0;
                         pc  <= pc + 1'b1; // 执行完指令，PC 自增
@@ -242,9 +256,10 @@ module core_ctrl #(
                     end
                 end
 
-                EXEC_LD32MAC: begin
-                    // 比普通 EXEC 多跑 1 拍（cnt=0 为 IFB 预取，cnt=1..length 为 MAC）
-                    if (cnt == inst_reg.length) begin
+                EXEC_LDnMAC: begin
+                    // ld_len=1（LD1MAC模式）：运行 mac_len 拍（cnt=0..mac_len-1）
+                    // ld_len>1（LD32MAC模式）：运行 mac_len+1 拍（cnt=0 预取 + cnt=1..mac_len MAC）
+                    if (cnt == ldnmac_end_cnt) begin
                         cnt <= '0;
                         pc  <= pc + 1'b1;
                     end else begin
@@ -284,8 +299,8 @@ module core_ctrl #(
                     OP_LD_ARF:    next_state = EXEC_LD_ARF;
                     OP_MAC_RUN:   next_state = EXEC_MAC;
                     OP_ST_OFM:    next_state = EXEC_ST_OFM;
-                    OP_LD1MAC:    next_state = EXEC_LD1MAC;
-                    OP_LD32MAC:   next_state = EXEC_LD32MAC;
+                    OP_LD1MAC:    next_state = EXEC_LDnMAC; // LD1MAC 作为 ld_len=1 的 LDnMAC 处理
+                    OP_LDnMAC:    next_state = EXEC_LDnMAC;
                     // 标量指令全部在 DECODE 内完成，直接回 FETCH
                     OP_LI,
                     OP_ALU,
@@ -297,12 +312,12 @@ module core_ctrl #(
                 endcase
             end
             
-            EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM, EXEC_LD1MAC: begin
+            EXEC_LD_WGT, EXEC_LD_ARF, EXEC_MAC, EXEC_ST_OFM: begin
                 if (cnt == inst_reg.length - 1) next_state = FETCH;
             end
 
-            EXEC_LD32MAC: begin
-                if (cnt == inst_reg.length) next_state = FETCH; // 多跑 1 拍
+            EXEC_LDnMAC: begin
+                if (cnt == ldnmac_end_cnt) next_state = FETCH;
             end
             
             FINISH: begin
@@ -402,45 +417,27 @@ module core_ctrl #(
                 parf_addr = inst_reg.parf_addr + cnt[4:0];
             end
 
-            EXEC_LD1MAC: begin
-                // 单像素 kx 切换优化：写 ARF[ld_arf_addr] 与 MAC 计算同时进行
-                // ARF 写入地址（ld_arf_addr）与 MAC 读取地址（arf_addr+cnt）不重叠，无冒险
-
-                // 仅在第 0 拍发起 IFB 单像素读（d1 流水线负责 ARF 实际写入）
-                if (cnt == 0) begin
-                    ifb_re    = 1'b1;
-                    ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr;
-                end
-
-                // MAC 全程运行（与上面的 IFB 读并行）
-                compute_en    = 1'b1;
-                wrf_raddr     = inst_reg.wgt_rf_addr;
-                arf_read_addr = inst_reg.arf_addr + cnt[4:0];
-                parf_addr     = inst_reg.parf_addr + cnt[4:0];
-                parf_we       = 1'b1;
-                if (inst_reg.clr_parf) parf_clear = 1'b1;
-            end
-
-            EXEC_LD32MAC: begin
-                // 初始加载优化：从 IFB 连续读 length 个像素写入 ARF，同时 MAC 并行运行。
+            EXEC_LDnMAC: begin
+                // 统一 LDnMAC 时序（所有 ld_len 值完全相同）：
+                //   cnt=0          : 纯 IFB 预取（无 MAC）
+                //   cnt=1..mac_len : IFB 继续加载（若 cnt < ld_len）+ MAC 并行
+                //     arf_read_addr = arf_addr + (cnt - 1)   （相对读指针）
+                // 总计 mac_len+1 拍；ldnmac_end_cnt = mac_len（固定）
                 //
-                // 时序：cnt=0 为 IFB 预取拍（无 MAC）；cnt=1..length 为重叠拍：
-                //   - d1 流水将 pixel[cnt-1] 写入 ARF[arf_addr+cnt-1]
-                //   - bypass MUX（core_top）检测写读地址相同时直接前向传给 MAC
-                //   - MAC 读 arf_read_addr=arf_addr+(cnt-1)，得到 pixel[cnt-1] ✓
-                //
-                // stride: inst_reg.stride==0 视为 stride=1（默认）
-                //   ifb_raddr = r0 + sram_addr + cnt * effective_stride
+                // IFB 读步长由 eff_stride 决定：
+                //   stride=0 或 1 → 有效步长 1（相邻像素）
+                //   stride=2..7   → 有效步长 stride（跨列采样）
+
                 eff_stride  = (inst_reg.stride == 3'd0) ? 3'd1 : inst_reg.stride;
                 strided_off = cnt[14:0] * {12'b0, eff_stride};
 
-                // IFB 连续读（cnt=0..length-1）（r0 为 IFB 基址偏移）
-                if (cnt < inst_reg.length) begin
+                // IFB 读：cnt=0..ld_len-1（共 ld_len 拍）
+                if (cnt < {11'b0, ldnmac_ld_len}) begin
                     ifb_re    = 1'b1;
                     ifb_raddr = scalar_rf[0][14:0] + inst_reg.sram_addr + strided_off;
                 end
 
-                // MAC 从 cnt=1 开始运行（pixel[0] 在 cnt=1 的 d1 写入时才可用）
+                // MAC：cnt=1..mac_len（共 mac_len 拍，与 IFB 加载流水重叠）
                 if (cnt > 0) begin
                     compute_en    = 1'b1;
                     wrf_raddr     = inst_reg.wgt_rf_addr;

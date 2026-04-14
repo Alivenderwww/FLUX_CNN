@@ -12,9 +12,14 @@ package core_isa_pkg;
         OP_LD_PARF   = 4'd3,  // Load Initial Psum into PARF
         OP_ST_OFM    = 4'd4,  // Store Output Feature Map from PARF to Outmap Buffer
         OP_MAC_RUN   = 4'd5,  // Execute MAC Pipeline
-        OP_LD1MAC    = 4'd6,  // Load 1 pixel to ARF[ld_arf_addr] AND run MAC simultaneously (kx-switch optimization)
-        OP_LD32MAC   = 4'd7,  // Load N pixels from IFB into ARF AND run MAC simultaneously (initial-load optimization)
-                              // State runs length+1 cycles: cycle 0 = IFB prefetch, cycles 1..length = load+MAC overlap
+        OP_LD1MAC    = 4'd6,  // (Deprecated, alias for OP_LDnMAC with ld_len=1) kept for compatibility
+        OP_LDnMAC    = 4'd7,  // Unified Load-n-and-MAC: load ld_len pixels from IFB into ARF[ld_arf_addr..],
+                              // then run MAC for mac_len cycles -- subsumes LD1MAC and LD32MAC.
+                              // length field split: length[15:11]=ld_len-1 (0..31 → 1..32 pixels loaded)
+                              //                    length[10:0] =mac_len   (MAC active cycles, typically TILE_W)
+                              // IFB read stride given by inst.stride field (0=1,1=1,2=2..7=7).
+                              // ARF write base = ld_arf_addr; MAC read base = arf_addr.
+                              // State runs mac_len+1 cycles total: cycle 0 = IFB prefetch, cycles 1..mac_len = load+MAC overlap.
 
         // ---- Scalar Control Flow Instructions (resolved in DECODE, zero execution cycles) ----
         // Register convention: r0=IFB base offset, r1=OFB base offset, r2-r7 general purpose
@@ -39,8 +44,13 @@ package core_isa_pkg;
     //   [57:53] arf_addr    [52:48] wgt_rf_addr  [47:43] parf_addr
     //   [42:28] sram_addr   [27:12] length   [11:8] reserved  [7:5] stride  [4:0] ld_arf_addr
     //
-    //   stride[2:0]: OP_LD32MAC input column stride (0 or 1 = stride-1, 2 = stride-2, ..., 7 = stride-7)
-    //   ld_arf_addr: OP_LD1MAC  -- ARF write address for the single loaded pixel
+    //   length field for OP_LDnMAC (opcode 7):
+    //     length[15:11] = ld_len - 1  (5-bit, 0..31 → load 1..32 pixels from IFB into ARF)
+    //     length[10:0]  = mac_len     (11-bit, MAC active cycles, typically TILE_W=32)
+    //   length field for all other opcodes: original 16-bit count (unchanged).
+    //
+    //   stride[2:0]: OP_LDnMAC IFB read stride (0 or 1 → effective stride 1; 2..7 → stride 2..7)
+    //   ld_arf_addr: OP_LDnMAC ARF write base address for loaded pixels
     typedef struct packed {
         opcode_e       opcode;      // [63:60] Opcode
 
@@ -55,10 +65,13 @@ package core_isa_pkg;
 
         // --- External/Buffer Addressing & Control ---
         logic [14:0]   sram_addr;   // [42:28] (15-bit) Base address in Ifmap/Outmap Buffer
-        logic [15:0]   length;      // [27:12] (16-bit) Length of continuous operation (e.g., 32 cycles)
+        logic [15:0]   length;      // [27:12] (16-bit) For OP_LDnMAC: {ld_len-1[4:0], mac_len[10:0]}
+                                    //                   ld_len = length[15:11]+1 (pixels to load from IFB)
+                                    //                   mac_len= length[10:0]    (MAC active cycles)
+                                    //                  For all other opcodes: plain 16-bit count.
         logic [3:0]    reserved;    // [11:8]  Reserved for future use
-        logic [2:0]    stride;      // [7:5]   OP_LD32MAC: input stride (0=1, 1=1, 2=2, ..., 7=7)
-        logic [4:0]    ld_arf_addr; // [4:0]   OP_LD1MAC: ARF write address for the single loaded pixel
+        logic [2:0]    stride;      // [7:5]   OP_LDnMAC: IFB read stride (0=1, 1=1, 2=2, ..., 7=7)
+        logic [4:0]    ld_arf_addr; // [4:0]   OP_LDnMAC: ARF write base address for loaded pixels
     } inst_t;
 
 endpackage : core_isa_pkg

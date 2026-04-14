@@ -20,11 +20,18 @@ Weight scheduling:
   by LD_WGT, so mid-row round transitions work correctly.
 
 Stride handling:
-  stride=1: LD32MAC (kx=0) + LD1MAC sliding-window optimisation (no change).
-  stride>1: every (ky,kx) uses LD32MAC with inst.stride field set to stride.
-            HW computes ifb_raddr = r0 + sram_addr + cnt * stride.
-            LD1MAC is not used because the sliding-window shortcut only works
-            when consecutive output pixels share all but one input column.
+  stride=1: LDnMAC(ld_len=TILE_W) for kx=0, LDnMAC(ld_len=1) sliding-window for kx=1..K-1.
+            Sliding window works because only kx=0 does a full ARF reload; kx=1..K-1 each
+            load just 1 new pixel into ARF while the MAC reads the rest from existing ARF state.
+  stride>1: ALL kx do full reloads (ld_len=TILE_W for full tiles, ld_len=valid_w for partial).
+            ARF sliding window is NOT applied for stride>1 because:
+              - kx < stride each issue a full ld_len=TILE_W reload, all writing to ARF[0..TILE_W-1].
+              - The second full reload (kx=1) overwrites kx=0's data, so kx=2's attempt to slide
+                on kx=0 would read stale ARF content.
+              - Additionally, kx//stride aliases consecutive kx values to the same slide_count
+                (e.g. kx=2 and kx=3 both give slide_count=1 for stride=2).
+            Future optimisation: interleave kx chains (0,2,4,.. then 1,3,5,..) with separate
+            ARF regions to re-enable stride>1 sliding, but this requires ARF depth ≥ 2*TILE_W.
 """
 import argparse
 import sys
@@ -38,8 +45,10 @@ OP_LD_ARF  = 2
 OP_LD_PARF = 3
 OP_ST_OFM  = 4
 OP_MAC_RUN = 5
-OP_LD1MAC  = 6   # Load 1 pixel -> ARF[ld_arf_addr] AND run MAC simultaneously
-OP_LD32MAC = 7   # Load TILE_W pixels -> ARF AND run MAC simultaneously (length+1 cycles)
+OP_LD1MAC  = 6   # (Legacy) ld_len=1 special case, encoded as OP_LDnMAC in hardware
+OP_LDnMAC  = 7   # Unified Load-n-and-MAC: ld_len pixels loaded, mac_len cycles MAC
+                 # length[15:11] = ld_len-1  (0..31 → load 1..32 pixels)
+                 # length[10:0]  = mac_len   (MAC active cycles, typically TILE_W)
 OP_FINISH  = 15
 OP_LI      = 8   # Load Immediate:     scalar_rf[rd] <- imm16
 OP_ALU     = 9   # Scalar ALU:         rd <- rs1 +/- rs2  or  rd <- rs1 +/- imm16
@@ -66,6 +75,26 @@ def pack_inst(opcode, clr_parf=0, sdp_en=0, arf_addr=0, wgt_addr=0,
     inst |= (stride      & 0x7)    << 5
     inst |= (ld_arf_addr & 0x1F)
     return f"{inst:016X}"
+
+def pack_ldnmac(clr_parf=0, wgt_addr=0, parf_addr=0, arf_addr=0,
+                sram_addr=0, ld_len=1, mac_len=32, stride=0, ld_arf_addr=0):
+    """Pack a unified LDnMAC instruction (opcode=7).
+
+    ld_len  : number of pixels to load from IFB into ARF (1..32)
+    mac_len : number of MAC active cycles (typically TILE_W=32)
+    ld_arf_addr : ARF write base address for loaded pixels
+    arf_addr    : ARF read base address for MAC
+    stride  : IFB read stride (0=1, 1=1, 2..7=2..7)
+
+    length field encoding: length[15:11] = ld_len-1,  length[10:0] = mac_len
+    """
+    assert 1 <= ld_len <= 32, f"ld_len={ld_len} out of range [1..32]"
+    assert 0 <= mac_len <= 2047, f"mac_len={mac_len} out of range [0..2047]"
+    encoded_length = ((ld_len - 1) << 11) | (mac_len & 0x7FF)
+    return pack_inst(OP_LDnMAC, clr_parf=clr_parf, arf_addr=arf_addr,
+                     wgt_addr=wgt_addr, parf_addr=parf_addr,
+                     sram_addr=sram_addr, length=encoded_length,
+                     stride=stride, ld_arf_addr=ld_arf_addr)
 
 def pack_li(rd, imm):
     return pack_inst(OP_LI, arf_addr=rd, length=imm & 0xFFFF)
@@ -124,7 +153,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                  f"(output {H_OUT}x{W_OUT} is invalid).")
 
     # SRAM capacity check (must match SRAM_DEPTH in testbench / core_top)
-    SRAM_DEPTH = 8192
+    SRAM_DEPTH = 8192*64
     ifb_size = H_IN * W_IN
     ofb_size = H_OUT * W_OUT
     if ifb_size > SRAM_DEPTH:
@@ -236,38 +265,74 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
 
                 if stride == 1:
                     # --------------------------------------------------
-                    # stride=1: use LD32MAC (kx=0) + LD1MAC sliding window
+                    # stride=1: sliding-window optimization.
+                    # Full tile (valid_w == TILE_W):
+                    #   kx=0       → LDnMAC(ld_len=TILE_W): load all pixels fresh
+                    #   kx=1..K-1  → LDnMAC(ld_len=1):      slide window by 1
+                    # Partial tile (valid_w < TILE_W, last tile only):
+                    #   All kx     → LDnMAC(ld_len=valid_w): full reload each tap,
+                    #                no sliding (sliding would read beyond valid ARF range)
                     # --------------------------------------------------
-                    if kx == 0:
-                        # LD32MAC: load TILE_W pixels; stride field = 0 (hw treats as 1)
-                        rel = ky * W_IN + x_tile_in
-                        instructions.append(pack_inst(
-                            OP_LD32MAC, clr_parf=clr,
-                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                            sram_addr=rel, length=TILE_W, stride=0))
+                    if valid_w == TILE_W:
+                        if kx == 0:
+                            rel = ky * W_IN + x_tile_in
+                            instructions.append(pack_ldnmac(
+                                clr_parf=clr,
+                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                                sram_addr=rel,
+                                ld_len=TILE_W, mac_len=TILE_W,
+                                stride=0, ld_arf_addr=0))
+                        else:
+                            # Sliding window: load 1 new pixel into ARF[kx-1],
+                            # MAC reads ARF[kx .. kx+TILE_W-1]
+                            rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
+                            instructions.append(pack_ldnmac(
+                                clr_parf=clr,
+                                wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
+                                sram_addr=rel,
+                                ld_len=1, mac_len=TILE_W,
+                                stride=0, ld_arf_addr=kx - 1))
                     else:
-                        # LD1MAC: load 1 pixel into ARF[kx-1], MAC reads ARF[kx..kx+TILE_W-1]
-                        rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
-                        instructions.append(pack_inst(
-                            OP_LD1MAC, clr_parf=clr,
-                            wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
-                            sram_addr=rel, length=TILE_W,
-                            ld_arf_addr=kx - 1))
+                        # Partial tile: reload valid_w pixels every tap, no sliding
+                        rel = ky * W_IN + x_tile_in + kx
+                        instructions.append(pack_ldnmac(
+                            clr_parf=clr,
+                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                            sram_addr=rel,
+                            ld_len=valid_w, mac_len=valid_w,
+                            stride=0, ld_arf_addr=0))
                 else:
                     # --------------------------------------------------
-                    # stride>1: every (ky,kx) uses LD32MAC with stride field
-                    # sram_addr points to the first input pixel for this
-                    # kernel tap and this output tile's first pixel:
-                    #   r0 + ky*W_IN + x_tile_in + kx
-                    # HW reads: r0 + sram_addr + cnt*stride  (cnt=0..TILE_W-1)
-                    # => pixel for output p = r0 + ky*W_IN + x_tile_in + kx + p*stride
-                    #                       = ifm[yout*stride + ky][x_tile_in + kx + p*stride]
+                    # stride>1: full reload for ALL kx, both partial and full tiles.
+                    #
+                    # ARF sliding window is NOT used for stride>1 because:
+                    #   - kx < stride each issue a full TILE_W reload into ARF[0..TILE_W-1].
+                    #   - With stride>1 the second full reload (kx=1) overwrites kx=0,
+                    #     so kx=2 cannot slide on kx=0 — the ARF precondition is violated.
+                    #   - Additionally kx//stride aliases consecutive kx (e.g. kx=2 and kx=3
+                    #     both give slide_count=1 for stride=2), creating a second aliasing bug.
+                    #
+                    # Partial tile (valid_w < TILE_W): use mac_len=valid_w to avoid waste.
+                    # Full tile   (valid_w == TILE_W): use mac_len=TILE_W.
                     # --------------------------------------------------
-                    rel = ky * W_IN + x_tile_in + kx
-                    instructions.append(pack_inst(
-                        OP_LD32MAC, clr_parf=clr,
-                        wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                        sram_addr=rel, length=TILE_W, stride=stride))
+                    if valid_w < TILE_W:
+                        # Partial tile: reload valid_w pixels, MAC only valid_w cycles
+                        rel = ky * W_IN + x_tile_in + kx
+                        instructions.append(pack_ldnmac(
+                            clr_parf=clr,
+                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                            sram_addr=rel,
+                            ld_len=valid_w, mac_len=valid_w,
+                            stride=stride, ld_arf_addr=0))
+                    else:
+                        # Full tile: full reload with hardware IFB stride step
+                        rel = ky * W_IN + x_tile_in + kx
+                        instructions.append(pack_ldnmac(
+                            clr_parf=clr,
+                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                            sram_addr=rel,
+                            ld_len=TILE_W, mac_len=TILE_W,
+                            stride=stride, ld_arf_addr=0))
 
         # ST_OFM: write valid_w pixels to OFB (addr relative to r1)
         instructions.append(pack_inst(
@@ -285,9 +350,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
     with open('inst.txt', 'w') as f:
         f.writelines(inst + '\n' for inst in instructions)
 
-    # --- sim_params.f for testbench plusargs ---
+    # --- sim_params.f for testbench plusargs and parameters ---
     with open('sim_params.f', 'w') as f:
-        f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n")
+        f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n-gSRAM_DEPTH={SRAM_DEPTH}\n")
 
     # ------------------------------------------------------------------
     # 4. Expected OFM (golden reference, computed in Python)

@@ -5,7 +5,7 @@ module tb_core_isa;
     // Parameters
     localparam NUM_COL    = 8;
     localparam PSUM_WIDTH = 32;
-    localparam SRAM_DEPTH = 8192;
+    parameter  SRAM_DEPTH = 8192; // Passed via -gSRAM_DEPTH from sim_params.f
     localparam INST_DEPTH = 8192;
     
     // OFM dimensions: read at runtime via +H_OUT=N +W_OUT=N plusargs
@@ -66,7 +66,7 @@ module tb_core_isa;
     end
 
     // Expected OFM array
-    logic [63:0] expected_ofm_arr [0:8191];
+    logic [63:0] expected_ofm_arr [0:SRAM_DEPTH-1];
 
     // Cycle tracking
     longint total_cycles = 0;

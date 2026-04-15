@@ -64,18 +64,16 @@ module mac_col #(
     endgenerate
 
     //=============================================================================
-    // 2. 空间加法树 (Spatial Adder Tree) - 将8个通道的部分和相加
-    // 此处简化为组合逻辑，如果要1GHz，可将加法树分级打拍。这里为了验证数据流先做全组合
+    // 2. 空间加法树 (Spatial Adder Tree) - 将NUM_PE个通道的部分和相加
+    // 参数化循环实现，支持任意 NUM_PE
     //=============================================================================
     logic signed [PSUM_WIDTH-1:0] adder_tree_out;
-    
+
     always_comb begin
-        // 将16-bit乘积符号扩展为32-bit相加
-        adder_tree_out = 
-            $signed(prod_array[0]) + $signed(prod_array[1]) +
-            $signed(prod_array[2]) + $signed(prod_array[3]) +
-            $signed(prod_array[4]) + $signed(prod_array[5]) +
-            $signed(prod_array[6]) + $signed(prod_array[7]);
+        adder_tree_out = '0;
+        for (int p = 0; p < NUM_PE; p++) begin
+            adder_tree_out = adder_tree_out + $signed(prod_array[p]);
+        end
     end
 
     // 打一拍以对齐乘法器延时 (Pipeline)

@@ -126,8 +126,8 @@ def parse_args():
     p.add_argument('--w_in',     type=int, default=45,  help='Input width   (default 45)')
     p.add_argument('--k',        type=int, default=3,   help='Kernel size KxK (default 3)')
     p.add_argument('--stride',   type=int, default=1,   help='Convolution stride (default 1, max 7)')
-    p.add_argument('--num_cin',  type=int, default=8,   help='Input channels  (default 8)')
-    p.add_argument('--num_cout', type=int, default=8,   help='Output channels (default 8)')
+    p.add_argument('--num_cin',  type=int, default=16,  help='Input channels  (default 16)')
+    p.add_argument('--num_cout', type=int, default=16,  help='Output channels (default 16)')
     p.add_argument('--tile_w',   type=int, default=32,  help='ARF tile width  (default 32)')
     p.add_argument('--seed',     type=int, default=42,  help='Random seed     (default 42)')
     p.add_argument('--shift',    type=int, default=0,
@@ -184,6 +184,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
     # ------------------------------------------------------------------
     # 1. IFB data
     # ------------------------------------------------------------------
+    # 1. IFB data  (H_IN x W_IN pixels, each NUM_CIN channels x 8-bit)
+    # ------------------------------------------------------------------
+    ifb_hex_chars = NUM_CIN * 2  # each channel = 8-bit = 2 hex chars
     ifm_arr = [[[0]*NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
     ifb_data = []
     for y in range(H_IN):
@@ -193,13 +196,15 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                 v = random.randint(0, 7)
                 ifm_arr[y][x][cin] = v
                 val |= (v & 0xFF) << (cin * 8)
-            ifb_data.append(f"{val:016X}")
+            ifb_data.append(f"{val:0{ifb_hex_chars}X}")
     with open('ifb.txt', 'w') as f:
         f.writelines(d + '\n' for d in ifb_data)
 
     # ------------------------------------------------------------------
     # 2. WB data  (K*K weight positions stored flat)
+    #    Each word = NUM_COUT columns x NUM_CIN PEs x 8-bit = NUM_COUT*NUM_CIN*8 bits
     # ------------------------------------------------------------------
+    wb_hex_chars = NUM_COUT * NUM_CIN * 2  # total hex chars per WB word
     w_arr = [[[[0]*NUM_CIN for _ in range(NUM_COUT)] for _ in range(K)] for _ in range(K)]
     wb_data = []
     for ky in range(K):
@@ -211,8 +216,8 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                     v = random.randint(-3, 3)
                     w_arr[ky][kx][cout][cin] = v
                     cv |= (v & 0xFF) << (cin * 8)
-                val |= cv << (cout * 64)
-            wb_data.append(f"{val:0128X}")
+                val |= cv << (cout * NUM_CIN * 8)
+            wb_data.append(f"{val:0{wb_hex_chars}X}")
     with open('wb.txt', 'w') as f:
         f.writelines(d + '\n' for d in wb_data)
 
@@ -372,7 +377,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                             psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
                 act = max(0, min(255, psum >> shift_amt))
                 pixel_val |= (act & 0xFF) << (cout * 8)
-            expected_ofm.append(f"{pixel_val:016X}")
+            expected_ofm.append(f"{pixel_val:0{NUM_COUT * 2}X}")
     with open('expected_ofm.txt', 'w') as f:
         f.writelines(d + '\n' for d in expected_ofm)
 

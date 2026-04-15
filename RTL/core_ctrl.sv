@@ -10,6 +10,8 @@ import core_isa_pkg::*;
 //   cnt == end_cnt   EX 结束，直接切换到下一条指令的 EX，零空泡。
 //   分支（BNZ/JMP）和短指令（end_cnt<2）回退到普通 FETCH 路径。
 module core_ctrl #(
+    parameter int NUM_COL     = 16,      // 列数（需与 core_top 一致）
+    parameter int NUM_PE      = 16,      // 每列PE数（需与 core_top 一致）
     parameter int WRF_DEPTH   = 32,      // 权重RF深度
     parameter int ARF_DEPTH   = 32,      // 激活值RF深度
     parameter int PARF_DEPTH  = 32,      // PARF深度
@@ -41,7 +43,7 @@ module core_ctrl #(
     output logic                                sdp_en_out,   // 输出给后处理的 SDP 使能
 
     // WRF 控制接口 (Weight Register File)
-    output logic [63:0]                         wrf_we,       // 所有PE的写使能
+    output logic [NUM_COL*NUM_PE-1:0]           wrf_we,       // 所有PE的写使能
     output logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr,    // 写地址
 
     // ARF 控制接口 (Activation Register File)
@@ -90,7 +92,7 @@ module core_ctrl #(
     logic [15:0]                   cnt;      // 微状态循环计数器
 
     // 延迟匹配寄存器 (为了匹配 SRAM 的 1 周期读延迟)
-    logic [63:0]                   wrf_we_d1;
+    logic [NUM_COL*NUM_PE-1:0]         wrf_we_d1;
     logic [$clog2(WRF_DEPTH)-1:0]  wrf_waddr_d1;
     logic                          arf_we_d1;
     logic [$clog2(ARF_DEPTH)-1:0]  arf_waddr_d1;

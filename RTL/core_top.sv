@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 
 // 核心顶层模块 (Core Top)
-// 将 8x8 MAC阵列、ARF、WB(SRAM)、IFB(SRAM) 和 控制器连线
+// 将 NxM MAC阵列、ARF、WB(SRAM)、IFB(SRAM) 和 控制器连线
 module core_top #(
-    parameter int NUM_COL     = 8,       // 列数
-    parameter int NUM_PE      = 8,       // 每列PE数
+    parameter int NUM_COL     = 16,      // 列数（输出通道并行度）
+    parameter int NUM_PE      = 16,      // 每列PE数（输入通道并行度）
     parameter int DATA_WIDTH  = 8,       // 数据位宽
     parameter int PSUM_WIDTH  = 32,      // Psum位宽
     parameter int WRF_DEPTH   = 32,      // 权重RF深度
@@ -27,16 +27,16 @@ module core_top #(
     // 外部SRAM写入接口 (用于测试加载)
     input  logic                                ifb_we_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       ifb_waddr_ext,
-    input  logic [63:0]                         ifb_wdata_ext,
-    
+    input  logic [NUM_PE*DATA_WIDTH-1:0]        ifb_wdata_ext,
+
     input  logic                                wb_we_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       wb_waddr_ext,
-    input  logic [511:0]                        wb_wdata_ext,
-    
+    input  logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0] wb_wdata_ext,
+
     // OFB读取接口 (用于测试提取结果)
     input  logic                                ofb_re_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       ofb_raddr_ext,
-    output logic [63:0]                         ofb_rdata_ext,
+    output logic [NUM_COL*DATA_WIDTH-1:0]       ofb_rdata_ext,
     
     // 输出
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
@@ -53,7 +53,12 @@ module core_top #(
     logic                                ofb_we;
     logic [$clog2(SRAM_DEPTH)-1:0]       ofb_waddr;
     logic                                sdp_en;
-    logic [63:0]                         wrf_we;
+    // 内部数据宽度参数
+    localparam int IFB_WIDTH = NUM_PE * DATA_WIDTH;           // IFB/ARF 数据宽度
+    localparam int WB_WIDTH  = NUM_COL * NUM_PE * DATA_WIDTH; // WB 数据宽度
+    localparam int OFB_WIDTH = NUM_COL * DATA_WIDTH;          // OFB 数据宽度 (SDP量化后)
+
+    logic [NUM_COL*NUM_PE-1:0]           wrf_we;
     logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr;
     logic                                arf_we;
     logic [$clog2(ARF_DEPTH)-1:0]        arf_waddr;
@@ -65,12 +70,12 @@ module core_top #(
     logic                                parf_we;
 
     //=============================================================================
-    // 2. SRAM 例化 (INST_SRAM, IFB & WB)
+    // 2. SRAM 例化 (INST_SRAM, IFB & WB & OFB)
     //=============================================================================
-    logic [63:0]  inst_rdata;
-    logic [63:0]  ifb_rdata;
-    logic [511:0] wb_rdata;
-    logic [63:0]  ofb_wdata;
+    logic [63:0]       inst_rdata;
+    logic [IFB_WIDTH-1:0] ifb_rdata;
+    logic [WB_WIDTH-1:0]  wb_rdata;
+    logic [OFB_WIDTH-1:0] ofb_wdata;
     
     logic                                inst_re;
     logic [$clog2(INST_DEPTH)-1:0]       inst_raddr;
@@ -90,7 +95,7 @@ module core_top #(
     
     sram_model #(
         .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(64)
+        .DATA_WIDTH(IFB_WIDTH)
     ) u_ifb (
         .clk   (clk),
         .we    (ifb_we_ext),
@@ -103,7 +108,7 @@ module core_top #(
     
     sram_model #(
         .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(512)
+        .DATA_WIDTH(WB_WIDTH)
     ) u_wb (
         .clk   (clk),
         .we    (wb_we_ext),
@@ -116,7 +121,7 @@ module core_top #(
 
     sram_model #(
         .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(64)
+        .DATA_WIDTH(OFB_WIDTH)
     ) u_ofb (
         .clk   (clk),
         .we    (ofb_we),
@@ -130,8 +135,8 @@ module core_top #(
     //=============================================================================
     // 3. ARF 例化 (Activation Register File)
     //=============================================================================
-    logic [63:0] act_out_vec;
-    logic [63:0] act_to_mac;   // ARF 输出 + LD32MAC bypass 前向路径
+    logic [IFB_WIDTH-1:0] act_out_vec;
+    logic [IFB_WIDTH-1:0] act_to_mac;   // ARF 输出 + LDnMAC bypass 前向路径
 
     std_rf #(
         .DEPTH(ARF_DEPTH),
@@ -212,6 +217,8 @@ module core_top #(
     // 6. 控制器 例化
     //=============================================================================
     core_ctrl #(
+        .NUM_COL(NUM_COL),
+        .NUM_PE(NUM_PE),
         .WRF_DEPTH(WRF_DEPTH),
         .ARF_DEPTH(ARF_DEPTH),
         .PARF_DEPTH(PARF_DEPTH),

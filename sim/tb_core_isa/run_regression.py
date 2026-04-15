@@ -18,23 +18,23 @@ OUTPUT_FILE = "regression_report.txt"
 
 # ---------------------------------------------------------------------------
 # 标准测试用例定义
-# (名称, k, h_in, w_in, stride, shift)
+# (名称, c_in, c_out, k, h_in, w_in, stride, shift)
 # ---------------------------------------------------------------------------
-CASES = [
-    # --- 功能验证用例 ---
-    ("K=3  10x10  s=1",   3,   10,   10,   1,  0),
-    ("K=3  20x20  s=2",   3,   20,   20,   2,  0),
-    ("K=3  20x20  s=3",   3,   20,   20,   3,  1),
-    ("K=7  60x45  s=1",   7,   60,   45,   1,  2),
-    ("K=7  30x30  s=2",   7,   30,   30,   2,  2),
-    ("K=1 123x45  s=1",   1,  123,   45,   1,  0),
-    # --- 性能对比用例 ---
-    ("K=7 100x40  s=1",   7,  100,   40,   1,  0),
-    ("K=7 100x40  s=2",   7,  100,   40,   2,  0),
-    ("K=7 100x80  s=1",   7,  100,   80,   1,  0),
-    ("K=7 100x80  s=2",   7,  100,   80,   2,  0),
-    ("K=7  68x120 s=1",   7,   68,  120,   1,  0),
-    ("K=7  68x120 s=2",   7,   68,  120,   2,  0),
+CASES = [             #      c_in, c_out, k, h_in, w_in, stride, shift
+    # --- Cin <= HW_PE (single cin_slice, packed weights) ---
+    ("K=3 C4C4   66x118 s=1",    4,    4, 3,   68,  120,      1,     0),
+    ("K=3 C4C8   66x118 s=1",    4,    8, 3,   68,  120,      1,     0),
+    ("K=3 C8C4   66x118 s=1",    8,    4, 3,   68,  120,      1,     0),
+    ("K=3 C8C8   66x118 s=1",    8,    8, 3,   68,  120,      1,     0),
+    ("K=3 C8C32  66x118 s=1",    8,   32, 3,   68,  120,      1,     0),
+    ("K=3 C16C16 66x118 s=1",   16,   16, 3,   68,  120,      1,     0),
+    # --- Cin > HW_PE: packed mode (K*K*cin_slices <= 32) ---
+    ("K=3 C32C8  66x118 s=1",   32,    8, 3,   68,  120,      1,     0),
+    ("K=3 C32C16 66x118 s=1",   32,   16, 3,   68,  120,      1,     0),
+    ("K=3 C32C32 66x118 s=1",   32,   32, 3,   68,  120,      1,     0),
+    # --- Cin > HW_PE: chunked mode (K*K*cin_slices > 32) ---
+    ("K=3 C64C16 66x118 s=1",   64,   16, 3,   68,  120,      1,     0),
+    ("K=3 C64C32 66x118 s=1",   64,   32, 3,   68,  120,      1,     0),
 ]
 
 # ---------------------------------------------------------------------------
@@ -59,9 +59,9 @@ def extract_float(text, keyword):
 # ---------------------------------------------------------------------------
 # 运行单个用例
 # ---------------------------------------------------------------------------
-def run_case(name, k, h_in, w_in, stride, shift):
+def run_case(name, c_in, c_out, k, h_in, w_in, stride, shift):
     gen_cmd = (f"python gen_isa_test.py "
-               f"--k {k} --h_in {h_in} --w_in {w_in} "
+               f"--num_cin {c_in} --num_cout {c_out} --k {k} --h_in {h_in} --w_in {w_in} "
                f"--stride {stride} --shift {shift}")
     r_gen = subprocess.run(gen_cmd, shell=True, capture_output=True, text=True)
     if r_gen.returncode != 0:
@@ -160,9 +160,9 @@ def main():
     print("=" * 60)
 
     results = []
-    for i, (name, k, h_in, w_in, stride, shift) in enumerate(CASES):
+    for i, (name, c_in, c_out, k, h_in, w_in, stride, shift) in enumerate(CASES):
         print(f"\n[{i+1}/{len(CASES)}] {name} ...", end="", flush=True)
-        result, err = run_case(name, k, h_in, w_in, stride, shift)
+        result, err = run_case(name, c_in, c_out, k, h_in, w_in, stride, shift)
         if err:
             print(f"  ERROR: {err}")
             results.append(None)

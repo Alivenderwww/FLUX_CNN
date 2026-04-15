@@ -11,29 +11,38 @@ Usage:
 
 Weight scheduling:
   WRF_DEPTH = 32 (hardware fixed, 5-bit wgt_rf_addr).
-  K*K positions are split into rounds of WRF_DEPTH each.
-  - K*K <= 32 (e.g. 1x1, 3x3, 5x5): single round, LD_WGT runs ONCE before the
-    yout loop (true weight-stationary).
-  - K*K >  32 (e.g. 6x6, 7x7):      multiple rounds, LD_WGT runs inside the
-    loop body at each round boundary (weight-reload / weight-streaming).
-  ARF state carries over between rounds: the sliding-window ARF is not reset
-  by LD_WGT, so mid-row round transitions work correctly.
+  Total WRF slots needed = K*K * cin_slices.
+  - If total <= 32: "packed" mode -- load all cin_slices' weights BEFORE the yout
+    loop (true weight-stationary). WRF slot for (cins, k_pos) = cins*K² + k_pos.
+  - If total > 32:  "chunked" mode -- reload per cin_slice inside the loop body.
+    wgt_addr restarts at 0 for each cin_slice's LD_WGT.
+    Within each cin_slice, if K² > 32 the existing round mechanism applies.
+
+Cin slicing (NUM_CIN > HW_PE):
+  IFB layout: cin_slice 0 occupies IFB[0..H_IN*W_IN-1],
+              cin_slice 1 occupies IFB[H_IN*W_IN..2*H_IN*W_IN-1], etc.
+  The yout loop uses r0 as the cin_slice-0 row base. Before each cin_slice's
+  LDnMAC block, an ALU instruction advances r0 by IFB_SLICE_STRIDE (=H_IN*W_IN).
+  After the last cin_slice, r0 is restored to the cin_slice-0 base so the loop
+  tail (r0 += stride*W_IN) advances correctly.
+
+  PARF accumulation: clr_parf=1 ONLY on the very first LDnMAC across all cin_slices
+  for a given tile; all subsequent LDnMAC (including those for later cin_slices)
+  keep clr_parf=0. ST_OFM is emitted ONCE after all cin_slices complete.
+
+Cout slicing (NUM_COUT > HW_COL):
+  The outermost loop iterates over cout_slices; each slice drives its own
+  LD_WGT + yout loop and writes to a separate OFB region.
+  Cout is guaranteed to be fully generated (all channels contiguous per pixel)
+  so that downstream layer-fusion reads a complete activation before moving on.
 
 Stride handling:
-  stride=1: LDnMAC(ld_len=TILE_W) for kx=0, LDnMAC(ld_len=1) sliding-window for kx=1..K-1.
-            Sliding window works because only kx=0 does a full ARF reload; kx=1..K-1 each
-            load just 1 new pixel into ARF while the MAC reads the rest from existing ARF state.
-  stride>1: ALL kx do full reloads (ld_len=TILE_W for full tiles, ld_len=valid_w for partial).
-            ARF sliding window is NOT applied for stride>1 because:
-              - kx < stride each issue a full ld_len=TILE_W reload, all writing to ARF[0..TILE_W-1].
-              - The second full reload (kx=1) overwrites kx=0's data, so kx=2's attempt to slide
-                on kx=0 would read stale ARF content.
-              - Additionally, kx//stride aliases consecutive kx values to the same slide_count
-                (e.g. kx=2 and kx=3 both give slide_count=1 for stride=2).
-            Future optimisation: interleave kx chains (0,2,4,.. then 1,3,5,..) with separate
-            ARF regions to re-enable stride>1 sliding, but this requires ARF depth ≥ 2*TILE_W.
+  stride=1: LDnMAC(ld_len=TILE_W) for kx=0, LDnMAC(ld_len=1) sliding-window
+            for kx=1..K-1 (ARF reuse).
+  stride>1: ALL kx do full reloads.
 """
 import argparse
+import math
 import sys
 
 # ---------------------------------------------------------------------------
@@ -137,6 +146,53 @@ def parse_args():
     return p.parse_args()
 
 # ---------------------------------------------------------------------------
+# Helper: emit one LDnMAC instruction
+# Encapsulates the stride=1 sliding-window vs stride>1 full-reload logic.
+# ---------------------------------------------------------------------------
+def _emit_ldnmac(instructions, clr, wgt_addr, ky, kx, x_tile_in, valid_w,
+                 stride, W_IN, TILE_W):
+    """Append one LDnMAC instruction.
+
+    For stride=1 and full tiles: kx=0 loads TILE_W pixels, kx>0 slides by 1.
+    For stride>1 or partial tiles: always full-reload.
+    """
+    if stride == 1:
+        if valid_w == TILE_W:
+            if kx == 0:
+                # Full tile load, ARF base = 0
+                instructions.append(pack_ldnmac(
+                    clr_parf=clr,
+                    wgt_addr=wgt_addr, parf_addr=0, arf_addr=0,
+                    sram_addr=ky * W_IN + x_tile_in,
+                    ld_len=TILE_W, mac_len=TILE_W,
+                    stride=0, ld_arf_addr=0))
+            else:
+                # Sliding window: load 1 new pixel at ARF[kx-1], MAC reads from ARF[kx]
+                instructions.append(pack_ldnmac(
+                    clr_parf=clr,
+                    wgt_addr=wgt_addr, parf_addr=0, arf_addr=kx,
+                    sram_addr=ky * W_IN + x_tile_in + TILE_W + kx - 1,
+                    ld_len=1, mac_len=TILE_W,
+                    stride=0, ld_arf_addr=kx - 1))
+        else:
+            # Partial tile: full reload, no sliding window
+            instructions.append(pack_ldnmac(
+                clr_parf=clr,
+                wgt_addr=wgt_addr, parf_addr=0, arf_addr=0,
+                sram_addr=ky * W_IN + x_tile_in + kx,
+                ld_len=valid_w, mac_len=valid_w,
+                stride=0, ld_arf_addr=0))
+    else:
+        # stride > 1: always full reload
+        ld_len = valid_w if valid_w < TILE_W else TILE_W
+        instructions.append(pack_ldnmac(
+            clr_parf=clr,
+            wgt_addr=wgt_addr, parf_addr=0, arf_addr=0,
+            sram_addr=ky * W_IN + x_tile_in + kx,
+            ld_len=ld_len, mac_len=ld_len,
+            stride=stride, ld_arf_addr=0))
+
+# ---------------------------------------------------------------------------
 # Main generation
 # ---------------------------------------------------------------------------
 def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
@@ -144,15 +200,14 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     import random
     random.seed(seed)
 
-    if NUM_CIN > HW_PE:
-        sys.exit(f"ERROR: NUM_CIN={NUM_CIN} > HW_PE={HW_PE}. Multi-cin-slice not yet supported.")
-
-    cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
-
     if stride < 1 or stride > 7:
         sys.exit(f"ERROR: stride={stride} out of range [1..7].")
 
-    # H_OUT / W_OUT for arbitrary stride (padding=0)
+    # Slice counts
+    cin_slices  = (NUM_CIN  + HW_PE  - 1) // HW_PE
+    cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
+
+    # Output dimensions (padding=0)
     H_OUT = (H_IN - K) // stride + 1
     W_OUT = (W_IN - K) // stride + 1
 
@@ -160,183 +215,204 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         sys.exit(f"ERROR: K={K}x{K} stride={stride} too large for {H_IN}x{W_IN} "
                  f"(output {H_OUT}x{W_OUT} is invalid).")
 
-    # SRAM capacity check (must match SRAM_DEPTH in testbench / core_top)
-    SRAM_DEPTH = 8192*64
-    ifb_size = H_IN * W_IN
-    ofb_size = H_OUT * W_OUT * cout_slices   # each cout_slice occupies its own OFB region
-    if ifb_size > SRAM_DEPTH:
-        sys.exit(f"ERROR: IFB overflow! H_IN*W_IN = {ifb_size} > SRAM_DEPTH = {SRAM_DEPTH}. "
-                 f"Max H_IN for W_IN={W_IN}: {SRAM_DEPTH // W_IN}")
-    if ofb_size > SRAM_DEPTH:
-        sys.exit(f"ERROR: OFB overflow! H_OUT*W_OUT = {ofb_size} > SRAM_DEPTH = {SRAM_DEPTH}. "
-                 f"Max H_OUT for W_OUT={W_OUT}: {SRAM_DEPTH // W_OUT}")
+    # ------------------------------------------------------------------
+    # SRAM sizing
+    # IFB: cin_slices regions, each H_IN*W_IN words
+    # WB:  cout_slices * cin_slices * K*K words
+    # OFB: cout_slices * H_OUT*W_OUT words
+    # Hardware uses a single SRAM_DEPTH for all three; take the max and
+    # round up to the next power-of-2 (min 8192) for clean addressing.
+    # ------------------------------------------------------------------
+    IFB_SLICE_STRIDE = H_IN * W_IN     # IFB words per cin_slice region
+    ifb_size = IFB_SLICE_STRIDE * cin_slices
+    wb_size  = K * K * cout_slices * cin_slices
+    ofb_size = H_OUT * W_OUT * cout_slices
+
+    PYTHON_SRAM_LIMIT = 8192 * 64
+    if ifb_size > PYTHON_SRAM_LIMIT:
+        sys.exit(f"ERROR: IFB overflow! ifb_size={ifb_size} > {PYTHON_SRAM_LIMIT}. "
+                 f"Reduce H_IN/W_IN or NUM_CIN.")
+    if ofb_size > PYTHON_SRAM_LIMIT:
+        sys.exit(f"ERROR: OFB overflow! ofb_size={ofb_size} > {PYTHON_SRAM_LIMIT}.")
+
+    hw_sram_depth = max(ifb_size, ofb_size, wb_size, 8192)
+    hw_sram_depth = 1 << math.ceil(math.log2(hw_sram_depth))
 
     # ------------------------------------------------------------------
-    # Split K*K kernel positions into WRF_DEPTH-sized rounds
+    # Weight scheduling: packed vs chunked
+    #
+    # packed  (K²*cin_slices ≤ WRF_DEPTH):
+    #   Single LD_WGT before the yout loop loads all cin_slices at once.
+    #   WRF slot for (cins, k_pos_local) = cins * K² + k_pos_local.
+    #
+    # chunked (K²*cin_slices > WRF_DEPTH):
+    #   LD_WGT per cin_slice inside the loop body.
+    #   wgt_addr restarts at 0 for each cin_slice.
+    #   If K² > WRF_DEPTH, K²-positions are further split into rounds.
     # ------------------------------------------------------------------
-    all_positions = [(ky, kx) for ky in range(K) for kx in range(K)]
-    rounds = [all_positions[i:i+WRF_DEPTH]
-              for i in range(0, len(all_positions), WRF_DEPTH)]
-    num_rounds = len(rounds)
-    num_tiles  = (W_OUT + TILE_W - 1) // TILE_W
+    all_positions    = [(ky, kx) for ky in range(K) for kx in range(K)]
+    total_wrf_needed = K * K * cin_slices
+    wrf_packed       = total_wrf_needed <= WRF_DEPTH
+
+    # Chunked K²-rounds (each ≤ WRF_DEPTH positions)
+    chunk_rounds = [all_positions[i:i + WRF_DEPTH]
+                    for i in range(0, len(all_positions), WRF_DEPTH)]
+
+    num_tiles = (W_OUT + TILE_W - 1) // TILE_W
 
     print(f"Config : H_IN={H_IN}, W_IN={W_IN}, K={K}x{K}, stride={stride}, "
-          f"Cin={NUM_CIN}, Cout={NUM_COUT}, TILE_W={TILE_W}")
+          f"Cin={NUM_CIN} ({cin_slices} slice(s)), Cout={NUM_COUT} ({cout_slices} slice(s)), "
+          f"TILE_W={TILE_W}")
     print(f"Output : H_OUT={H_OUT}, W_OUT={W_OUT}, "
-          f"TOTAL_OFM={H_OUT*W_OUT}, tiles/row={num_tiles}, cout_slices={cout_slices}")
-    print(f"Weight : K*K={K*K} positions -> {num_rounds} WRF round(s) "
-          f"of up to {WRF_DEPTH} each "
-          + ("(weight-stationary)" if num_rounds == 1
-             else f"(weight-reload every yout x {num_tiles} tile(s))"))
+          f"TOTAL_OFM={H_OUT * W_OUT}, tiles/row={num_tiles}")
+    if wrf_packed:
+        print(f"Weight : K*K*cin_slices={total_wrf_needed} <= WRF_DEPTH={WRF_DEPTH} "
+              f"-> packed (weight-stationary, single LD_WGT per cout_slice before loop)")
+    else:
+        print(f"Weight : K*K*cin_slices={total_wrf_needed} > WRF_DEPTH={WRF_DEPTH} "
+              f"-> chunked ({len(chunk_rounds)} K*K-round(s) x {cin_slices} cin_slice(s) "
+              f"per tile, LD_WGT inside loop body)")
+    print(f"HW SRAM: IFB={ifb_size}, WB={wb_size}, OFB={ofb_size} → SRAM_DEPTH={hw_sram_depth}")
 
     # ------------------------------------------------------------------
-    # 1. IFB data  (H_IN x W_IN pixels, packed to HW_PE channels x 8-bit)
-    #    Only NUM_CIN channels carry valid data; channels NUM_CIN..HW_PE-1 = 0
+    # 1. IFB data
+    #    Layout: [cin_slice 0: H_IN*W_IN words] [cin_slice 1: H_IN*W_IN words] ...
+    #    Each IFB word = HW_PE channels × 8-bit.
+    #    Only local_cin channels carry valid data; higher channels are zero-padded.
     # ------------------------------------------------------------------
-    ifb_hex_chars = HW_PE * 2  # hardware IFB word width in hex chars
-    ifm_arr = [[[0]*NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
+    ifb_hex_chars = HW_PE * 2
+    ifm_arr = [[[0] * NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
     ifb_data = []
-    for y in range(H_IN):
-        for x in range(W_IN):
-            val = 0
-            for cin in range(NUM_CIN):
-                v = random.randint(0, 7)
-                ifm_arr[y][x][cin] = v
-                val |= (v & 0xFF) << (cin * 8)
-            # channels NUM_CIN..HW_PE-1 are implicitly 0 in val
-            ifb_data.append(f"{val:0{ifb_hex_chars}X}")
+    for cins in range(cin_slices):
+        local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
+        for y in range(H_IN):
+            for x in range(W_IN):
+                val = 0
+                for cin_local in range(local_cin):
+                    cin = cins * HW_PE + cin_local
+                    v = random.randint(0, 7)
+                    ifm_arr[y][x][cin] = v
+                    val |= (v & 0xFF) << (cin_local * 8)
+                ifb_data.append(f"{val:0{ifb_hex_chars}X}")
     with open('ifb.txt', 'w') as f:
         f.writelines(d + '\n' for d in ifb_data)
 
     # ------------------------------------------------------------------
-    # 2. WB data  (K*K weight positions, stored per cout_slice)
-    #    WB layout: cout_slice 0 occupies WB[0..K²-1], cout_slice 1 at WB[K²..2K²-1], etc.
-    #    Each WB word = HW_COL x HW_PE x 8-bit (hardware width)
-    #    Within each cout_slice, only the first `local_cout` columns carry valid weights.
+    # 2. WB data
+    #    Layout: for each (cout_slice cs, cin_slice cins): K*K consecutive words.
+    #    WB address = (cs * cin_slices + cins) * K * K + ky * K + kx
+    #    Each WB word = HW_COL × HW_PE × 8-bit.
+    #    Only (local_cout columns × local_cin channels) carry valid weights.
     # ------------------------------------------------------------------
     wb_hex_chars = HW_COL * HW_PE * 2
-    w_arr = [[[[0]*NUM_CIN for _ in range(NUM_COUT)] for _ in range(K)] for _ in range(K)]
+    w_arr = [[[[0] * NUM_CIN for _ in range(NUM_COUT)]
+              for _ in range(K)] for _ in range(K)]
     wb_data = []
     for cs in range(cout_slices):
         local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
-        for ky in range(K):
-            for kx in range(K):
-                val = 0
-                for lc in range(local_cout):
-                    cout = cs * HW_COL + lc
-                    cv = 0
-                    for cin in range(NUM_CIN):
-                        v = random.randint(-3, 3)
-                        w_arr[ky][kx][cout][cin] = v
-                        cv |= (v & 0xFF) << (cin * 8)
-                    val |= cv << (lc * HW_PE * 8)
-                wb_data.append(f"{val:0{wb_hex_chars}X}")
+        for cins in range(cin_slices):
+            local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
+            for ky in range(K):
+                for kx in range(K):
+                    val = 0
+                    for lc in range(local_cout):
+                        cout = cs * HW_COL + lc
+                        cv = 0
+                        for cin_local in range(local_cin):
+                            cin = cins * HW_PE + cin_local
+                            v = random.randint(-3, 3)
+                            w_arr[ky][kx][cout][cin] = v
+                            cv |= (v & 0xFF) << (cin_local * 8)
+                        val |= cv << (lc * HW_PE * 8)
+                    wb_data.append(f"{val:0{wb_hex_chars}X}")
     with open('wb.txt', 'w') as f:
         f.writelines(d + '\n' for d in wb_data)
 
     # ------------------------------------------------------------------
-    # 3. Instructions (loop-compressed, multi-round weight scheduling)
+    # 3. Instructions
+    #
+    # Register convention (per cout_slice yout loop):
+    #   r0 = IFB row base for cin_slice-0 of current yout row
+    #        (stepped +IFB_SLICE_STRIDE / -(cin_slices-1)*IFB_SLICE_STRIDE
+    #         inside tile body to switch between cin_slices)
+    #   r1 = OFB base for this cout_slice (offset = cs * H_OUT * W_OUT)
+    #   r2 = yout loop counter (H_OUT-1 down to 0, decremented by BNZ)
     # ------------------------------------------------------------------
-    # Register convention:
-    #   r0 = IFB row base (stride=1: r0+=W_IN per row; stride>1: r0+=stride*W_IN per row)
-    #   r1 = OFB base addr offset (r1 += W_OUT per row)
-    #   r2 = yout loop counter
-    # sram_addr in MAC/ST instructions is RELATIVE to r0/r1:
-    #   stride=1 : actual_ifb = r0 + ky*W_IN + x_tile_out [+ cnt]
-    #   stride>1 : actual_ifb = r0 + ky*W_IN + x_tile_in  [+ cnt*stride]
-    #              where x_tile_in = x_tile_out * stride
     instructions = []
 
-    # --- SDP config (once per layer) ---
+    # SDP config (once per layer)
     instructions.append(pack_ld_sdp(shift_amt))
 
-    # --- Cout slice loop (each slice has its own LD_WGT + yout loop) ---
     for cs in range(cout_slices):
-        wb_base = cs * K * K  # WB 地址: cout_slice cs 的权重从 WB[cs*K²] 开始
+        # WB base for all (cin_slices × K²) weights of this cout_slice
+        wb_base_cs = cs * cin_slices * K * K
 
-        # --- LD_WGT for this cout_slice ---
-        # Single-round: load all K² weights at once
-        # Multi-round: LD_WGT inside loop body (handled below)
-        if num_rounds == 1:
+        # ---- PACKED: hoist all cin_slices' weights before yout loop ----
+        if wrf_packed:
+            # WB[wb_base_cs .. wb_base_cs + total_wrf_needed - 1] are contiguous
             instructions.append(
-                pack_inst(OP_LD_WGT, wgt_addr=0, sram_addr=wb_base, length=K * K))
+                pack_inst(OP_LD_WGT, wgt_addr=0,
+                          sram_addr=wb_base_cs, length=total_wrf_needed))
 
-        # --- Scalar register initialisation ---
-        instructions.append(pack_li(rd=0, imm=0))                          # r0 = IFB base
-        instructions.append(pack_li(rd=1, imm=cs * H_OUT * W_OUT))         # r1 = OFB base for this cout_slice
-        instructions.append(pack_li(rd=2, imm=H_OUT - 1))                  # r2 = yout counter
+        # Scalar register init
+        instructions.append(pack_li(rd=0, imm=0))                         # r0 = cin0 IFB row base
+        instructions.append(pack_li(rd=1, imm=cs * H_OUT * W_OUT))        # r1 = OFB base
+        instructions.append(pack_li(rd=2, imm=H_OUT - 1))                 # r2 = yout counter
 
-        # --- Loop body start ---
         LOOP_START = len(instructions)
 
         for x_tile_out in range(0, W_OUT, TILE_W):
-            valid_w     = min(TILE_W, W_OUT - x_tile_out)
-            x_tile_in   = x_tile_out * stride
-            first_mac   = True
+            valid_w   = min(TILE_W, W_OUT - x_tile_out)
+            x_tile_in = x_tile_out * stride
+            first_mac = True   # clr_parf=1 only on the very first LDnMAC in this tile
 
-            for round_idx, round_pos in enumerate(rounds):
-                round_global_start = wb_base + round_idx * WRF_DEPTH
+            for cins in range(cin_slices):
 
-                if num_rounds > 1:
+                if wrf_packed:
+                    # ---- PACKED: wrf_offset = cins * K² ----
+                    wrf_offset = cins * K * K
+                    for local_idx, (ky, kx) in enumerate(all_positions):
+                        clr = 1 if first_mac else 0
+                        first_mac = False
+                        _emit_ldnmac(instructions, clr,
+                                     wrf_offset + local_idx,
+                                     ky, kx, x_tile_in, valid_w,
+                                     stride, W_IN, TILE_W)
+
+                else:
+                    # ---- CHUNKED: reload WRF per cin_slice ----
+                    wb_base_cins = wb_base_cs + cins * K * K
+                    for round_idx, round_pos in enumerate(chunk_rounds):
+                        round_start = wb_base_cins + round_idx * WRF_DEPTH
+                        instructions.append(
+                            pack_inst(OP_LD_WGT, wgt_addr=0,
+                                      sram_addr=round_start,
+                                      length=len(round_pos)))
+                        for local_idx, (ky, kx) in enumerate(round_pos):
+                            clr = 1 if first_mac else 0
+                            first_mac = False
+                            _emit_ldnmac(instructions, clr,
+                                         local_idx,   # wgt_addr restarts at 0 per round
+                                         ky, kx, x_tile_in, valid_w,
+                                         stride, W_IN, TILE_W)
+
+                # ---- Advance r0 to next cin_slice's IFB region ----
+                if cins < cin_slices - 1:
                     instructions.append(
-                        pack_inst(OP_LD_WGT, wgt_addr=0,
-                                  sram_addr=round_global_start,
-                                  length=len(round_pos)))
+                        pack_alu(rd=0, rs1=0, op='+', imm=IFB_SLICE_STRIDE))
 
-                for local_idx, (ky, kx) in enumerate(round_pos):
-                    clr       = 1 if first_mac else 0
-                    first_mac = False
+            # ---- Restore r0 to cin_slice-0 base (after last cin_slice) ----
+            if cin_slices > 1:
+                instructions.append(
+                    pack_alu(rd=0, rs1=0, op='-',
+                             imm=(cin_slices - 1) * IFB_SLICE_STRIDE))
 
-                    if stride == 1:
-                        if valid_w == TILE_W:
-                            if kx == 0:
-                                rel = ky * W_IN + x_tile_in
-                                instructions.append(pack_ldnmac(
-                                    clr_parf=clr,
-                                    wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                                    sram_addr=rel,
-                                    ld_len=TILE_W, mac_len=TILE_W,
-                                    stride=0, ld_arf_addr=0))
-                            else:
-                                rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
-                                instructions.append(pack_ldnmac(
-                                    clr_parf=clr,
-                                    wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
-                                    sram_addr=rel,
-                                    ld_len=1, mac_len=TILE_W,
-                                    stride=0, ld_arf_addr=kx - 1))
-                        else:
-                            rel = ky * W_IN + x_tile_in + kx
-                            instructions.append(pack_ldnmac(
-                                clr_parf=clr,
-                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                                sram_addr=rel,
-                                ld_len=valid_w, mac_len=valid_w,
-                                stride=0, ld_arf_addr=0))
-                    else:
-                        if valid_w < TILE_W:
-                            rel = ky * W_IN + x_tile_in + kx
-                            instructions.append(pack_ldnmac(
-                                clr_parf=clr,
-                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                                sram_addr=rel,
-                                ld_len=valid_w, mac_len=valid_w,
-                                stride=stride, ld_arf_addr=0))
-                        else:
-                            rel = ky * W_IN + x_tile_in + kx
-                            instructions.append(pack_ldnmac(
-                                clr_parf=clr,
-                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                                sram_addr=rel,
-                                ld_len=TILE_W, mac_len=TILE_W,
-                                stride=stride, ld_arf_addr=0))
-
-            # ST_OFM: write valid_w pixels to OFB (addr relative to r1)
+            # ---- ST_OFM: emit ONCE per tile after all cin_slices ----
             instructions.append(pack_inst(
                 OP_ST_OFM, sdp_en=1, parf_addr=0,
                 sram_addr=x_tile_out, length=valid_w))
 
-        # --- Loop tail ---
+        # Loop tail: advance row bases, decrement counter
         instructions.append(pack_alu(rd=0, rs1=0, op='+', imm=stride * W_IN))
         instructions.append(pack_alu(rd=1, rs1=1, op='+', imm=W_OUT))
         instructions.append(pack_bnz(rs=2, target_pc=LOOP_START))
@@ -347,15 +423,15 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         f.writelines(inst + '\n' for inst in instructions)
 
     # --- sim_params.f for testbench plusargs ---
-    total_ofm = H_OUT * W_OUT * cout_slices
     with open('sim_params.f', 'w') as f:
         f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n+COUT_SLICES={cout_slices}\n"
-                f"-gSRAM_DEPTH={SRAM_DEPTH}\n")
+                f"-gSRAM_DEPTH={hw_sram_depth}\n")
 
     # ------------------------------------------------------------------
     # 4. Expected OFM (golden reference)
-    #    Layout: cout_slice 0 region [0..H*W-1], cout_slice 1 [H*W..2*H*W-1], ...
-    #    Each entry = HW_COL × 8-bit (only local_cout channels valid, rest 0)
+    #    Full convolution accumulating across ALL cin channels (sum over slices).
+    #    Layout: cout_slice 0 region [0..H*W-1], cout_slice 1 [H*W..], ...
+    #    Each entry = HW_COL × 8-bit word.
     # ------------------------------------------------------------------
     expected_ofm = []
     for cs in range(cout_slices):
@@ -368,7 +444,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
                     psum = 0
                     for ky in range(K):
                         for kx in range(K):
-                            for cin in range(NUM_CIN):
+                            for cin in range(NUM_CIN):   # all channels, all slices
                                 iy = yout * stride + ky
                                 ix = px   * stride + kx
                                 psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
@@ -378,13 +454,12 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     with open('expected_ofm.txt', 'w') as f:
         f.writelines(d + '\n' for d in expected_ofm)
 
-    # ------------------------------------------------------------------
     # Summary
-    # ------------------------------------------------------------------
     n = len(instructions)
-    print(f"Instructions : {n} total  ({cout_slices} cout_slice(s), "
-          f"runs {H_OUT} yout per slice)")
+    print(f"Instructions : {n} total  ({cout_slices} cout_slice(s) × {cin_slices} cin_slice(s), "
+          f"runs {H_OUT} yout rows per slice combo)")
     print(f"Files written: ifb.txt  wb.txt  inst.txt  expected_ofm.txt  sim_params.f")
+
 
 # ---------------------------------------------------------------------------
 # Entry point

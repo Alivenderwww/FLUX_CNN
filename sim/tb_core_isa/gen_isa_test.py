@@ -146,8 +146,8 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
 
     if NUM_CIN > HW_PE:
         sys.exit(f"ERROR: NUM_CIN={NUM_CIN} > HW_PE={HW_PE}. Multi-cin-slice not yet supported.")
-    if NUM_COUT > HW_COL:
-        sys.exit(f"ERROR: NUM_COUT={NUM_COUT} > HW_COL={HW_COL}. Multi-cout-slice not yet supported.")
+
+    cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
 
     if stride < 1 or stride > 7:
         sys.exit(f"ERROR: stride={stride} out of range [1..7].")
@@ -163,7 +163,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     # SRAM capacity check (must match SRAM_DEPTH in testbench / core_top)
     SRAM_DEPTH = 8192*64
     ifb_size = H_IN * W_IN
-    ofb_size = H_OUT * W_OUT
+    ofb_size = H_OUT * W_OUT * cout_slices   # each cout_slice occupies its own OFB region
     if ifb_size > SRAM_DEPTH:
         sys.exit(f"ERROR: IFB overflow! H_IN*W_IN = {ifb_size} > SRAM_DEPTH = {SRAM_DEPTH}. "
                  f"Max H_IN for W_IN={W_IN}: {SRAM_DEPTH // W_IN}")
@@ -183,7 +183,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     print(f"Config : H_IN={H_IN}, W_IN={W_IN}, K={K}x{K}, stride={stride}, "
           f"Cin={NUM_CIN}, Cout={NUM_COUT}, TILE_W={TILE_W}")
     print(f"Output : H_OUT={H_OUT}, W_OUT={W_OUT}, "
-          f"TOTAL_OFM={H_OUT*W_OUT}, tiles/row={num_tiles}")
+          f"TOTAL_OFM={H_OUT*W_OUT}, tiles/row={num_tiles}, cout_slices={cout_slices}")
     print(f"Weight : K*K={K*K} positions -> {num_rounds} WRF round(s) "
           f"of up to {WRF_DEPTH} each "
           + ("(weight-stationary)" if num_rounds == 1
@@ -209,26 +209,28 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         f.writelines(d + '\n' for d in ifb_data)
 
     # ------------------------------------------------------------------
-    # 2. WB data  (K*K weight positions stored flat)
-    #    Hardware word = HW_COL columns x HW_PE PEs x 8-bit
-    #    Only NUM_COUT x NUM_CIN entries carry valid weights; rest = 0
-    #    Column c occupies bits [c*HW_PE*8 +: HW_PE*8] to match mac_array slicing
+    # 2. WB data  (K*K weight positions, stored per cout_slice)
+    #    WB layout: cout_slice 0 occupies WB[0..K²-1], cout_slice 1 at WB[K²..2K²-1], etc.
+    #    Each WB word = HW_COL x HW_PE x 8-bit (hardware width)
+    #    Within each cout_slice, only the first `local_cout` columns carry valid weights.
     # ------------------------------------------------------------------
-    wb_hex_chars = HW_COL * HW_PE * 2  # hardware WB word width in hex chars
+    wb_hex_chars = HW_COL * HW_PE * 2
     w_arr = [[[[0]*NUM_CIN for _ in range(NUM_COUT)] for _ in range(K)] for _ in range(K)]
     wb_data = []
-    for ky in range(K):
-        for kx in range(K):
-            val = 0
-            for cout in range(NUM_COUT):
-                cv = 0
-                for cin in range(NUM_CIN):
-                    v = random.randint(-3, 3)
-                    w_arr[ky][kx][cout][cin] = v
-                    cv |= (v & 0xFF) << (cin * 8)
-                # Column cout at hardware offset: cout * HW_PE * 8 bits
-                val |= cv << (cout * HW_PE * 8)
-            wb_data.append(f"{val:0{wb_hex_chars}X}")
+    for cs in range(cout_slices):
+        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
+        for ky in range(K):
+            for kx in range(K):
+                val = 0
+                for lc in range(local_cout):
+                    cout = cs * HW_COL + lc
+                    cv = 0
+                    for cin in range(NUM_CIN):
+                        v = random.randint(-3, 3)
+                        w_arr[ky][kx][cout][cin] = v
+                        cv |= (v & 0xFF) << (cin * 8)
+                    val |= cv << (lc * HW_PE * 8)
+                wb_data.append(f"{val:0{wb_hex_chars}X}")
     with open('wb.txt', 'w') as f:
         f.writelines(d + '\n' for d in wb_data)
 
@@ -248,149 +250,131 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     # --- SDP config (once per layer) ---
     instructions.append(pack_ld_sdp(shift_amt))
 
-    # --- Single-round: LD_WGT ONCE before the loop (true weight-stationary) ---
-    if num_rounds == 1:
-        instructions.append(
-            pack_inst(OP_LD_WGT, wgt_addr=0, sram_addr=0, length=K * K))
+    # --- Cout slice loop (each slice has its own LD_WGT + yout loop) ---
+    for cs in range(cout_slices):
+        wb_base = cs * K * K  # WB 地址: cout_slice cs 的权重从 WB[cs*K²] 开始
 
-    # --- Scalar register initialisation ---
-    instructions.append(pack_li(rd=0, imm=0))           # r0 = 0
-    instructions.append(pack_li(rd=1, imm=0))           # r1 = 0
-    instructions.append(pack_li(rd=2, imm=H_OUT - 1))  # r2 = yout counter
+        # --- LD_WGT for this cout_slice ---
+        # Single-round: load all K² weights at once
+        # Multi-round: LD_WGT inside loop body (handled below)
+        if num_rounds == 1:
+            instructions.append(
+                pack_inst(OP_LD_WGT, wgt_addr=0, sram_addr=wb_base, length=K * K))
 
-    # --- Loop body start ---
-    LOOP_START = len(instructions)
+        # --- Scalar register initialisation ---
+        instructions.append(pack_li(rd=0, imm=0))                          # r0 = IFB base
+        instructions.append(pack_li(rd=1, imm=cs * H_OUT * W_OUT))         # r1 = OFB base for this cout_slice
+        instructions.append(pack_li(rd=2, imm=H_OUT - 1))                  # r2 = yout counter
 
-    for x_tile_out in range(0, W_OUT, TILE_W):          # unrolled over output tiles
-        valid_w     = min(TILE_W, W_OUT - x_tile_out)
-        x_tile_in   = x_tile_out * stride               # corresponding input column
-        first_mac   = True   # clr_parf=1 only for the first MAC of each x_tile
+        # --- Loop body start ---
+        LOOP_START = len(instructions)
 
-        for round_idx, round_pos in enumerate(rounds):
-            round_global_start = round_idx * WRF_DEPTH
+        for x_tile_out in range(0, W_OUT, TILE_W):
+            valid_w     = min(TILE_W, W_OUT - x_tile_out)
+            x_tile_in   = x_tile_out * stride
+            first_mac   = True
 
-            if num_rounds > 1:
-                instructions.append(
-                    pack_inst(OP_LD_WGT, wgt_addr=0,
-                              sram_addr=round_global_start,
-                              length=len(round_pos)))
+            for round_idx, round_pos in enumerate(rounds):
+                round_global_start = wb_base + round_idx * WRF_DEPTH
 
-            for local_idx, (ky, kx) in enumerate(round_pos):
-                clr       = 1 if first_mac else 0
-                first_mac = False
+                if num_rounds > 1:
+                    instructions.append(
+                        pack_inst(OP_LD_WGT, wgt_addr=0,
+                                  sram_addr=round_global_start,
+                                  length=len(round_pos)))
 
-                if stride == 1:
-                    # --------------------------------------------------
-                    # stride=1: sliding-window optimization.
-                    # Full tile (valid_w == TILE_W):
-                    #   kx=0       → LDnMAC(ld_len=TILE_W): load all pixels fresh
-                    #   kx=1..K-1  → LDnMAC(ld_len=1):      slide window by 1
-                    # Partial tile (valid_w < TILE_W, last tile only):
-                    #   All kx     → LDnMAC(ld_len=valid_w): full reload each tap,
-                    #                no sliding (sliding would read beyond valid ARF range)
-                    # --------------------------------------------------
-                    if valid_w == TILE_W:
-                        if kx == 0:
-                            rel = ky * W_IN + x_tile_in
+                for local_idx, (ky, kx) in enumerate(round_pos):
+                    clr       = 1 if first_mac else 0
+                    first_mac = False
+
+                    if stride == 1:
+                        if valid_w == TILE_W:
+                            if kx == 0:
+                                rel = ky * W_IN + x_tile_in
+                                instructions.append(pack_ldnmac(
+                                    clr_parf=clr,
+                                    wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                                    sram_addr=rel,
+                                    ld_len=TILE_W, mac_len=TILE_W,
+                                    stride=0, ld_arf_addr=0))
+                            else:
+                                rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
+                                instructions.append(pack_ldnmac(
+                                    clr_parf=clr,
+                                    wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
+                                    sram_addr=rel,
+                                    ld_len=1, mac_len=TILE_W,
+                                    stride=0, ld_arf_addr=kx - 1))
+                        else:
+                            rel = ky * W_IN + x_tile_in + kx
+                            instructions.append(pack_ldnmac(
+                                clr_parf=clr,
+                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                                sram_addr=rel,
+                                ld_len=valid_w, mac_len=valid_w,
+                                stride=0, ld_arf_addr=0))
+                    else:
+                        if valid_w < TILE_W:
+                            rel = ky * W_IN + x_tile_in + kx
+                            instructions.append(pack_ldnmac(
+                                clr_parf=clr,
+                                wgt_addr=local_idx, parf_addr=0, arf_addr=0,
+                                sram_addr=rel,
+                                ld_len=valid_w, mac_len=valid_w,
+                                stride=stride, ld_arf_addr=0))
+                        else:
+                            rel = ky * W_IN + x_tile_in + kx
                             instructions.append(pack_ldnmac(
                                 clr_parf=clr,
                                 wgt_addr=local_idx, parf_addr=0, arf_addr=0,
                                 sram_addr=rel,
                                 ld_len=TILE_W, mac_len=TILE_W,
-                                stride=0, ld_arf_addr=0))
-                        else:
-                            # Sliding window: load 1 new pixel into ARF[kx-1],
-                            # MAC reads ARF[kx .. kx+TILE_W-1]
-                            rel = ky * W_IN + x_tile_in + TILE_W + kx - 1
-                            instructions.append(pack_ldnmac(
-                                clr_parf=clr,
-                                wgt_addr=local_idx, parf_addr=0, arf_addr=kx,
-                                sram_addr=rel,
-                                ld_len=1, mac_len=TILE_W,
-                                stride=0, ld_arf_addr=kx - 1))
-                    else:
-                        # Partial tile: reload valid_w pixels every tap, no sliding
-                        rel = ky * W_IN + x_tile_in + kx
-                        instructions.append(pack_ldnmac(
-                            clr_parf=clr,
-                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                            sram_addr=rel,
-                            ld_len=valid_w, mac_len=valid_w,
-                            stride=0, ld_arf_addr=0))
-                else:
-                    # --------------------------------------------------
-                    # stride>1: full reload for ALL kx, both partial and full tiles.
-                    #
-                    # ARF sliding window is NOT used for stride>1 because:
-                    #   - kx < stride each issue a full TILE_W reload into ARF[0..TILE_W-1].
-                    #   - With stride>1 the second full reload (kx=1) overwrites kx=0,
-                    #     so kx=2 cannot slide on kx=0 — the ARF precondition is violated.
-                    #   - Additionally kx//stride aliases consecutive kx (e.g. kx=2 and kx=3
-                    #     both give slide_count=1 for stride=2), creating a second aliasing bug.
-                    #
-                    # Partial tile (valid_w < TILE_W): use mac_len=valid_w to avoid waste.
-                    # Full tile   (valid_w == TILE_W): use mac_len=TILE_W.
-                    # --------------------------------------------------
-                    if valid_w < TILE_W:
-                        # Partial tile: reload valid_w pixels, MAC only valid_w cycles
-                        rel = ky * W_IN + x_tile_in + kx
-                        instructions.append(pack_ldnmac(
-                            clr_parf=clr,
-                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                            sram_addr=rel,
-                            ld_len=valid_w, mac_len=valid_w,
-                            stride=stride, ld_arf_addr=0))
-                    else:
-                        # Full tile: full reload with hardware IFB stride step
-                        rel = ky * W_IN + x_tile_in + kx
-                        instructions.append(pack_ldnmac(
-                            clr_parf=clr,
-                            wgt_addr=local_idx, parf_addr=0, arf_addr=0,
-                            sram_addr=rel,
-                            ld_len=TILE_W, mac_len=TILE_W,
-                            stride=stride, ld_arf_addr=0))
+                                stride=stride, ld_arf_addr=0))
 
-        # ST_OFM: write valid_w pixels to OFB (addr relative to r1)
-        instructions.append(pack_inst(
-            OP_ST_OFM, sdp_en=1, parf_addr=0,
-            sram_addr=x_tile_out, length=valid_w))
+            # ST_OFM: write valid_w pixels to OFB (addr relative to r1)
+            instructions.append(pack_inst(
+                OP_ST_OFM, sdp_en=1, parf_addr=0,
+                sram_addr=x_tile_out, length=valid_w))
 
-    # --- Loop tail ---
-    # r0 advances by stride*W_IN per output row (input row step = stride rows)
-    instructions.append(pack_alu(rd=0, rs1=0, op='+', imm=stride * W_IN))
-    instructions.append(pack_alu(rd=1, rs1=1, op='+', imm=W_OUT))
-    instructions.append(pack_bnz(rs=2, target_pc=LOOP_START))
+        # --- Loop tail ---
+        instructions.append(pack_alu(rd=0, rs1=0, op='+', imm=stride * W_IN))
+        instructions.append(pack_alu(rd=1, rs1=1, op='+', imm=W_OUT))
+        instructions.append(pack_bnz(rs=2, target_pc=LOOP_START))
 
     instructions.append(pack_inst(OP_FINISH))
 
     with open('inst.txt', 'w') as f:
         f.writelines(inst + '\n' for inst in instructions)
 
-    # --- sim_params.f for testbench plusargs and parameters ---
+    # --- sim_params.f for testbench plusargs ---
+    total_ofm = H_OUT * W_OUT * cout_slices
     with open('sim_params.f', 'w') as f:
-        f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n-gSRAM_DEPTH={SRAM_DEPTH}\n")
+        f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n+COUT_SLICES={cout_slices}\n"
+                f"-gSRAM_DEPTH={SRAM_DEPTH}\n")
 
     # ------------------------------------------------------------------
-    # 4. Expected OFM (golden reference, computed in Python)
-    #    Packed to HW_COL channels x 8-bit per pixel (zero-padded above NUM_COUT)
+    # 4. Expected OFM (golden reference)
+    #    Layout: cout_slice 0 region [0..H*W-1], cout_slice 1 [H*W..2*H*W-1], ...
+    #    Each entry = HW_COL × 8-bit (only local_cout channels valid, rest 0)
     # ------------------------------------------------------------------
     expected_ofm = []
-    for yout in range(H_OUT):
-        for px in range(W_OUT):
-            pixel_val = 0
-            for cout in range(NUM_COUT):
-                psum = 0
-                for ky in range(K):
-                    for kx in range(K):
-                        for cin in range(NUM_CIN):
-                            # input pixel: top-left = (yout*stride, px*stride)
-                            iy = yout * stride + ky
-                            ix = px   * stride + kx
-                            psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
-                act = max(0, min(255, psum >> shift_amt))
-                pixel_val |= (act & 0xFF) << (cout * 8)
-            # channels NUM_COUT..HW_COL-1 are implicitly 0
-            expected_ofm.append(f"{pixel_val:0{HW_COL * 2}X}")
+    for cs in range(cout_slices):
+        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
+        for yout in range(H_OUT):
+            for px in range(W_OUT):
+                pixel_val = 0
+                for lc in range(local_cout):
+                    cout = cs * HW_COL + lc
+                    psum = 0
+                    for ky in range(K):
+                        for kx in range(K):
+                            for cin in range(NUM_CIN):
+                                iy = yout * stride + ky
+                                ix = px   * stride + kx
+                                psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
+                    act = max(0, min(255, psum >> shift_amt))
+                    pixel_val |= (act & 0xFF) << (lc * 8)
+                expected_ofm.append(f"{pixel_val:0{HW_COL * 2}X}")
     with open('expected_ofm.txt', 'w') as f:
         f.writelines(d + '\n' for d in expected_ofm)
 
@@ -398,8 +382,8 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     # Summary
     # ------------------------------------------------------------------
     n = len(instructions)
-    print(f"Instructions : {n} total  (LOOP_START=PC {LOOP_START}, "
-          f"runs {H_OUT} times)")
+    print(f"Instructions : {n} total  ({cout_slices} cout_slice(s), "
+          f"runs {H_OUT} yout per slice)")
     print(f"Files written: ifb.txt  wb.txt  inst.txt  expected_ofm.txt  sim_params.f")
 
 # ---------------------------------------------------------------------------

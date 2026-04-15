@@ -145,11 +145,13 @@ module tb_core_isa;
             
             // Verify all expected output pixels
             // Read OFM dimensions from plusargs (set by gen_isa_test.py via sim_params.f)
-            int h_out_val, w_out_val, total_ofm;
+            int h_out_val, w_out_val, cout_slices_val, total_ofm;
             if (!$value$plusargs("H_OUT=%d", h_out_val)) h_out_val = 121;
             if (!$value$plusargs("W_OUT=%d", w_out_val)) w_out_val = 43;
-            total_ofm = h_out_val * w_out_val;
-            $display("OFM dimensions: H_OUT=%0d, W_OUT=%0d, TOTAL=%0d", h_out_val, w_out_val, total_ofm);
+            if (!$value$plusargs("COUT_SLICES=%d", cout_slices_val)) cout_slices_val = 1;
+            total_ofm = h_out_val * w_out_val * cout_slices_val;
+            $display("OFM dimensions: H_OUT=%0d, W_OUT=%0d, COUT_SLICES=%0d, TOTAL=%0d",
+                     h_out_val, w_out_val, cout_slices_val, total_ofm);
 
             for (int addr = 0; addr < total_ofm; addr++) begin
                 automatic logic [OFB_WIDTH-1:0] actual = u_core_top.u_ofb.mem[addr];

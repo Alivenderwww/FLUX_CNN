@@ -128,6 +128,8 @@ def parse_args():
     p.add_argument('--stride',   type=int, default=1,   help='Convolution stride (default 1, max 7)')
     p.add_argument('--num_cin',  type=int, default=16,  help='Input channels  (default 16)')
     p.add_argument('--num_cout', type=int, default=16,  help='Output channels (default 16)')
+    p.add_argument('--hw_pe',    type=int, default=16,  help='Hardware PE count per column (default 16)')
+    p.add_argument('--hw_col',   type=int, default=16,  help='Hardware column count (default 16)')
     p.add_argument('--tile_w',   type=int, default=32,  help='ARF tile width  (default 32)')
     p.add_argument('--seed',     type=int, default=42,  help='Random seed     (default 42)')
     p.add_argument('--shift',    type=int, default=0,
@@ -137,9 +139,15 @@ def parse_args():
 # ---------------------------------------------------------------------------
 # Main generation
 # ---------------------------------------------------------------------------
-def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride=1):
+def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
+             shift_amt=0, stride=1, HW_PE=16, HW_COL=16):
     import random
     random.seed(seed)
+
+    if NUM_CIN > HW_PE:
+        sys.exit(f"ERROR: NUM_CIN={NUM_CIN} > HW_PE={HW_PE}. Multi-cin-slice not yet supported.")
+    if NUM_COUT > HW_COL:
+        sys.exit(f"ERROR: NUM_COUT={NUM_COUT} > HW_COL={HW_COL}. Multi-cout-slice not yet supported.")
 
     if stride < 1 or stride > 7:
         sys.exit(f"ERROR: stride={stride} out of range [1..7].")
@@ -182,11 +190,10 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
              else f"(weight-reload every yout x {num_tiles} tile(s))"))
 
     # ------------------------------------------------------------------
-    # 1. IFB data
+    # 1. IFB data  (H_IN x W_IN pixels, packed to HW_PE channels x 8-bit)
+    #    Only NUM_CIN channels carry valid data; channels NUM_CIN..HW_PE-1 = 0
     # ------------------------------------------------------------------
-    # 1. IFB data  (H_IN x W_IN pixels, each NUM_CIN channels x 8-bit)
-    # ------------------------------------------------------------------
-    ifb_hex_chars = NUM_CIN * 2  # each channel = 8-bit = 2 hex chars
+    ifb_hex_chars = HW_PE * 2  # hardware IFB word width in hex chars
     ifm_arr = [[[0]*NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
     ifb_data = []
     for y in range(H_IN):
@@ -196,15 +203,18 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                 v = random.randint(0, 7)
                 ifm_arr[y][x][cin] = v
                 val |= (v & 0xFF) << (cin * 8)
+            # channels NUM_CIN..HW_PE-1 are implicitly 0 in val
             ifb_data.append(f"{val:0{ifb_hex_chars}X}")
     with open('ifb.txt', 'w') as f:
         f.writelines(d + '\n' for d in ifb_data)
 
     # ------------------------------------------------------------------
     # 2. WB data  (K*K weight positions stored flat)
-    #    Each word = NUM_COUT columns x NUM_CIN PEs x 8-bit = NUM_COUT*NUM_CIN*8 bits
+    #    Hardware word = HW_COL columns x HW_PE PEs x 8-bit
+    #    Only NUM_COUT x NUM_CIN entries carry valid weights; rest = 0
+    #    Column c occupies bits [c*HW_PE*8 +: HW_PE*8] to match mac_array slicing
     # ------------------------------------------------------------------
-    wb_hex_chars = NUM_COUT * NUM_CIN * 2  # total hex chars per WB word
+    wb_hex_chars = HW_COL * HW_PE * 2  # hardware WB word width in hex chars
     w_arr = [[[[0]*NUM_CIN for _ in range(NUM_COUT)] for _ in range(K)] for _ in range(K)]
     wb_data = []
     for ky in range(K):
@@ -216,7 +226,8 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                     v = random.randint(-3, 3)
                     w_arr[ky][kx][cout][cin] = v
                     cv |= (v & 0xFF) << (cin * 8)
-                val |= cv << (cout * NUM_CIN * 8)
+                # Column cout at hardware offset: cout * HW_PE * 8 bits
+                val |= cv << (cout * HW_PE * 8)
             wb_data.append(f"{val:0{wb_hex_chars}X}")
     with open('wb.txt', 'w') as f:
         f.writelines(d + '\n' for d in wb_data)
@@ -361,6 +372,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
 
     # ------------------------------------------------------------------
     # 4. Expected OFM (golden reference, computed in Python)
+    #    Packed to HW_COL channels x 8-bit per pixel (zero-padded above NUM_COUT)
     # ------------------------------------------------------------------
     expected_ofm = []
     for yout in range(H_OUT):
@@ -377,7 +389,8 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed, shift_amt=0, stride
                             psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
                 act = max(0, min(255, psum >> shift_amt))
                 pixel_val |= (act & 0xFF) << (cout * 8)
-            expected_ofm.append(f"{pixel_val:0{NUM_COUT * 2}X}")
+            # channels NUM_COUT..HW_COL-1 are implicitly 0
+            expected_ofm.append(f"{pixel_val:0{HW_COL * 2}X}")
     with open('expected_ofm.txt', 'w') as f:
         f.writelines(d + '\n' for d in expected_ofm)
 
@@ -397,4 +410,5 @@ if __name__ == '__main__':
     generate(H_IN=args.h_in, W_IN=args.w_in, K=args.k,
              NUM_CIN=args.num_cin, NUM_COUT=args.num_cout,
              TILE_W=args.tile_w, seed=args.seed,
-             shift_amt=args.shift, stride=args.stride)
+             shift_amt=args.shift, stride=args.stride,
+             HW_PE=args.hw_pe, HW_COL=args.hw_col)

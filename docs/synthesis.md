@@ -1,10 +1,12 @@
-# 综合结果
+# 综合
+
+> **注意**：综合不是本项目当前的主要关注点。这份文档只给出流程和粗略预期，不保证综合数字最新。时序/面积/功耗的精确评估留给未来工程化阶段。
 
 ## 工具链与目标器件
 
-- **综合工具**：Xilinx Vivado
+- **工具**：Xilinx Vivado
 - **目标器件**：`xcku060-ffva1156-2-e` (UltraScale+ FPGA)
-- **综合模式**：OOC (Out-of-Context) —— 不包括 I/O pad
+- **综合模式**：OOC (Out-of-Context) —— 不含 I/O pad
 - **时钟约束**：10 ns（100 MHz）
 
 ## 运行
@@ -16,70 +18,21 @@ vivado -mode tcl -source run_syn.tcl -log syn_run.log -nojournal
 
 报告输出到 `Syn/reports/`。
 
----
+## 预期关键路径
 
-## 资源利用（ISA 方案 8×8 MAC 阵列最后一次综合快照）
+1. **MAC 列加法树**（16 个 16-bit 乘积 → 32-bit）—— 当前全组合 4 级加法；在 100 MHz 不成为瓶颈，拉更高频需要插 1-2 级流水
+2. **握手穿透链** —— `parf_accum.psum_in_ready → mac_array.can_advance → act_ready/wgt_ready → line_buffer/wgt_buffer`；全组合路径经过 2-3 个 AND 门
+3. **地址加法** —— line_buffer 的 `ptr_kx_base + iss_pos × stride`（20-bit + 5-bit）；stride ≤ 2 时是 shift/wire，组合逻辑短
+4. **SRAM 读** —— 硬件固定 1 拍
 
-> 注：下列数字来自原 ISA 方案 + 8×8 MAC 阵列的综合快照。配置寄存器方案 + 16×16 MAC 的综合结果尚未重做，目前作为参考基线。
+`sram_model` 综合时映射到 RAMB36，占据大部分 RAMB 资源。
 
-| 资源 | 使用量 | 器件总量 | 利用率 |
-|------|--------|---------|--------|
-| LUT | 17,415 | 331,680 | 5.25% |
-| FF | 28,334 | 663,360 | 4.27% |
-| RAMB36 | 156 | 1,080 | 14.44% |
-| RAMB18 | 3 | — | — |
-| DSP | 0 | — | 0%（乘法用 LUT 实现） |
-
-**RAMB36 主导面积**：当时 156 块均来自 SRAM 模型（IFB/WB/OFB/INST）。
-
-配置寄存器方案预期变化：
-- **RAMB 减少**：`INST_SRAM` 已删除，减少若干 RAMB36
-- **LUT/FF 增加**：MAC 阵列从 8×8 扩到 16×16 → 4× MAC 数，乘法器和加法树 LUT 增加 ~3~4×
-- **地址宽度 20-bit**：比原 16-bit 加法器略大，影响有限
-
-## 功耗（旧快照）
-
-| 类型 | 功耗 |
-|------|------|
-| 总片上功耗 | 1.046 W |
-| 动态功耗 | 0.412 W |
-| 静态功耗 | 0.633 W |
-| Block RAM（动态） | 0.352 W（占动态功耗 85%） |
-| CLB 逻辑 | 0.004 W |
-
-## 时序（旧快照）
-
-| 指标 | 值 |
-|------|----|
-| 时钟约束 | 10 ns（100 MHz） |
-| WNS（最差负时序裕量） | +0.910 ns |
-| 时序状态 | 全部满足 |
-
----
-
-## 预期关键路径（配置寄存器 + 16×16 方案）
-
-1. **MAC 列加法树**（16 个 16-bit 乘积求和到 32-bit）—— 当前全组合逻辑，约 4 级加法（≈8 ns at 100 MHz，有空间提到 200 MHz 后需要插入流水）
-2. **cfg_regs → FSM 运行指针加法**（20-bit + 20-bit）—— 每拍发生，2-3 ns
-3. **IFB/WB/OFB SRAM 读延迟** —— 硬件固定 1 拍
-4. **SDP 组合路径**（32-bit psum → shift → ReLU → clip）—— 简单组合，约 2 ns
-
-### 频率提升路径
+## 频率提升参考
 
 | 阶段 | 预期时钟 | 改动 |
 |------|---------|------|
-| 当前 | 100 MHz | baseline |
-| + 加法树单级流水 | ~200-250 MHz | `mac_col` 在 `prod_out` 后面加 1 级加法树流水寄存器 |
-| + 加法树 2 级流水 | ~400 MHz | 进一步拆分，需相应调整 `ofb_we_d2` → `ofb_we_d3` 等延迟 |
-| + SDP 流水 | ~500 MHz | SDP 内部拆成 shift / relu / clip 三拍 |
+| 当前 | 100 MHz | baseline（握手架构） |
+| + 加法树单级流水 | ~200-250 MHz | `mac_col` 在 `prod_out` 后面加 1 级加法树流水寄存器，相应扩 mac_array 的 pipe valid 追踪到 3 级 |
+| + SDP 流水化 | ~400+ MHz | SDP 内部拆 shift / relu / clip，调整 ofb_writer 写地址延迟 |
 
-配置寄存器 FSM 本身不在关键路径（加法位宽 20-bit，组合逻辑短）。
-
----
-
-## 未来优化
-
-见 [`roadmap.md`](roadmap.md)：
-- `sram_model` → BRAM 原语替换（减少综合 RAMB 占用）
-- DSP slice 用于乘法（释放 LUT）
-- 多核 Mesh 综合（目前是单核 OOC）
+更细节见 `docs/roadmap.md` Phase 3。

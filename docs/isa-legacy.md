@@ -1,6 +1,12 @@
 # Macro-ISA 方案（已退役）
 
-> **状态**：已废弃。当前代码采用[配置寄存器 + 自驱动 FSM](config-registers.md)。本文档保留用于历史参考。
+> **状态**：已废弃。架构演进两次：
+>
+> 1. Macro-ISA（64-bit 宏指令 + 取指译码）
+> 2. cfg-driven FSM（单 FSM 读配置寄存器自驱动 6 层循环，无取指）— 也已退役
+> 3. **当前**：[valid-ready 握手驱动的去中心化流水](handshake-pipeline.md)
+>
+> 本文档保留 Macro-ISA 历史。cfg-driven FSM 阶段的 `core_ctrl.sv` 还在磁盘但已从 file list 剔除。
 
 ---
 

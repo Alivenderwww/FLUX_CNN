@@ -1,92 +1,102 @@
 # 未来工作规划
 
-已完成（phase 1）：
-- ✅ Macro-ISA → 配置寄存器 + 自驱动 FSM
-- ✅ 轮次分块（K² > WRF_DEPTH，支持 K=7/9/...）
-- ✅ 20-bit 内部地址，64K word IFB 容量
-- ✅ 17/17 回归用例通过（含 224×224 大图）
+已完成：
+- ✅ Macro-ISA → 配置寄存器驱动 FSM (已退役)
+- ✅ **握手驱动去中心化流水** (v1 → v3 迭代，MAC 利用率到 99.95%)
+- ✅ cross-round pipeline + parf_accum FILL/DRAIN overlap
+- ✅ 20-bit 内部地址，支持 224×224 单切片
+- ✅ 10/10 packed 回归用例全通
 
 ---
 
-## Phase 2 — 算子支持扩展
+## Phase 2 — 架构特性补齐（v1 未做）
 
-### Padding（零代价硬件 padding，NVDLA 风格）
+### Chunked 权重调度（K≥7 / Cin>32 支持）
 
-在 `core_ctrl` 的 PF (prefetch) 阶段做坐标越界判定，越界时不发 SRAM 读、直接给 MAC 喂 0：
+v1 `wgt_buffer` 假设 packed `K²·cin_slices ≤ 32`，chunked 用例跑不通（K=3 C64+ 和所有 K=7 用例）。补齐方向：
+
+- `wgt_buffer` 内加 `round_cnt` 和 `cur_round_len` 计数
+- 每 `(cins, round)` 触发一次 LOAD（chunked 无轮次：每 cins 一次；多轮次：每 round 一次）
+- `wrf_raddr = pos_in_round`（不用 running base 算 `cins*kk+ky*K+kx`）
+- state machine 扩展：COMPUTE 阶段 `pos_in_round == round_len-1 && !round_is_last` 时切回 LOAD
+- `total_wrf` / `wrf_packed` / `rounds_per_cins` / `round_len_last` cfg 字段已经在 `cfg_regs` 里，直接用
+
+预计改动量：~100 行 wgt_buffer，回归用例打开 K=7 和 C64 后验证。
+
+### stride=1 滑窗复用
+
+原 cfg-driven FSM 支持 stride=1 下 ARF 滑窗复用：`kx=0` 载入 `TILE_W=32` 像素，`kx=1..K-1` 每个只加载 1 个新像素（5-bit ARF 地址自然 wrap）。v1 没有此优化，IFB 读 = `TILE_W × K` (vs 原架构 `TILE_W + K-1`)。
+
+- **K=3 stride=1**：可省 2/3 IFB 读
+- **K=7 stride=1**：可省 6/7 IFB 读
+
+改动点：`line_buffer` 的 issue 逻辑在 stride=1 + 整 tile 下进入"滑窗模式"，`kx=0` 发 cur_valid_w 个 issue，`kx=1..K-1` 每个只发 1 个 issue。`ring buffer` 要支持"部分重叠窗口"的读（类似旋转）。实现复杂度较高，是典型的 "再压 MAC 利用率到下一级" 优化（会让 ACT idle 进一步趋近 0，目前已经是 0，所以实际收益有限 —— 主要是 IFB 带宽节约）。
+
+### Padding（NVDLA 风格零代价硬件 padding）
+
+在 `line_buffer` 的 issue 处做坐标越界判定，越界时不发 IFB 读、直接给 act 流喂 0：
 
 ```systemverilog
-// 新增 cfg 寄存器
+// 新 cfg 字段
 logic [3:0] cfg_pad_top, cfg_pad_left;
 
-// PF stage 坐标换算
+// line_buffer 内部坐标换算
 logic signed [16:0] src_y = yout_cnt * stride + ky_cnt - cfg_pad_top;
-logic signed [16:0] src_x = x_tile_in_r + sub_cnt * stride + kx_cnt - cfg_pad_left;
+logic signed [16:0] src_x = tile_cnt * tile_w + iss_pos * stride + kx_cnt - cfg_pad_left;
 
-// 越界判定
 wire is_pad = (src_y < 0) | (src_y >= cfg_h_in) |
               (src_x < 0) | (src_x >= cfg_w_in);
 
-// padding 像素：不读 SRAM，ARF 写 0
-assign ifb_re   = !is_pad;
-// bypass MUX 需要对 is_pad 扩展：act_to_mac = is_pad ? '0 : (原有 mux)
+// padding 位置不发 IFB 读，arrival 数据改成 0
+assign ifb_re = issue_ok & !is_pad;
+// ring buffer 直接写 0（不等 IFB 回）
 ```
 
-优势：不占 SRAM 空间、不占 SRAM 带宽、不需额外指令。
+需要 `is_pad` 信号跟着 ring buffer 的 wr_idx 流到 arrival 时机。简单做法：把 `(is_pad, data)` 一起入队。
 
 ### Residual Add（SDP 融合）
 
-扩展 SDP，在 `shift` 之前加一路残差加法：
+扩展 `sdp.sv` 在 shift 之前加一路残差加法：
 
 ```systemverilog
-// SDP 新增输入
-input logic [PSUM_WIDTH-1:0] residual_in;
-input logic                  residual_en;
+// sdp 新增输入
+input logic signed [NUM_COL*PSUM_WIDTH-1:0] residual_in;
+input logic                                 residual_en;
 
-wire signed [PSUM_WIDTH-1:0] combined =
-    residual_en ? (psum_in + residual_in) : psum_in;
-wire [7:0] result = clamp(combined >>> shift_amt);
+// 每列组合：psum + residual → shift → relu → clip
+wire signed [PSUM_WIDTH-1:0] combined_ch = 
+    residual_en ? (psum_ch[c] + residual_ch[c]) : psum_ch[c];
 ```
 
-配置寄存器新增 `cfg_sdp_res_en`, `cfg_res_base`。FSM 在 `ST_OFM` 阶段并发发起 `RES_SRAM`（可复用 IFB 或单独给端口）读请求。
+需要新模块（或扩展 `ofb_writer`）从另一块 SRAM 读残差。cfg 加 `cfg_sdp_res_en`, `cfg_res_base`。
 
 ### Pooling（Max / Avg）
 
-- 新增 `S_POOL` FSM 状态或复用 `S_SUBOP` 改走 SDP 的 pooling 模式
-- SDP 内增加比较器（max）或累加+除法（avg）
+- 新增 `pool_mode` cfg 字段
+- `sdp` 或独立 pool 模块实现 max 比较和 avg 累加
+- `ofb_writer` 根据 pool stride 调整写地址步进
 
 ### Depthwise Conv
 
-每通道独立卷积，MAC 阵列的 16×16 广播结构不再适用。可以：
-- **方案 A**：把 DW conv 映射成 "每列一个通道，每列独立权重"，广播关闭
-- **方案 B**：新增 `DW_MODE` 标志位，软件把 K² 个 tap 展平成 16 个 PE 各自的工作（单列满载）
+每通道独立卷积，MAC 阵列的"16×16 广播"结构不适用。选择：
+- **方案 A**：每列独占一个输入通道、一个输出通道，关闭广播
+- **方案 B**：`DW_MODE` 把 K² 个 tap 展平成 16 个 PE 的工作
 
 ---
 
-## Phase 3 — 性能优化
+## Phase 3 — 时序优化
 
-### 消除 sub_op 预取气泡
+### 加法树流水化
 
-当前每个 sub_op 首拍（cnt=0）是 IFB 预取，不做 MAC。理论可融合相邻 sub_op：前一 sub_op 的最后一拍 MAC 同时发起下一 sub_op 的 IFB 预取。
+`mac_col` 的加法树当前是全组合（16 个 16-bit prod 相加到 32-bit），在 100 MHz 基本不成为瓶颈。拉更高频（250-400 MHz）需要：
 
-- 预期收益：MAC 利用率 87% → 95%+（K=3）、92% → 96%+（K=7）
-- 实现复杂度：中等 —— 需要在 FSM 里提前 1 拍计算下一 sub_op 的地址
+- 把 16-PE 求和拆成 2-3 级流水（8+8 → 8 + 剩余 → 最终和）
+- 相应调整 `parf_accum` 的 pipe valid 追踪（从 2 级到 3-4 级）
+- 关键路径从 16-way adder tree 缩到 4-way
 
-### ST_OFM 与下一 tile MAC 重叠
+### SDP 拆流水
 
-需要 PARF 双 bank（读写分离）：
-- Bank A 持有上一 tile 的 PARF 内容，`ST_OFM` 从它读
-- Bank B 是新 tile 的累加目标，MAC 往它写
-- 每 tile 结束后 bank 指针翻转
-
-面积代价：PARF 加倍（当前 16 列 × 32 深 × 32-bit = 16384 bit → 32K bit）
-预期收益：消除每 tile 的 `valid_w` 拍气泡（K=3 68x120 约节省 `66 × (32+32+32+22) / 80267 ≈ 10%`）
-
-### 流水线深度优化（拉高时钟）
-
-见 [`synthesis.md`](synthesis.md)。关键改动：
-- `mac_col` 加法树插入 1-2 级流水寄存器（100 → 250-400 MHz）
-- `sdp` 拆成 3 拍组合路径（1 拍 shift + 1 拍 relu + 1 拍 clip）
-- 相应把 `ofb_we_d2` 改成 `ofb_we_d3/d4`
+纯组合的 `sdp` 在 int8 下不是关键路径，如果进一步拉频可拆成 1 shift + 1 relu + 1 clip。相应 `ofb_writer` 的 OFB 写地址要延后 2-3 拍对齐。
 
 ---
 
@@ -96,12 +106,12 @@ wire [7:0] result = clamp(combined >>> shift_amt);
 
 每个核 256 MAC，多核时用片上 mesh 互联做：
 - **权重广播**：Cin 小、图大场景，权重分发到多核
-- **激活广播**：Cout 大场景，激活值给到多核
+- **激活广播**：Cout 大场景
 - **Psum 流动**：Cin 和 Cout 都大，Psum 在核间接力累加
 
 ### 行流式跨层融合
 
-IFB 容量小（Line Buffer 概念，8K~64K 字），不需要整层特征图存下。下游核攒够 K 行就启动，延迟从"整层"降到"K 行"。
+IFB 容量小，不需要整层特征图存下。下游核攒够 K 行就启动，延迟从"整层"降到"K 行"。
 
 ### Task Descriptor + Router
 
@@ -110,21 +120,17 @@ IFB 容量小（Line Buffer 概念，8K~64K 字），不需要整层特征图存
 - 数据路由（input 来源 / output 目的）
 - 核间同步（`wait_mask`, `signal_done`）
 
-核间 Router/DMA 负责把一个核的 OFB 输出搬到另一个核的 IFB。
-
-### Element-wise Add（ResNet 残差）
-
-融合进 SDP（见 Phase 2），或者放核外专门的 ElemAdd 单元。
+握手流水架构对这种 DMA 不确定时序**天然友好** —— 模块间的 valid-ready 背压可以直接接到 DMA 的送数节奏上。
 
 ---
 
 ## Phase 5 — 工程化 / 验证 / 编译器
 
-- **真实 SRAM 替换**：`sram_model` → BRAM 原语（减少综合 RAMB 占用，精确建模时序）
-- **UVM 验证平台**：从当前定向测试升级到约束随机测试，覆盖边界场景
-- **性能模型（Roofline）**：建立算术强度 vs 带宽的 Roofline 分析，指导 tile size 选择
-- **编译器完善**：`gen_isa_test.py` 扩展为真正的图编译器，支持多层网络（AlexNet / MobileNet / ResNet 子网）的端到端代码生成
-- **多层自动调度器**：给定 ONNX 模型，自动切分层、分配核、生成 Task Descriptor 链
+- **真实 SRAM 替换**：`sram_model` → BRAM 原语
+- **UVM 验证平台**：定向测试 → 约束随机覆盖边界场景
+- **性能模型（Roofline）**：算术强度 vs 带宽分析
+- **编译器**：`gen_isa_test.py` → 图编译器，支持多层网络
+- **多层自动调度器**：ONNX → Task Descriptor 链
 
 ---
 
@@ -132,8 +138,10 @@ IFB 容量小（Line Buffer 概念，8K~64K 字），不需要整层特征图存
 
 | 优先级 | 工作 | 理由 |
 |--------|------|------|
-| 高 | Padding | 任何实用 CNN 都要；NVDLA 风格零代价实现简单 |
-| 高 | Residual + SDP 融合 | ResNet 是当代标准；SDP 已有基础设施 |
-| 中 | 相邻 sub_op 预取融合 | 纯性能优化，收益 ~5-10% 利用率 |
+| 高 | Chunked 支持 | 解锁 K=7 和大 Cin 用例（实用模型如 AlexNet、ResNet 首层） |
+| 高 | Padding | 任何实用 CNN 都要；零代价硬件实现 |
+| 中 | Residual + SDP 融合 | ResNet 是当代标准 |
+| 中 | stride=1 滑窗复用 | IFB 带宽节约，次要但实用 |
 | 中 | Pooling | 大部分 CNN 需要；实现简单 |
 | 低 | Depthwise / 多核 | 复杂度大，需要完整系统级验证 |
+| 低 | 时序优化 | 100 MHz 够用了；拉频不是紧迫需求 |

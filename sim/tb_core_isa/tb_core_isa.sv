@@ -84,15 +84,13 @@ module tb_core_isa;
         end
     end
 
-    // Perf arrays
-    int pe_mac_cnt_arr   [0:NUM_COL-1][0:NUM_PE-1];
+    // Perf arrays (mac_array 顶层 counter 负责 real MAC ops; 这里只保留 WRF 写次数统计)
     int pe_wrf_write_arr [0:NUM_COL-1][0:NUM_PE-1];
 
     genvar gc, gp;
     generate
         for (gc = 0; gc < NUM_COL; gc++) begin : perf_col
             for (gp = 0; gp < NUM_PE; gp++) begin : perf_pe
-                assign pe_mac_cnt_arr[gc][gp]    = u_core_top.u_mac_array.gen_col[gc].u_col.gen_pe[gp].u_pe.mac_ops_cnt;
                 assign pe_wrf_write_arr[gc][gp]  = u_core_top.u_mac_array.gen_col[gc].u_col.gen_pe[gp].u_pe.u_wrf.total_write_ops;
             end
         end
@@ -233,16 +231,20 @@ module tb_core_isa;
             $display("");
 
             begin
-                longint total_mac_ops    = 0;
-                longint total_wrf_writes = 0;
+                longint true_fire_cycles;
+                longint total_mac_ops;
+                longint total_wrf_writes;
+                true_fire_cycles = u_core_top.u_mac_array.true_fire_cnt;
+                total_mac_ops    = true_fire_cycles * NUM_COL * NUM_PE;
+                total_wrf_writes = 0;
                 for (int c = 0; c < NUM_COL; c++) begin
                     for (int p = 0; p < NUM_PE; p++) begin
-                        total_mac_ops    += pe_mac_cnt_arr[c][p];
                         total_wrf_writes += pe_wrf_write_arr[c][p];
                     end
                 end
                 $display("--- PE Array Utilization ---");
-                $display("Total MAC Ops:        %0d", total_mac_ops);
+                $display("True MAC Fire Cycles: %0d", true_fire_cycles);
+                $display("Total MAC Ops:        %0d (= real_cycles * %0d PEs)", total_mac_ops, NUM_COL * NUM_PE);
                 $display("Theoretical Max MACs: %0d (= cycles * %0d PEs)",
                          total_cycles * NUM_COL * NUM_PE, NUM_COL * NUM_PE);
                 $display("MAC Utilization:      %.2f %%",
@@ -250,6 +252,24 @@ module tb_core_isa;
                 $display("");
                 $display("--- RF Traffic ---");
                 $display("WRF  Writes: %0d", total_wrf_writes);
+                $display("");
+                $display("--- Handshake Stats (fire / stall=V&!R / idle=!V&R) ---");
+                $display("ACT  (lb  -> mac): fire=%0d stall=%0d idle=%0d",
+                         u_core_top.u_mac_array.hs_act_fire,
+                         u_core_top.u_mac_array.hs_act_stall,
+                         u_core_top.u_mac_array.hs_act_idle);
+                $display("WGT  (wb  -> mac): fire=%0d stall=%0d idle=%0d",
+                         u_core_top.u_mac_array.hs_wgt_fire,
+                         u_core_top.u_mac_array.hs_wgt_stall,
+                         u_core_top.u_mac_array.hs_wgt_idle);
+                $display("PSUM (mac -> prf): fire=%0d stall=%0d idle=%0d",
+                         u_core_top.u_mac_array.hs_psum_fire,
+                         u_core_top.u_mac_array.hs_psum_stall,
+                         u_core_top.u_mac_array.hs_psum_idle);
+                $display("ACC  (prf -> ofb): fire=%0d stall=%0d idle=%0d",
+                         u_core_top.u_ofb_writer.hs_acc_fire,
+                         u_core_top.u_ofb_writer.hs_acc_stall,
+                         u_core_top.u_ofb_writer.hs_acc_idle);
             end
         end
         $display("========================================");

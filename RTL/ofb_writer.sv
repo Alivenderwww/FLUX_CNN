@@ -140,6 +140,26 @@ module ofb_writer #(
     assign done = (state == S_DONE);
 
     // =========================================================================
+    // Simulation-only: acc 握手计数器 (parf_accum → ofb_writer)
+    // =========================================================================
+    // synthesis translate_off
+    int hs_acc_fire;
+    int hs_acc_stall;
+    int hs_acc_idle;
+    always_ff @(posedge clk) begin
+        if (rst_n) begin
+            if      ( acc_out_valid &&  acc_out_ready) hs_acc_fire  <= hs_acc_fire  + 1;
+            else if ( acc_out_valid && !acc_out_ready) hs_acc_stall <= hs_acc_stall + 1;
+            else if (!acc_out_valid &&  acc_out_ready) hs_acc_idle  <= hs_acc_idle  + 1;
+        end else begin
+            hs_acc_fire  <= 0;
+            hs_acc_stall <= 0;
+            hs_acc_idle  <= 0;
+        end
+    end
+    // synthesis translate_on
+
+    // =========================================================================
     // 时序更新
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin

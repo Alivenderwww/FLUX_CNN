@@ -1,28 +1,23 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// line_buffer.sv  --  Activation Stream Feeder (IFB → ARF → MAC)
+// line_buffer.sv  --  Activation Stream Feeder (IFB → act_buf → MAC)
 //
-// 接替原架构中 core_ctrl 产生的 IFB 读地址 + ARF 写/读 + 激活驱动的所有职责，
-// 自带 6 层循环推进。输出 act_vec 以 valid-ready 握手驱动 mac_array。
+// v2 优化：同一 (ky,kx,cins,tile,yout,cs) round 内 **LOAD/STREAM overlap**。
+// act_buf 保留为 32-entry ring buffer，写指针 wr_ptr 和读指针 rd_ptr 分离：
+//   - IFB 读每拍都可以发（wr_ptr + in_flight < cur_valid_w）
+//   - mac 读每拍都可以发（rd_ptr < wr_ptr）
+// 同一 round 内 LOAD 和 STREAM 天然 overlap；每 round 从 v1 的 2N+1 拍降到 N+2。
 //
-// 6 层嵌套循环（最外到最内）：
-//     for cs   in 0..cout_slices-1       (cs 对 IFB 读无影响，但整个 IFB 要重跑一遍)
-//       for yout in 0..h_out-1
-//         for tile in 0..num_tiles-1
-//           for cins in 0..cin_slices-1
-//             for ky in 0..K-1
-//               for kx in 0..K-1
-//                 [LOAD]   cur_valid_w 拍：发 IFB 读 → 1 拍后回填 act_buf
-//                 [STREAM] cur_valid_w 拍：act_buf[idx] → mac_array (valid-ready)
+// 6 层嵌套循环（和 v1 相同）：for cs / yout / tile / cins / ky / kx
+// round 边界：rd_ptr 达到 cur_valid_w → 外层 counter 推进；wr/rd 指针归零。
 //
-// v1 简化：LOAD/STREAM 严格串行；不做 stride=1 滑窗复用（kx=0..K-1 都完整读）。
-// 即一组 (ky,kx) 的 LOAD 耗 cur_valid_w+1 拍、STREAM 耗 cur_valid_w 拍。
-// v2 再上 overlap 和滑窗复用。
+// 握手：
+//   - ifb_re 由 issue_ok 闸门，不依赖 mac fire（解耦读/流）
+//   - act_valid = (rd_ptr < wr_ptr)：有数据就流出
+//   - mac.act_ready 控制 fire 和 rd_ptr 推进（与 ifb 读节奏解耦）
 //
-// 地址运算：维护 5 层 running base（yout / tile / cins / ky / kx），
-// 层推进时只做加法，零乘法器。IFB 内 x 偏移 rd_ifb_cnt*stride 是小乘法
-// （stride∈{1,2} 综合时退化为 shift/wire），可接受。
+// 地址运算：5 层 running base（yout/tile/cins/ky/kx），推进用纯加法。
 // =============================================================================
 
 module line_buffer #(
@@ -66,18 +61,17 @@ module line_buffer #(
     localparam int AW = $clog2(SRAM_DEPTH);
 
     // =========================================================================
-    // 状态机
+    // 状态
     // =========================================================================
     typedef enum logic [1:0] {
-        S_IDLE   = 2'd0,
-        S_LOAD   = 2'd1,   // IFB 读 + 写 act_buf
-        S_STREAM = 2'd2,   // act_buf → mac
-        S_DONE   = 2'd3
+        S_IDLE = 2'd0,
+        S_RUN  = 2'd1,
+        S_DONE = 2'd2
     } state_t;
     state_t state, state_next;
 
     // =========================================================================
-    // 6 层计数
+    // 6 层外层 counter
     // =========================================================================
     logic [3:0]  kx_cnt;
     logic [3:0]  ky_cnt;
@@ -87,33 +81,29 @@ module line_buffer #(
     logic [5:0]  cs_cnt;
 
     // =========================================================================
-    // 5 层运行基址（cs 层 = cfg_ifb_base 常量，省略）
+    // 5 层 running base (cs 不影响 IFB)
     // =========================================================================
     logic [ADDR_W-1:0] ptr_yout_base;
     logic [ADDR_W-1:0] ptr_tile_base;
     logic [ADDR_W-1:0] ptr_cins_base;
     logic [ADDR_W-1:0] ptr_ky_base;
-    logic [ADDR_W-1:0] ptr_kx_base;    // 当前 (cs,yout,tile,cins,ky,kx) 的 IFB 起点
+    logic [ADDR_W-1:0] ptr_kx_base;
 
     // =========================================================================
-    // LOAD / STREAM 内部计数 + buffer
+    // Ring-buffer 内部 ptr
     // =========================================================================
-    logic [5:0] rd_ifb_cnt;     // 已发出的 IFB 读数
-    logic [5:0] wr_buf_cnt;     // 已写入 act_buf 的数（= rd_ifb_cnt 延 1 拍）
-    logic       ifb_re_d1;      // ifb_re 打 1 拍，用于判定 ifb_rdata 有效
-    logic [5:0] stream_idx;
+    logic [5:0] wr_ptr;          // 下一个要写入 act_buf 的位置 (0..cur_valid_w)
+    logic [5:0] rd_ptr;          // 下一个要读给 mac 的位置    (0..cur_valid_w)
+    logic       ifb_re_d1;       // 上拍发了 ifb_re，这拍数据到
 
     logic [NUM_PE*DATA_WIDTH-1:0] act_buf [0:ARF_DEPTH-1];
 
     // =========================================================================
-    // 当前 tile 的有效列数
+    // cur_valid_w + 边界
     // =========================================================================
     logic [5:0] cur_valid_w;
     assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
 
-    // =========================================================================
-    // 边界
-    // =========================================================================
     logic kx_is_last, ky_is_last, cins_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign kx_is_last   = (kx_cnt   == cfg_k             - 4'd1);
     assign ky_is_last   = (ky_cnt   == cfg_k             - 4'd1);
@@ -126,37 +116,39 @@ module line_buffer #(
     assign all_last = kx_is_last && ky_is_last && cins_is_last && tile_is_last && yout_is_last && cs_is_last;
 
     // =========================================================================
-    // IFB 地址
+    // Stream 握手
     // =========================================================================
+    assign act_valid = (state == S_RUN) && (rd_ptr < wr_ptr);
+    assign act_vec   = act_buf[rd_ptr];
+
+    logic fire;
+    assign fire = act_valid & act_ready;
+
+    // round_done: 本拍 fire 刚好把最后一个位置消费完
+    logic round_done;
+    assign round_done = fire && (rd_ptr == cur_valid_w - 6'd1);
+
+    // =========================================================================
+    // IFB 读 (issue)
+    // =========================================================================
+    // 下一次要发读的 round 内偏移 = wr_ptr + ifb_re_d1
+    logic [5:0] issue_offset;
+    assign issue_offset = wr_ptr + {5'd0, ifb_re_d1};
+
+    logic issue_ok;
+    assign issue_ok = (state == S_RUN) && !round_done && (issue_offset < cur_valid_w);
+
     logic [ADDR_W-1:0] ifb_rd_offset;
     always_comb begin
-        // rd_ifb_cnt × stride，stride 实际只会是 1 或 2
         case (cfg_stride)
-            3'd1:    ifb_rd_offset = {{(ADDR_W-6){1'b0}}, rd_ifb_cnt};
-            3'd2:    ifb_rd_offset = {{(ADDR_W-7){1'b0}}, rd_ifb_cnt, 1'b0};
-            default: ifb_rd_offset = {{(ADDR_W-6){1'b0}}, rd_ifb_cnt}; // 兜底
+            3'd1:    ifb_rd_offset = {{(ADDR_W-6){1'b0}}, issue_offset};
+            3'd2:    ifb_rd_offset = {{(ADDR_W-7){1'b0}}, issue_offset, 1'b0};
+            default: ifb_rd_offset = {{(ADDR_W-6){1'b0}}, issue_offset};
         endcase
     end
 
-    logic ifb_re_gate;
-    assign ifb_re_gate = (state == S_LOAD) && (rd_ifb_cnt < cur_valid_w);
-    assign ifb_re      = ifb_re_gate;
-    assign ifb_raddr   = (ptr_kx_base + ifb_rd_offset);
-
-    // =========================================================================
-    // act stream
-    // =========================================================================
-    assign act_valid = (state == S_STREAM);
-    assign act_vec   = act_buf[stream_idx];
-
-    logic stream_fire;
-    assign stream_fire = (state == S_STREAM) && act_valid && act_ready;
-
-    logic load_complete;
-    assign load_complete = (wr_buf_cnt == cur_valid_w);
-
-    logic stream_last;
-    assign stream_last = (stream_idx == cur_valid_w - 6'd1);
+    assign ifb_re    = issue_ok;
+    assign ifb_raddr = ptr_kx_base + ifb_rd_offset;
 
     // =========================================================================
     // 状态转移
@@ -164,10 +156,8 @@ module line_buffer #(
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE:   if (start)                             state_next = S_LOAD;
-            S_LOAD:   if (load_complete)                     state_next = S_STREAM;
-            S_STREAM: if (stream_fire && stream_last)
-                         state_next = all_last ? S_DONE : S_LOAD;
+            S_IDLE:  if (start)                         state_next = S_RUN;
+            S_RUN:   if (round_done && all_last)        state_next = S_DONE;
             S_DONE:  ;
             default: state_next = S_IDLE;
         endcase
@@ -176,12 +166,9 @@ module line_buffer #(
     assign done = (state == S_DONE);
 
     // =========================================================================
-    // counter / ptr 推进（在 stream_last 那拍做）
-    // 嵌套顺序：kx → ky → cins → tile → yout → cs
+    // counter / ptr 推进 task (round_done 时调用)
     // =========================================================================
     task automatic advance_counters_and_ptrs();
-        // 此任务在 always_ff 里调用，产生 non-blocking 赋值
-        // 注意：外层边界全部进位时，inner counters 归零、更外层推进、对应 ptr base 归位/递增
         if (kx_is_last) begin
             kx_cnt <= '0;
             if (ky_is_last) begin
@@ -194,7 +181,6 @@ module line_buffer #(
                             yout_cnt <= '0;
                             if (!cs_is_last) begin
                                 cs_cnt <= cs_cnt + 6'd1;
-                                // cs 推进：IFB 从头再跑一遍
                                 ptr_yout_base <= cfg_ifb_base;
                                 ptr_tile_base <= cfg_ifb_base;
                                 ptr_cins_base <= cfg_ifb_base;
@@ -234,7 +220,7 @@ module line_buffer #(
     endtask
 
     // =========================================================================
-    // 时序
+    // 主时序
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -245,9 +231,8 @@ module line_buffer #(
             tile_cnt      <= '0;
             yout_cnt      <= '0;
             cs_cnt        <= '0;
-            rd_ifb_cnt    <= '0;
-            wr_buf_cnt    <= '0;
-            stream_idx    <= '0;
+            wr_ptr        <= '0;
+            rd_ptr        <= '0;
             ifb_re_d1     <= 1'b0;
             ptr_yout_base <= '0;
             ptr_tile_base <= '0;
@@ -257,9 +242,9 @@ module line_buffer #(
             for (int i = 0; i < ARF_DEPTH; i++) act_buf[i] <= '0;
         end else begin
             state     <= state_next;
-            ifb_re_d1 <= ifb_re;
+            ifb_re_d1 <= issue_ok;
 
-            // ---- IDLE: 等 start，初始化 ----
+            // ---- IDLE: 等 start ----
             if (state == S_IDLE && start) begin
                 kx_cnt        <= '0;
                 ky_cnt        <= '0;
@@ -267,9 +252,8 @@ module line_buffer #(
                 tile_cnt      <= '0;
                 yout_cnt      <= '0;
                 cs_cnt        <= '0;
-                rd_ifb_cnt    <= '0;
-                wr_buf_cnt    <= '0;
-                stream_idx    <= '0;
+                wr_ptr        <= '0;
+                rd_ptr        <= '0;
                 ptr_yout_base <= cfg_ifb_base;
                 ptr_tile_base <= cfg_ifb_base;
                 ptr_cins_base <= cfg_ifb_base;
@@ -277,27 +261,25 @@ module line_buffer #(
                 ptr_kx_base   <= cfg_ifb_base;
             end
 
-            // ---- LOAD: 发读 + 回填 ----
-            if (state == S_LOAD) begin
-                if (ifb_re_gate) begin
-                    rd_ifb_cnt <= rd_ifb_cnt + 6'd1;
-                end
+            // ---- RUN: 处理 arrival / fire / round_done ----
+            if (state == S_RUN) begin
+                // Arrival: 上拍发过 re，这拍数据到 → 写 act_buf[wr_ptr]，wr_ptr++
                 if (ifb_re_d1) begin
-                    act_buf[wr_buf_cnt] <= ifb_rdata;
-                    wr_buf_cnt <= wr_buf_cnt + 6'd1;
+                    act_buf[wr_ptr] <= ifb_rdata;
+                    wr_ptr          <= wr_ptr + 6'd1;
                 end
-            end
 
-            // ---- STREAM: act_buf 流出 ----
-            if (state == S_STREAM && stream_fire) begin
-                if (stream_last) begin
-                    // 本轮 (ky,kx) 结束，推进外层嵌套并重置内部计数
-                    stream_idx <= '0;
-                    rd_ifb_cnt <= '0;
-                    wr_buf_cnt <= '0;
+                // Fire: mac 消费 act_buf[rd_ptr]，rd_ptr++
+                if (fire) begin
+                    rd_ptr <= rd_ptr + 6'd1;
+                end
+
+                // round_done 覆盖：重置 ring 指针 + 推进外层 counter
+                if (round_done) begin
+                    wr_ptr    <= '0;
+                    rd_ptr    <= '0;
+                    ifb_re_d1 <= 1'b0;   // 覆盖前面的 ifb_re_d1 <= issue_ok
                     advance_counters_and_ptrs();
-                end else begin
-                    stream_idx <= stream_idx + 6'd1;
                 end
             end
         end

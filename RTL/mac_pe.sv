@@ -46,17 +46,10 @@ module mac_pe #(
     end
     
     // 乘法器逻辑 (时序逻辑)
-    // 乘法打一拍，减轻组合逻辑关键路径判断
-    // synthesis translate_off
-    int mac_ops_cnt = 0;
-    always_ff @(posedge clk) begin
-        if (rst_n && compute_en) begin
-            mac_ops_cnt++;
-        end
-    end
-    // synthesis translate_on
-    
-    // compute_en 在新架构里相当于 global-stall pipeline 的 advance 信号。
+    // 乘法打一拍, 减轻组合逻辑关键路径判断
+    // 注: 统一在 mac_array 顶层用 real_mac_fire_cnt 统计真实 MAC 拍数,
+    //     此处不再维护 per-PE counter (compute_en=can_advance 会把 bubble 周期也计入).
+    // compute_en 在新架构里相当于 global-stall pipeline 的 advance 信号.
     // 不再把未使能拍清零 — stall 时保持 prod_out，让已经计算的乘积顺着 pipe 继续流。
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n)           prod_out <= '0;

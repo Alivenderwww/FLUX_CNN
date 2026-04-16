@@ -56,14 +56,11 @@ module mac_pe #(
     end
     // synthesis translate_on
     
+    // compute_en 在新架构里相当于 global-stall pipeline 的 advance 信号。
+    // 不再把未使能拍清零 — stall 时保持 prod_out，让已经计算的乘积顺着 pipe 继续流。
     always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            prod_out <= '0;
-        end else if (compute_en) begin
-            prod_out <= act_in * active_weight;
-        end else begin
-            prod_out <= '0;
-        end
+        if (!rst_n)           prod_out <= '0;
+        else if (compute_en)  prod_out <= act_in * active_weight;
     end
 
 endmodule

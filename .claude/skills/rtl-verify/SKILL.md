@@ -1,4 +1,7 @@
-# Agent Reminders for FLUX_CNN
+---
+name: rtl-verify
+description: 在RTL级别验证设计功能和性能，使用仿真工具进行功能回归测试和性能分析。
+---
 
 ## Simulation Execution
 **CRITICAL**: All simulation commands (like `vsim`, `python gen_isa_test.py`, etc.) MUST be executed specifically from within the `sim\tb_core_isa` directory. 

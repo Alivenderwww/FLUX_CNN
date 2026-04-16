@@ -1,264 +1,327 @@
 `timescale 1ns/1ps
 
-// 核心顶层模块 (Core Top)
-// 将 NxM MAC阵列、ARF、WB(SRAM)、IFB(SRAM) 和 控制器连线
+// =============================================================================
+// core_top.sv  --  Handshake-Pipelined Core
+//
+// 去中心化架构：cfg_regs + 5 个自驱动模块 + 3 个 SRAM：
+//
+//   line_buffer ─►(act valid/ready)─► mac_array ─►(psum valid/ready)─► parf_accum
+//                                      ▲                                   │
+//                       wgt_buffer ─►(wgt valid/ready)                      ▼
+//                                                                        ofb_writer → OFB
+//
+// 每个 feeder 自带 6 层循环 + start/done；模块间握手对齐节拍，天然消除气泡。
+// TB 通过层次引用 u_core_top.u_cfg.r_* 写入配置，随后拉 start 一拍启动；
+// done = ofb_writer.done（OFB 最后 1 拍写完后拉高）。
+// =============================================================================
+
 module core_top #(
-    parameter int NUM_COL     = 16,      // 列数（输出通道并行度）
-    parameter int NUM_PE      = 16,      // 每列PE数（输入通道并行度）
-    parameter int DATA_WIDTH  = 8,       // 数据位宽
-    parameter int PSUM_WIDTH  = 32,      // Psum位宽
-    parameter int WRF_DEPTH   = 32,      // 权重RF深度
-    parameter int ARF_DEPTH   = 32,      // 激活值RF深度
-    parameter int PARF_DEPTH  = 32,      // PARF深度
-    parameter int SRAM_DEPTH  = 1024,    // SRAM深度
-    parameter int INST_DEPTH  = 1024     // 指令SRAM深度
+    parameter int NUM_COL     = 16,
+    parameter int NUM_PE      = 16,
+    parameter int DATA_WIDTH  = 8,
+    parameter int PSUM_WIDTH  = 32,
+    parameter int WRF_DEPTH   = 32,
+    parameter int ARF_DEPTH   = 32,
+    parameter int PARF_DEPTH  = 32,
+    parameter int SRAM_DEPTH  = 8192
 )(
     input  logic                                clk,
     input  logic                                rst_n,
-    
-    // 外部配置接口
-    input  logic                                start,        // 启动一次计算
-    
-    // 指令SRAM写入接口 (用于加载程序)
-    input  logic                                inst_we_ext,
-    input  logic [$clog2(INST_DEPTH)-1:0]       inst_waddr_ext,
-    input  logic [63:0]                         inst_wdata_ext,
-    
-    // 外部SRAM写入接口 (用于测试加载)
+
+    input  logic                                start,
+
+    // TB 外部 SRAM 写口 (加载 IFB / WB)
     input  logic                                ifb_we_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       ifb_waddr_ext,
     input  logic [NUM_PE*DATA_WIDTH-1:0]        ifb_wdata_ext,
 
     input  logic                                wb_we_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       wb_waddr_ext,
-    input  logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0] wb_wdata_ext,
+    input  logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0]wb_wdata_ext,
 
-    // OFB读取接口 (用于测试提取结果)
+    // TB 外部 OFB 读口 (提取结果)
     input  logic                                ofb_re_ext,
     input  logic [$clog2(SRAM_DEPTH)-1:0]       ofb_raddr_ext,
     output logic [NUM_COL*DATA_WIDTH-1:0]       ofb_rdata_ext,
-    
-    // 输出
+
+    // TB 调试观测 (mac_array 实时 psum)
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
+
+    // 顶层 done
     output logic                                 done
 );
 
-    //=============================================================================
-    // 1. 控制器信号线
-    //=============================================================================
-    logic                                wb_re;
-    logic [$clog2(SRAM_DEPTH)-1:0]       wb_raddr;
-    logic                                ifb_re;
-    logic [$clog2(SRAM_DEPTH)-1:0]       ifb_raddr;
-    logic                                ofb_we;
-    logic [$clog2(SRAM_DEPTH)-1:0]       ofb_waddr;
-    logic                                sdp_en;
-    // 内部数据宽度参数
-    localparam int IFB_WIDTH = NUM_PE * DATA_WIDTH;           // IFB/ARF 数据宽度
-    localparam int WB_WIDTH  = NUM_COL * NUM_PE * DATA_WIDTH; // WB 数据宽度
-    localparam int OFB_WIDTH = NUM_COL * DATA_WIDTH;          // OFB 数据宽度 (SDP量化后)
+    localparam int ADDR_W    = 20;
+    localparam int IFB_WIDTH = NUM_PE * DATA_WIDTH;
+    localparam int WB_WIDTH  = NUM_COL * NUM_PE * DATA_WIDTH;
+    localparam int OFB_WIDTH = NUM_COL * DATA_WIDTH;
+    localparam int AW        = $clog2(SRAM_DEPTH);
 
-    logic [NUM_COL*NUM_PE-1:0]           wrf_we;
-    logic [$clog2(WRF_DEPTH)-1:0]        wrf_waddr;
-    logic                                arf_we;
-    logic [$clog2(ARF_DEPTH)-1:0]        arf_waddr;
-    logic [$clog2(ARF_DEPTH)-1:0]        arf_read_addr;
-    logic                                compute_en;
-    logic [$clog2(WRF_DEPTH)-1:0]        wrf_raddr;
-    logic [$clog2(PARF_DEPTH)-1:0]       parf_addr;
-    logic                                parf_clear;
-    logic                                parf_we;
+    // =========================================================================
+    // 1. 共享配置寄存器
+    // =========================================================================
+    logic [15:0]       cfg_h_out, cfg_w_out, cfg_w_in;
+    logic [3:0]        cfg_k;
+    logic [2:0]        cfg_stride;
+    logic [5:0]        cfg_cin_slices, cfg_cout_slices, cfg_tile_w, cfg_last_valid_w;
+    logic [7:0]        cfg_num_tiles;
+    logic [9:0]        cfg_total_wrf, cfg_kk;
+    logic              cfg_wrf_packed;
+    logic [2:0]        cfg_rounds_per_cins;
+    logic [5:0]        cfg_round_len_last;
+    logic [ADDR_W-1:0] cfg_ifb_base, cfg_wb_base, cfg_ofb_base;
+    logic [ADDR_W-1:0] cfg_ifb_cin_step, cfg_ifb_row_step;
+    logic [ADDR_W-1:0] cfg_wb_cin_step, cfg_wb_cout_step, cfg_ofb_cout_step;
+    logic [ADDR_W-1:0] cfg_tile_in_step;
+    logic [4:0]        cfg_sdp_shift;
+    logic              cfg_sdp_relu_en;
 
-    //=============================================================================
-    // 2. SRAM 例化 (INST_SRAM, IFB & WB & OFB)
-    //=============================================================================
-    logic [63:0]       inst_rdata;
-    logic [IFB_WIDTH-1:0] ifb_rdata;
-    logic [WB_WIDTH-1:0]  wb_rdata;
-    logic [OFB_WIDTH-1:0] ofb_wdata;
-    
-    logic                                inst_re;
-    logic [$clog2(INST_DEPTH)-1:0]       inst_raddr;
-
-    sram_model #(
-        .DEPTH(INST_DEPTH),
-        .DATA_WIDTH(64)
-    ) u_inst_sram (
-        .clk   (clk),
-        .we    (inst_we_ext),
-        .waddr (inst_waddr_ext),
-        .wdata (inst_wdata_ext),
-        .re    (inst_re),
-        .raddr (inst_raddr),
-        .rdata (inst_rdata)
-    );
-    
-    sram_model #(
-        .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(IFB_WIDTH)
-    ) u_ifb (
-        .clk   (clk),
-        .we    (ifb_we_ext),
-        .waddr (ifb_waddr_ext),
-        .wdata (ifb_wdata_ext),
-        .re    (ifb_re),
-        .raddr (ifb_raddr),
-        .rdata (ifb_rdata)
-    );
-    
-    sram_model #(
-        .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(WB_WIDTH)
-    ) u_wb (
-        .clk   (clk),
-        .we    (wb_we_ext),
-        .waddr (wb_waddr_ext),
-        .wdata (wb_wdata_ext),
-        .re    (wb_re),
-        .raddr (wb_raddr),
-        .rdata (wb_rdata)
+    cfg_regs #(.ADDR_W(ADDR_W)) u_cfg (
+        .clk               (clk),
+        .rst_n             (rst_n),
+        .h_out             (cfg_h_out),
+        .w_out             (cfg_w_out),
+        .w_in              (cfg_w_in),
+        .k                 (cfg_k),
+        .stride            (cfg_stride),
+        .cin_slices        (cfg_cin_slices),
+        .cout_slices       (cfg_cout_slices),
+        .tile_w            (cfg_tile_w),
+        .num_tiles         (cfg_num_tiles),
+        .last_valid_w      (cfg_last_valid_w),
+        .total_wrf         (cfg_total_wrf),
+        .wrf_packed        (cfg_wrf_packed),
+        .kk                (cfg_kk),
+        .rounds_per_cins   (cfg_rounds_per_cins),
+        .round_len_last    (cfg_round_len_last),
+        .ifb_base          (cfg_ifb_base),
+        .wb_base           (cfg_wb_base),
+        .ofb_base          (cfg_ofb_base),
+        .ifb_cin_step      (cfg_ifb_cin_step),
+        .ifb_row_step      (cfg_ifb_row_step),
+        .wb_cin_step       (cfg_wb_cin_step),
+        .wb_cout_step      (cfg_wb_cout_step),
+        .ofb_cout_step     (cfg_ofb_cout_step),
+        .tile_in_step      (cfg_tile_in_step),
+        .sdp_shift         (cfg_sdp_shift),
+        .sdp_relu_en       (cfg_sdp_relu_en)
     );
 
-    sram_model #(
-        .DEPTH(SRAM_DEPTH),
-        .DATA_WIDTH(OFB_WIDTH)
-    ) u_ofb (
-        .clk   (clk),
-        .we    (ofb_we),
-        .waddr (ofb_waddr),
-        .wdata (ofb_wdata),
-        .re    (ofb_re_ext),
-        .raddr (ofb_raddr_ext),
-        .rdata (ofb_rdata_ext)
+    // =========================================================================
+    // 2. 三块 SRAM (IFB / WB / OFB)
+    // =========================================================================
+    logic                   ifb_re;
+    logic [AW-1:0]          ifb_raddr;
+    logic [IFB_WIDTH-1:0]   ifb_rdata;
+
+    logic                   wb_re;
+    logic [AW-1:0]          wb_raddr;
+    logic [WB_WIDTH-1:0]    wb_rdata;
+
+    logic                   ofb_we;
+    logic [AW-1:0]          ofb_waddr;
+    logic [OFB_WIDTH-1:0]   ofb_wdata;
+
+    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(IFB_WIDTH)) u_ifb (
+        .clk(clk), .we(ifb_we_ext), .waddr(ifb_waddr_ext), .wdata(ifb_wdata_ext),
+        .re(ifb_re), .raddr(ifb_raddr), .rdata(ifb_rdata)
     );
 
-    //=============================================================================
-    // 3. ARF 例化 (Activation Register File)
-    //=============================================================================
-    logic [IFB_WIDTH-1:0] act_out_vec;
-    logic [IFB_WIDTH-1:0] act_to_mac;   // ARF 输出 + LDnMAC bypass 前向路径
-
-    std_rf #(
-        .DEPTH(ARF_DEPTH),
-        .DATA_WIDTH(NUM_PE*DATA_WIDTH)
-    ) u_arf (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .we         (arf_we),
-        .waddr      (arf_waddr),
-        .wdata      (ifb_rdata),
-        .raddr      (arf_read_addr),
-        .rdata      (act_out_vec)
+    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(WB_WIDTH)) u_wb (
+        .clk(clk), .we(wb_we_ext), .waddr(wb_waddr_ext), .wdata(wb_wdata_ext),
+        .re(wb_re), .raddr(wb_raddr), .rdata(wb_rdata)
     );
 
-    // LD32MAC bypass：当 ARF 正在写入的地址与 MAC 读取地址相同时（读写同周期），
-    // 直接将 ifb_rdata 前向传给 MAC，避免读到 std_rf 的旧值。
-    // 其余情况（arf_we=0，或地址不同）正常走 ARF 输出。
-    always_comb begin
-        if (arf_we && (arf_waddr == arf_read_addr))
-            act_to_mac = ifb_rdata;
-        else
-            act_to_mac = act_out_vec;
-    end
+    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(OFB_WIDTH)) u_ofb (
+        .clk(clk), .we(ofb_we), .waddr(ofb_waddr), .wdata(ofb_wdata),
+        .re(ofb_re_ext), .raddr(ofb_raddr_ext), .rdata(ofb_rdata_ext)
+    );
 
-    //=============================================================================
-    // 4. MAC阵列 例化
-    //=============================================================================
+    // =========================================================================
+    // 3. Handshake buses
+    // =========================================================================
+    // line_buffer → mac_array (act)
+    logic                       act_valid, act_ready;
+    logic [IFB_WIDTH-1:0]       act_vec;
+
+    // wgt_buffer → mac_array (wgt index)
+    logic                       wgt_valid, wgt_ready;
+    logic [$clog2(WRF_DEPTH)-1:0] wrf_raddr;
+
+    // wgt_buffer → mac_array (WRF write 端口)
+    logic [NUM_COL*NUM_PE-1:0]  wrf_we;
+    logic [$clog2(WRF_DEPTH)-1:0] wrf_waddr;
+    logic [WB_WIDTH-1:0]        wrf_wdata;
+
+    // mac_array → parf_accum (psum 流)
+    logic                       psum_out_valid;
+    logic                       psum_in_ready;
+    // psum_out_vec 是顶层 debug output，不再本地声明
+
+    // parf_accum → ofb_writer (累加结果流)
+    logic                       acc_out_valid, acc_out_ready;
+    logic signed [NUM_COL*PSUM_WIDTH-1:0] acc_out_vec;
+
+    // =========================================================================
+    // 4. line_buffer
+    // =========================================================================
+    logic lb_done;
+
+    line_buffer #(
+        .NUM_PE    (NUM_PE),
+        .DATA_WIDTH(DATA_WIDTH),
+        .ARF_DEPTH (ARF_DEPTH),
+        .SRAM_DEPTH(SRAM_DEPTH),
+        .ADDR_W    (ADDR_W)
+    ) u_line_buffer (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .start            (start),
+        .done             (lb_done),
+        .cfg_h_out        (cfg_h_out),
+        .cfg_w_in         (cfg_w_in),
+        .cfg_k            (cfg_k),
+        .cfg_stride       (cfg_stride),
+        .cfg_cin_slices   (cfg_cin_slices),
+        .cfg_cout_slices  (cfg_cout_slices),
+        .cfg_tile_w       (cfg_tile_w),
+        .cfg_num_tiles    (cfg_num_tiles),
+        .cfg_last_valid_w (cfg_last_valid_w),
+        .cfg_ifb_base     (cfg_ifb_base),
+        .cfg_ifb_cin_step (cfg_ifb_cin_step),
+        .cfg_ifb_row_step (cfg_ifb_row_step),
+        .cfg_tile_in_step (cfg_tile_in_step),
+        .ifb_re           (ifb_re),
+        .ifb_raddr        (ifb_raddr),
+        .ifb_rdata        (ifb_rdata),
+        .act_valid        (act_valid),
+        .act_vec          (act_vec),
+        .act_ready        (act_ready)
+    );
+
+    // =========================================================================
+    // 5. wgt_buffer
+    // =========================================================================
+    logic wb_done;
+
+    wgt_buffer #(
+        .NUM_COL   (NUM_COL),
+        .NUM_PE    (NUM_PE),
+        .DATA_WIDTH(DATA_WIDTH),
+        .WRF_DEPTH (WRF_DEPTH),
+        .SRAM_DEPTH(SRAM_DEPTH),
+        .ADDR_W    (ADDR_W)
+    ) u_wgt_buffer (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .start            (start),
+        .done             (wb_done),
+        .cfg_h_out        (cfg_h_out),
+        .cfg_cin_slices   (cfg_cin_slices),
+        .cfg_cout_slices  (cfg_cout_slices),
+        .cfg_tile_w       (cfg_tile_w),
+        .cfg_num_tiles    (cfg_num_tiles),
+        .cfg_last_valid_w (cfg_last_valid_w),
+        .cfg_k            (cfg_k),
+        .cfg_kk           (cfg_kk),
+        .cfg_total_wrf    (cfg_total_wrf),
+        .cfg_wb_base      (cfg_wb_base),
+        .cfg_wb_cout_step (cfg_wb_cout_step),
+        .wb_re            (wb_re),
+        .wb_raddr         (wb_raddr),
+        .wb_rdata         (wb_rdata),
+        .wrf_we           (wrf_we),
+        .wrf_waddr        (wrf_waddr),
+        .wrf_wdata        (wrf_wdata),
+        .wgt_valid        (wgt_valid),
+        .wrf_raddr        (wrf_raddr),
+        .wgt_ready        (wgt_ready)
+    );
+
+    // =========================================================================
+    // 6. mac_array
+    // =========================================================================
     mac_array #(
-        .NUM_COL(NUM_COL),
-        .NUM_PE(NUM_PE),
+        .NUM_COL   (NUM_COL),
+        .NUM_PE    (NUM_PE),
         .DATA_WIDTH(DATA_WIDTH),
         .PSUM_WIDTH(PSUM_WIDTH),
-        .WRF_DEPTH(WRF_DEPTH),
-        .PARF_DEPTH(PARF_DEPTH)
+        .WRF_DEPTH (WRF_DEPTH)
     ) u_mac_array (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        
-        .wrf_we     (wrf_we),
-        .wrf_waddr  (wrf_waddr),
-        .wrf_wdata  (wb_rdata),       // 从Weight Buffer平铺写入
-        
-        .wrf_raddr  (wrf_raddr),
-        .act_in_vec (act_to_mac),    // ARF 输出（含 LD32MAC bypass）
-        .compute_en (compute_en),
-        
-        .parf_addr  (parf_addr),
-        .parf_clear (parf_clear),
-        .parf_we    (parf_we),
-        
-        .psum_out_vec(psum_out_vec)
-    );
-
-    //=============================================================================
-    // 5. SDP 单数据处理器例化
-    //    输入: psum_out_vec (来自 MAC 阵列 PARF)
-    //    输出: ofb_wdata (打包 uint8, 写入 OFB)
-    //=============================================================================
-    logic                  sdp_shift_we;
-    logic [4:0]            sdp_shift_wdata;
-
-    sdp #(
-        .NUM_COL   (NUM_COL),
-        .PSUM_WIDTH(PSUM_WIDTH)
-    ) u_sdp (
-        .clk          (clk),
-        .rst_n        (rst_n),
-        .shift_we     (sdp_shift_we),
-        .shift_wdata  (sdp_shift_wdata),
-        .psum_in      (psum_out_vec),
-        .valid_in     (ofb_we),         // ofb_we 已含 d2 延迟，与 psum_out_vec 对齐
-        .relu_en      (sdp_en),
-        .ofm_data     (ofb_wdata),
-        .valid_out    ()                // 当前等同于 ofb_we，暂不接回
-    );
-
-    //=============================================================================
-    // 6. 控制器 例化
-    //=============================================================================
-    core_ctrl #(
-        .NUM_COL(NUM_COL),
-        .NUM_PE(NUM_PE),
-        .WRF_DEPTH(WRF_DEPTH),
-        .ARF_DEPTH(ARF_DEPTH),
-        .PARF_DEPTH(PARF_DEPTH),
-        .SRAM_DEPTH(SRAM_DEPTH),
-        .INST_DEPTH(INST_DEPTH)
-    ) u_ctrl (
         .clk            (clk),
         .rst_n          (rst_n),
-        .start          (start),
-        
-        .inst_re        (inst_re),
-        .inst_addr      (inst_raddr),
-        .inst_data      (core_isa_pkg::inst_t'(inst_rdata)),
-        
-        .wb_re          (wb_re),
-        .wb_raddr       (wb_raddr),
-        .ifb_re         (ifb_re),
-        .ifb_raddr      (ifb_raddr),
-        
-        .ofb_we         (ofb_we),
-        .ofb_waddr      (ofb_waddr),
-        .sdp_en_out     (sdp_en),
-        
         .wrf_we         (wrf_we),
         .wrf_waddr      (wrf_waddr),
-        
-        .arf_we         (arf_we),
-        .arf_waddr      (arf_waddr),
-        .arf_read_addr  (arf_read_addr),
-        
-        .compute_en     (compute_en),
+        .wrf_wdata      (wrf_wdata),
+        .act_in_vec     (act_vec),
+        .act_valid      (act_valid),
+        .act_ready      (act_ready),
         .wrf_raddr      (wrf_raddr),
-        .parf_addr      (parf_addr),
-        .parf_clear     (parf_clear),
-        .parf_we        (parf_we),
-
-        .sdp_shift_we   (sdp_shift_we),
-        .sdp_shift_wdata(sdp_shift_wdata),
-
-        .done           (done)
+        .wgt_valid      (wgt_valid),
+        .wgt_ready      (wgt_ready),
+        .psum_out_valid (psum_out_valid),
+        .psum_out_vec   (psum_out_vec),
+        .psum_in_ready  (psum_in_ready)
     );
+
+    // =========================================================================
+    // 7. parf_accum
+    // =========================================================================
+    parf_accum #(
+        .NUM_COL   (NUM_COL),
+        .PSUM_WIDTH(PSUM_WIDTH),
+        .PARF_DEPTH(PARF_DEPTH)
+    ) u_parf_accum (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .cfg_tile_w       (cfg_tile_w),
+        .cfg_last_valid_w (cfg_last_valid_w),
+        .cfg_num_tiles    (cfg_num_tiles),
+        .cfg_cin_slices   (cfg_cin_slices),
+        .cfg_kk           (cfg_kk),
+        .psum_in_valid    (psum_out_valid),
+        .psum_in_vec      (psum_out_vec),
+        .psum_in_ready    (psum_in_ready),
+        .acc_out_valid    (acc_out_valid),
+        .acc_out_vec      (acc_out_vec),
+        .acc_out_ready    (acc_out_ready)
+    );
+
+    // =========================================================================
+    // 8. ofb_writer (含 SDP)
+    // =========================================================================
+    logic ow_done;
+
+    ofb_writer #(
+        .NUM_COL   (NUM_COL),
+        .DATA_WIDTH(DATA_WIDTH),
+        .PSUM_WIDTH(PSUM_WIDTH),
+        .SRAM_DEPTH(SRAM_DEPTH),
+        .ADDR_W    (ADDR_W)
+    ) u_ofb_writer (
+        .clk              (clk),
+        .rst_n            (rst_n),
+        .start            (start),
+        .done             (ow_done),
+        .cfg_h_out        (cfg_h_out),
+        .cfg_tile_w       (cfg_tile_w),
+        .cfg_last_valid_w (cfg_last_valid_w),
+        .cfg_num_tiles    (cfg_num_tiles),
+        .cfg_cout_slices  (cfg_cout_slices),
+        .cfg_ofb_base     (cfg_ofb_base),
+        .cfg_sdp_shift    (cfg_sdp_shift),
+        .cfg_sdp_relu_en  (cfg_sdp_relu_en),
+        .acc_out_valid    (acc_out_valid),
+        .acc_out_vec      (acc_out_vec),
+        .acc_out_ready    (acc_out_ready),
+        .ofb_we           (ofb_we),
+        .ofb_waddr        (ofb_waddr),
+        .ofb_wdata        (ofb_wdata)
+    );
+
+    // =========================================================================
+    // 9. done
+    // =========================================================================
+    assign done = ow_done;
 
 endmodule

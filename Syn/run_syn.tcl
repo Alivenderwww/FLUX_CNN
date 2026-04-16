@@ -24,13 +24,17 @@ set_property TARGET_LANGUAGE Verilog [current_project]
 # 2. Add RTL source files
 # -----------------------------------------------------------------------------
 set rtl_files [list \
-    "$RTL_DIR/core_isa_pkg.sv" \
     "$RTL_DIR/sram_model.sv"   \
     "$RTL_DIR/std_rf.sv"       \
+    "$RTL_DIR/sdp.sv"          \
+    "$RTL_DIR/cfg_regs.sv"     \
     "$RTL_DIR/mac_pe.sv"       \
     "$RTL_DIR/mac_col.sv"      \
     "$RTL_DIR/mac_array.sv"    \
-    "$RTL_DIR/core_ctrl.sv"    \
+    "$RTL_DIR/parf_accum.sv"   \
+    "$RTL_DIR/line_buffer.sv"  \
+    "$RTL_DIR/wgt_buffer.sv"   \
+    "$RTL_DIR/ofb_writer.sv"   \
     "$RTL_DIR/core_top.sv"     \
 ]
 add_files $rtl_files
@@ -61,9 +65,9 @@ synth_design \
     -part             xcku060-ffva1156-2-e   \
     -mode             out_of_context         \
     -flatten_hierarchy full                  \
-    -generic [list NUM_COL=8 NUM_PE=8 DATA_WIDTH=8 PSUM_WIDTH=32 \
+    -generic [list NUM_COL=16 NUM_PE=16 DATA_WIDTH=8 PSUM_WIDTH=32 \
                    WRF_DEPTH=32 ARF_DEPTH=32 PARF_DEPTH=32 \
-                   SRAM_DEPTH=8192 INST_DEPTH=8192]
+                   SRAM_DEPTH=8192]
 
 puts "=== Synthesis Done ==="
 

@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python gen_isa_test.py --k 3 --h_in 10 --w_in 45 --shift 0)",
-      "Bash(vsim -c -do tb_core_isa.tcl)"
+      "Bash(vsim -c -do tb_core_isa.tcl)",
+      "Bash(python run_regression.py)",
+      "Bash(ls -la \"C:\\\\_Project\\\\FLUX_CNN\\\\rtl\\\\core_ctrl\"*.sv)",
+      "Bash(ls C:/_Project/FLUX_CNN/rtl/core_ctrl*.sv)"
     ]
   }
 }

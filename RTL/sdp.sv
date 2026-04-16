@@ -21,12 +21,8 @@ module sdp #(
     parameter int NUM_COL    = 8,
     parameter int PSUM_WIDTH = 32
 )(
-    input  logic                              clk,
-    input  logic                              rst_n,
-
-    // --- Parameter configuration (written by OP_LD_SDP in DECODE) ---
-    input  logic                              shift_we,       // write enable for shift_amt
-    input  logic [4:0]                        shift_wdata,    // new shift amount
+    // --- Parameter configuration (静态，由 cfg_regs 直接驱动) ---
+    input  logic [4:0]                        shift_amt,      // arithmetic right-shift amount
 
     // --- Data path ---
     // Input: packed partial sums from PARF, one per column
@@ -38,17 +34,6 @@ module sdp #(
     output logic [NUM_COL*8-1:0]              ofm_data,
     output logic                              valid_out
 );
-
-    // -------------------------------------------------------------------------
-    // Shift-amount register (persists across tiles; reset to 0)
-    // Software writes this once per layer via OP_LD_SDP before the tile loop.
-    // -------------------------------------------------------------------------
-    logic [4:0] shift_amt;
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)        shift_amt <= '0;
-        else if (shift_we) shift_amt <= shift_wdata;
-    end
 
     // -------------------------------------------------------------------------
     // Per-channel intermediate signals (declared outside always_comb)

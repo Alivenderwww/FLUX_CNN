@@ -10,6 +10,8 @@ sim/*/__pycache__/
 sim/*/sim_params.f
 work
 
+analysis
+
 # Vivado synthesis artifacts (keep scripts and reports, ignore runtime files)
 Syn/*.log
 Syn/*.backup.log

@@ -7,8 +7,8 @@
 // 读写。Bridge 在 axi_lite_csr.sv 里；本模块只做 address decode + 寄存器组。
 //
 // Register map（4 字节对齐）：
-//   0x000  CTRL              [0]=start (自动清零，写 1 一拍 start_pulse)
-//                             [1]=soft_rst (保留)
+//   0x000  CTRL              [0]=start_core (写 1 单拍 start_core_pulse)
+//                             [1]=start_idma  [2]=start_wdma  [3]=start_odma
 //   0x004  STATUS  (RO)      [0]=core_done     [1]=core_busy
 //                             [2]=idma_busy    [3]=wdma_busy [4]=odma_busy
 //                             [5]=idma_done    [6]=wdma_done [7]=odma_done
@@ -74,8 +74,11 @@ module cfg_regs #(
     input  logic                     wdma_done,
     input  logic                     odma_done,
 
-    // ---- CTRL 输出 ----
-    output logic                     start_pulse,    // 写 CTRL.start 时的 1 拍脉冲
+    // ---- CTRL 输出（4 个独立 1-拍脉冲） ----
+    output logic                     start_core_pulse,  // CTRL[0] 写 1
+    output logic                     start_idma_pulse,  // CTRL[1] 写 1
+    output logic                     start_wdma_pulse,  // CTRL[2] 写 1
+    output logic                     start_odma_pulse,  // CTRL[3] 写 1
 
     // ---- 配置输出 ----
     output logic [15:0]              h_out,
@@ -155,19 +158,22 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_ODMA_BYTE_LEN    = 12'h224;
 
     // =========================================================================
-    // start_pulse 生成：CTRL.start 写 1 → 当拍 pulse（reg_w_en 本身就是 1-拍脉冲）
+    // start_*_pulse 生成：CTRL 写 1 → 当拍 pulse（reg_w_en 本身就是 1-拍脉冲）
     // =========================================================================
-    assign start_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[0];
+    assign start_core_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[0];
+    assign start_idma_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[1];
+    assign start_wdma_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[2];
+    assign start_odma_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[3];
 
     // =========================================================================
-    // core_busy：start_pulse 置位，core_done 清零（控制路径，复位必须）
+    // core_busy：start_core_pulse 置位，core_done 清零（控制路径，复位必须）
     // =========================================================================
     logic r_core_busy;
     always_ff @(posedge clk) begin
-        if      (!rst_n)      r_core_busy <= 1'b0;
-        else if (start_pulse) r_core_busy <= 1'b1;
-        else if (core_done)   r_core_busy <= 1'b0;
-        else                  r_core_busy <= r_core_busy;
+        if      (!rst_n)             r_core_busy <= 1'b0;
+        else if (start_core_pulse)   r_core_busy <= 1'b1;
+        else if (core_done)          r_core_busy <= 1'b0;
+        else                         r_core_busy <= r_core_busy;
     end
 
     // =========================================================================

@@ -2,7 +2,12 @@
 ../../RTL/std_rf.sv
 ../../RTL/sdp.sv
 ../../RTL/sram_model.sv
+../../RTL/AXI4/axi_arbiter.sv
+../../RTL/AXI4/axi_m_mux.sv
 ../../RTL/AXI4/axi_lite_csr.sv
+../../RTL/DMA/idma.sv
+../../RTL/DMA/wdma.sv
+../../RTL/DMA/odma.sv
 ../../RTL/cfg_regs.sv
 ../../RTL/mac_pe.sv
 ../../RTL/mac_col.sv

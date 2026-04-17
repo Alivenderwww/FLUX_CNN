@@ -313,6 +313,7 @@ module core_top #(
     //    最末端 → 前端模块必然已完成）。
     // =========================================================================
     logic lb_done;
+    logic [15:0] rows_consumed;
 
     line_buffer #(
         .NUM_PE    (NUM_PE),
@@ -338,12 +339,14 @@ module core_top #(
         .cfg_ifb_cin_step (cfg_ifb_cin_step),
         .cfg_ifb_row_step (cfg_ifb_row_step),
         .cfg_tile_in_step (cfg_tile_in_step),
+        .cfg_idma_streaming(cfg_idma_streaming),
         .ifb_re           (ifb_re),
         .ifb_raddr        (ifb_raddr),
         .ifb_rdata        (ifb_rdata),
         .act_valid        (act_valid),
         .act_vec          (act_vec),
-        .act_ready        (act_ready)
+        .act_ready        (act_ready),
+        .rows_consumed    (rows_consumed)
     );
 
     // =========================================================================

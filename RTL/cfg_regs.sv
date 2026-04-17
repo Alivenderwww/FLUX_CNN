@@ -198,6 +198,15 @@ module cfg_regs #(
         else                         r_core_busy <= r_core_busy;
     end
 
+    // DMA_MODE 是控制路径，必须复位（§6.1）。从 bank always_ff 里拉出来单独维护。
+    // 默认 0 → batch 模式，兼容 v1 所有测试。
+    logic [1:0] r_dma_mode_ctrl;
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                                    r_dma_mode_ctrl <= 2'b00;
+        else if (reg_w_en && reg_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= reg_w_data[1:0];
+        else                                                r_dma_mode_ctrl <= r_dma_mode_ctrl;
+    end
+
     // =========================================================================
     // 配置 / DMA 寄存器 —— 每寄存器独立 always_ff，数据路径无复位（§6）
     // =========================================================================
@@ -232,7 +241,7 @@ module cfg_regs #(
     logic [5:0]              r_ofb_strip_rows;
     logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
     logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
-    logic [1:0]              r_dma_mode;
+    // r_dma_mode_ctrl 声明在上面（有复位）
     logic [31:0]             r_idma_src_base;
     logic [23:0]             r_idma_byte_len;
     logic [31:0]             r_wdma_src_base;
@@ -277,7 +286,7 @@ module cfg_regs #(
                 ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= reg_w_data[5:0];
                 ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_DMA_MODE        : r_dma_mode        <= reg_w_data[1:0];
+                // ADDR_DMA_MODE 已单独 r_dma_mode_ctrl 维护（含复位），此处不需要
                 ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= reg_w_data[31:0];
                 ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= reg_w_data[23:0];
                 ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= reg_w_data[31:0];
@@ -323,8 +332,8 @@ module cfg_regs #(
     assign ofb_strip_rows     = r_ofb_strip_rows;
     assign ddr_ifm_row_stride = r_ddr_ifm_row_stride;
     assign ddr_ofm_row_stride = r_ddr_ofm_row_stride;
-    assign idma_streaming     = r_dma_mode[0];
-    assign odma_streaming     = r_dma_mode[1];
+    assign idma_streaming     = r_dma_mode_ctrl[0];
+    assign odma_streaming     = r_dma_mode_ctrl[1];
     assign idma_src_base   = r_idma_src_base;
     assign idma_byte_len   = r_idma_byte_len;
     assign wdma_src_base   = r_wdma_src_base;
@@ -376,7 +385,7 @@ module cfg_regs #(
             ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
             ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
             ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
-            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode};
+            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};
             ADDR_IDMA_SRC_BASE   : reg_r_data = r_idma_src_base;
             ADDR_IDMA_BYTE_LEN   : reg_r_data = {8'd0, r_idma_byte_len};
             ADDR_WDMA_SRC_BASE   : reg_r_data = r_wdma_src_base;

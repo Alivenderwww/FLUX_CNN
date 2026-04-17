@@ -3,50 +3,53 @@
 // =============================================================================
 // idma.sv  --  Input DMA Engine (DDR → IFB SRAM, MM2S)
 //
-// 功能：从外部 DDR 按 descriptor `(src_base, byte_len)` 读入 IFM 数据，写到
-// 内部 IFB SRAM（从 SRAM addr 0 开始线性写）。AXI4 M，只用 AR + R 通道。
+// 支持两种模式（由 cfg_idma_streaming 切换）：
 //
-// 描述符：
-//   src_base : 外部 DDR 起始字节地址（假设 4KB 对齐；未对齐场景 v2 支持）
-//   byte_len : 要搬运的字节数（必须是 DATA_W/8 = 16 字节的整数倍）
+// Batch 模式 (cfg_idma_streaming=0)：v1 行为
+//   按 descriptor (src_base, byte_len) 一次性搬运整块 IFM；wr_ptr 从 0 线性
+//   递增；byte_len 通常 = 整张图 IFB 字节数。用于 h_in 能整图装下的场景。
 //
-// Burst 切分：
-//   每 burst 最多 256 beat（AXI4 上限），即 4KB；ceil(byte_len/4096) 条 burst
+// Streaming 模式 (cfg_idma_streaming=1)：v2 row-ring
+//   IFB 作 row-level ring buffer。IDMA 每拍 pacing：
+//     * 每次 AR 最多发一整行（W_IN beats）或 256 beats (AXI 上限) — 取小
+//     * 每行完成后检查 rows_written - rows_consumed；若达到 strip_rows 进
+//       S_WAIT 等 line_buffer 消费
+//     * wr_ptr 在 cfg_ifb_cin_step (= strip_rows * W_IN) 处 wrap
+//     * 整体停止条件：rows_written == cfg_h_in_total
+//   Streaming 前提 cin_slices = 1（Phase B 限制）；cin_slices > 1 留 Phase D
 //
-// 状态机：
-//   S_IDLE → start → S_AR (发 ARLEN burst) → S_R (收 R beat，每拍写 IFB)
-//          → RLAST: 还有剩余 → S_AR；否则 → S_DONE
-//   S_DONE → start → S_AR (支持下一层重用)
-//
-// 接口契约：
-//   - AW/W/B 通道内部 tie 0（IDMA 只读）；接 axi_m_mux 时 mux 看 ARVALID 决定
-//   - ifb_we / waddr / wdata：组合 passthrough R handshake + wr_ptr，直接驱动
-//     外部 SRAM 的同步写端口
-//
-// 复位：控制路径（FSM + done 锁存）同步复位；数据路径（cur_addr / beats /
-// wr_ptr）不复位，start 触发时初始化（§6）。
+// 复位：控制路径（FSM + r_done）同步复位；数据路径（addr / counters）由
+// start 初始化（§6）。
 // =============================================================================
 
 module idma #(
-    parameter int ADDR_W       = 32,       // AXI 外部地址位宽
-    parameter int DATA_W       = 128,      // AXI data 宽度（= IFB 字宽）
-    parameter int M_ID         = 2,        // AXI ID 位宽
-    parameter int SRAM_ADDR_W  = 13,       // IFB SRAM 深度位宽（8192 words）
-    parameter int LEN_W        = 24        // byte_len 位宽
+    parameter int ADDR_W       = 32,
+    parameter int DATA_W       = 128,
+    parameter int M_ID         = 2,
+    parameter int SRAM_ADDR_W  = 13,
+    parameter int LEN_W        = 24
 )(
     input  logic                    clk,
     input  logic                    rst_n,
 
     // ---- Control ----
-    input  logic                    start,            // 1-拍脉冲
-    output logic                    done,             // 锁存，start 时清零
-    output logic                    busy,             // 高电平 = 运行中
+    input  logic                    start,
+    output logic                    done,
+    output logic                    busy,
 
-    // ---- Descriptor (static during run) ----
+    // ---- Descriptor (batch 用) ----
     input  logic [ADDR_W-1:0]       src_base,
     input  logic [LEN_W-1:0]        byte_len,
 
-    // ---- AXI4 M (to DDR via axi_m_mux) ----
+    // ---- Streaming 配置 ----
+    input  logic                    cfg_idma_streaming,
+    input  logic [15:0]             cfg_h_in_total,    // 整图行数
+    input  logic [7:0]              cfg_ifb_strip_rows,// IFB ring 行数
+    input  logic [15:0]             cfg_w_in,          // 每行 beats 数
+    input  logic [19:0]             cfg_ifb_cin_step,  // ring wrap 模数 (= strip_rows*W_IN)
+    input  logic [15:0]             rows_consumed,     // 来自 line_buffer
+
+    // ---- AXI4 M ----
     output logic [M_ID-1:0]         M_AWID,
     output logic [ADDR_W-1:0]       M_AWADDR,
     output logic [7:0]              M_AWLEN,
@@ -85,9 +88,9 @@ module idma #(
     output logic [DATA_W-1:0]       ifb_wdata
 );
 
-    localparam int BYTES_PER_BEAT = DATA_W / 8;           // 16 for 128-bit
+    localparam int BYTES_PER_BEAT = DATA_W / 8;
     localparam int BEAT_SHIFT     = $clog2(BYTES_PER_BEAT);
-    localparam int MAX_BEATS      = 256;                   // AXI4 burst 上限
+    localparam int MAX_BEATS      = 256;
 
     // =========================================================================
     // 写通道 tie 0（IDMA 只读）
@@ -101,45 +104,64 @@ module idma #(
     assign M_WSTRB   = '0;
     assign M_WLAST   = 1'b0;
     assign M_WVALID  = 1'b0;
-    assign M_BREADY  = 1'b1;   // 始终吞掉任何误回来的 B resp
+    assign M_BREADY  = 1'b1;
 
     assign M_ARID    = '0;
-    assign M_ARBURST = 2'b01;  // INCR
+    assign M_ARBURST = 2'b01;
 
     // =========================================================================
-    // 状态机
+    // 状态机（加 S_WAIT for streaming）
     // =========================================================================
-    typedef enum logic [1:0] {
-        S_IDLE = 2'd0,
-        S_AR   = 2'd1,
-        S_R    = 2'd2,
-        S_DONE = 2'd3
+    typedef enum logic [2:0] {
+        S_IDLE = 3'd0,
+        S_AR   = 3'd1,
+        S_R    = 3'd2,
+        S_WAIT = 3'd3,   // streaming：ring 满，等 line_buffer 消费
+        S_DONE = 3'd4
     } state_t;
     state_t state, state_next;
 
     // =========================================================================
     // 寄存器
     // =========================================================================
-    logic [ADDR_W-1:0]       cur_addr;         // 下一 burst 的 AXI 起始字节地址
-    logic [LEN_W-1:0]        beats_remaining;  // 还没收完的总 beat 数
-    logic [SRAM_ADDR_W-1:0]  wr_ptr;           // IFB SRAM 写指针（word）
-    logic                    r_done;           // 锁存 done
+    logic [ADDR_W-1:0]       cur_addr;         // AXI 起始字节地址
+    logic [LEN_W-1:0]        beats_remaining;  // batch 剩余 beats
+    logic [15:0]             row_beats_remaining; // streaming 当前行剩余 beats
+    logic [15:0]             rows_written;     // streaming 已写完的行数
+    logic [SRAM_ADDR_W-1:0]  wr_ptr;
+    logic                    r_done;
 
     // =========================================================================
     // 派生量
     // =========================================================================
-    logic [8:0] beats_to_issue;   // 1..256（9-bit 容纳 256）
-    always_comb begin
-        if (beats_remaining >= LEN_W'(MAX_BEATS))
-            beats_to_issue = 9'd256;
-        else
-            beats_to_issue = {1'b0, beats_remaining[7:0]};
-    end
-
     logic ar_fire, r_fire, r_last_fire;
     assign ar_fire     = M_ARVALID && M_ARREADY;
     assign r_fire      = M_RVALID  && M_RREADY;
     assign r_last_fire = r_fire   && M_RLAST;
+
+    logic streaming_row_end;  // 当前 r_fire 拍完成一整行
+    assign streaming_row_end = cfg_idma_streaming && r_fire && (row_beats_remaining == 16'd1);
+
+    logic streaming_all_done; // 整图流完
+    assign streaming_all_done = streaming_row_end && (rows_written == cfg_h_in_total - 16'd1);
+
+    // Ring 满判定（streaming only）
+    //   已灌入未消费的行 >= strip_rows 时不能再发 AR
+    logic ring_full;
+    assign ring_full = cfg_idma_streaming &&
+                       ((rows_written - rows_consumed) >= {8'd0, cfg_ifb_strip_rows});
+
+    // beats_to_issue：batch 用 beats_remaining，streaming 用 row_beats_remaining
+    logic [8:0] beats_to_issue;
+    always_comb begin
+        if (cfg_idma_streaming) begin
+            if (row_beats_remaining >= 16'd256)  beats_to_issue = 9'd256;
+            else                                  beats_to_issue = {1'b0, row_beats_remaining[7:0]};
+        end else begin
+            if (beats_remaining >= LEN_W'(MAX_BEATS)) beats_to_issue = 9'd256;
+            else                                       beats_to_issue = {1'b0, beats_remaining[7:0]};
+        end
+    end
 
     // =========================================================================
     // 端口输出
@@ -159,14 +181,25 @@ module idma #(
     // =========================================================================
     // FSM 三段式
     // =========================================================================
+    logic batch_last_beat;
+    assign batch_last_beat = !cfg_idma_streaming && r_last_fire && (beats_remaining == LEN_W'(1));
+
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE : if (start)       state_next = S_AR;
-            S_AR   : if (ar_fire)     state_next = S_R;
-            S_R    : if (r_last_fire) state_next = (beats_remaining == LEN_W'(1)) ? S_DONE : S_AR;
-            S_DONE : if (start)       state_next = S_AR;
-            default:                   state_next = S_IDLE;
+            S_IDLE : if (start) state_next = S_AR;
+            S_AR   : begin
+                if (cfg_idma_streaming && ring_full) state_next = S_WAIT;
+                else if (ar_fire)                     state_next = S_R;
+            end
+            S_R    : if (r_last_fire) begin
+                if (batch_last_beat)          state_next = S_DONE;
+                else if (streaming_all_done)  state_next = S_DONE;
+                else                          state_next = S_AR;
+            end
+            S_WAIT : if (!ring_full)   state_next = S_AR;
+            S_DONE : if (start)        state_next = S_AR;
+            default:                    state_next = S_IDLE;
         endcase
     end
 
@@ -176,7 +209,7 @@ module idma #(
     end
 
     // =========================================================================
-    // 数据路径寄存器（start 初始化，无复位）
+    // 数据路径寄存器
     // =========================================================================
     always_ff @(posedge clk) begin
         if      (start)   cur_addr <= src_base;
@@ -184,26 +217,52 @@ module idma #(
         else              cur_addr <= cur_addr;
     end
 
+    // beats_remaining：batch 用；streaming 下不参与 done 判定，但保留递减逻辑
     always_ff @(posedge clk) begin
         if      (start)  beats_remaining <= byte_len >> BEAT_SHIFT;
         else if (r_fire) beats_remaining <= beats_remaining - 1;
         else             beats_remaining <= beats_remaining;
     end
 
+    // streaming row_beats_remaining：每行开头 = W_IN，r_fire 减 1，行末回 W_IN
+    always_ff @(posedge clk) begin
+        if      (start)              row_beats_remaining <= cfg_w_in;
+        else if (streaming_row_end)  row_beats_remaining <= cfg_w_in;   // 下一行
+        else if (r_fire)             row_beats_remaining <= row_beats_remaining - 16'd1;
+        else                         row_beats_remaining <= row_beats_remaining;
+    end
+
+    // rows_written: streaming only，每完成一行 +1
+    always_ff @(posedge clk) begin
+        if      (start)              rows_written <= 16'd0;
+        else if (streaming_row_end)  rows_written <= rows_written + 16'd1;
+        else                         rows_written <= rows_written;
+    end
+
+    // wr_ptr: batch 线性；streaming 在 cfg_ifb_cin_step 处 wrap
+    logic [SRAM_ADDR_W-1:0] wr_ptr_wrap_limit_m1;
+    assign wr_ptr_wrap_limit_m1 = cfg_ifb_cin_step[SRAM_ADDR_W-1:0] - SRAM_ADDR_W'(1);
+
     always_ff @(posedge clk) begin
         if      (start)  wr_ptr <= '0;
-        else if (r_fire) wr_ptr <= wr_ptr + 1;
+        else if (r_fire) begin
+            if (cfg_idma_streaming && (wr_ptr == wr_ptr_wrap_limit_m1))
+                wr_ptr <= '0;
+            else
+                wr_ptr <= wr_ptr + 1;
+        end
         else             wr_ptr <= wr_ptr;
     end
 
     // =========================================================================
-    // done 锁存：控制路径，复位必须
+    // done 锁存
     // =========================================================================
     always_ff @(posedge clk) begin
-        if      (!rst_n)                                                r_done <= 1'b0;
-        else if (start)                                                 r_done <= 1'b0;
-        else if (r_last_fire && beats_remaining == LEN_W'(1))           r_done <= 1'b1;
-        else                                                            r_done <= r_done;
+        if      (!rst_n)              r_done <= 1'b0;
+        else if (start)               r_done <= 1'b0;
+        else if (batch_last_beat)     r_done <= 1'b1;
+        else if (streaming_all_done)  r_done <= 1'b1;
+        else                          r_done <= r_done;
     end
 
 endmodule

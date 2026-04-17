@@ -5,7 +5,9 @@
       "Bash(vsim -c -do tb_core_isa.tcl)",
       "Bash(python run_regression.py)",
       "Bash(ls -la \"C:\\\\_Project\\\\FLUX_CNN\\\\rtl\\\\core_ctrl\"*.sv)",
-      "Bash(ls C:/_Project/FLUX_CNN/rtl/core_ctrl*.sv)"
+      "Bash(ls C:/_Project/FLUX_CNN/rtl/core_ctrl*.sv)",
+      "Bash(vlib work *)",
+      "Bash(vlog -sv -work work -mfcu -suppress 2902 -f sim_file_list.f)"
     ]
   }
 }

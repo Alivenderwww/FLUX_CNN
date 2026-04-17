@@ -26,3 +26,5 @@ Syn/syn_run*.log
 /expected_psum.txt
 
 Syn/reports
+
+*.drawio.bkp

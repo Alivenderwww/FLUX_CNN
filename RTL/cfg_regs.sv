@@ -38,6 +38,12 @@
 //   0x15C  TILE_IN_STEP      [19:0]
 //   0x160  SDP_SHIFT         [4:0]
 //   0x164  SDP_RELU_EN       [0]
+//   0x168  H_IN_TOTAL        [15:0]            整图输入高度（streaming 用）
+//   0x16C  IFB_STRIP_ROWS    [7:0]             IFB ring 容纳输入行数
+//   0x170  OFB_STRIP_ROWS    [5:0]             OFB ring 容纳输出行数
+//   0x174  DDR_IFM_ROW_STRIDE[19:0]            DDR 相邻输入行跨度（字节）
+//   0x178  DDR_OFM_ROW_STRIDE[19:0]            DDR 相邻输出行跨度（字节）
+//   0x17C  DMA_MODE          [0]=idma_stream [1]=odma_stream
 //   0x200  IDMA_SRC_BASE     [31:0]
 //   0x204  IDMA_BYTE_LEN     [23:0]
 //   0x210  WDMA_SRC_BASE     [31:0]
@@ -108,6 +114,15 @@ module cfg_regs #(
     output logic [4:0]               sdp_shift,
     output logic                     sdp_relu_en,
 
+    // ---- Streaming / ring 配置输出 ----
+    output logic [15:0]              h_in_total,
+    output logic [7:0]               ifb_strip_rows,
+    output logic [5:0]               ofb_strip_rows,
+    output logic [CORE_ADDR_W-1:0]   ddr_ifm_row_stride,
+    output logic [CORE_ADDR_W-1:0]   ddr_ofm_row_stride,
+    output logic                     idma_streaming,
+    output logic                     odma_streaming,
+
     // ---- DMA 描述符输出 ----
     output logic [31:0]              idma_src_base,
     output logic [23:0]              idma_byte_len,
@@ -149,6 +164,13 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_TILE_IN_STEP     = 12'h15C;
     localparam [ADDR_W-1:0] ADDR_SDP_SHIFT        = 12'h160;
     localparam [ADDR_W-1:0] ADDR_SDP_RELU_EN      = 12'h164;
+
+    localparam [ADDR_W-1:0] ADDR_H_IN_TOTAL       = 12'h168;
+    localparam [ADDR_W-1:0] ADDR_IFB_STRIP_ROWS   = 12'h16C;
+    localparam [ADDR_W-1:0] ADDR_OFB_STRIP_ROWS   = 12'h170;
+    localparam [ADDR_W-1:0] ADDR_DDR_IFM_ROW_STR  = 12'h174;
+    localparam [ADDR_W-1:0] ADDR_DDR_OFM_ROW_STR  = 12'h178;
+    localparam [ADDR_W-1:0] ADDR_DMA_MODE         = 12'h17C;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -205,6 +227,12 @@ module cfg_regs #(
     logic [CORE_ADDR_W-1:0]  r_tile_in_step;
     logic [4:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
+    logic [15:0]             r_h_in_total;
+    logic [7:0]              r_ifb_strip_rows;
+    logic [5:0]              r_ofb_strip_rows;
+    logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
+    logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
+    logic [1:0]              r_dma_mode;
     logic [31:0]             r_idma_src_base;
     logic [23:0]             r_idma_byte_len;
     logic [31:0]             r_wdma_src_base;
@@ -244,6 +272,12 @@ module cfg_regs #(
                 ADDR_TILE_IN_STEP    : r_tile_in_step    <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= reg_w_data[4:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= reg_w_data[0];
+                ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
+                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= reg_w_data[7:0];
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= reg_w_data[5:0];
+                ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_DMA_MODE        : r_dma_mode        <= reg_w_data[1:0];
                 ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= reg_w_data[31:0];
                 ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= reg_w_data[23:0];
                 ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= reg_w_data[31:0];
@@ -284,6 +318,13 @@ module cfg_regs #(
     assign tile_in_step    = r_tile_in_step;
     assign sdp_shift       = r_sdp_shift;
     assign sdp_relu_en     = r_sdp_relu_en;
+    assign h_in_total         = r_h_in_total;
+    assign ifb_strip_rows     = r_ifb_strip_rows;
+    assign ofb_strip_rows     = r_ofb_strip_rows;
+    assign ddr_ifm_row_stride = r_ddr_ifm_row_stride;
+    assign ddr_ofm_row_stride = r_ddr_ofm_row_stride;
+    assign idma_streaming     = r_dma_mode[0];
+    assign odma_streaming     = r_dma_mode[1];
     assign idma_src_base   = r_idma_src_base;
     assign idma_byte_len   = r_idma_byte_len;
     assign wdma_src_base   = r_wdma_src_base;
@@ -330,6 +371,12 @@ module cfg_regs #(
             ADDR_TILE_IN_STEP    : reg_r_data = {12'd0, r_tile_in_step};
             ADDR_SDP_SHIFT       : reg_r_data = {27'd0, r_sdp_shift};
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
+            ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
+            ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
+            ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
+            ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
+            ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
+            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode};
             ADDR_IDMA_SRC_BASE   : reg_r_data = r_idma_src_base;
             ADDR_IDMA_BYTE_LEN   : reg_r_data = {8'd0, r_idma_byte_len};
             ADDR_WDMA_SRC_BASE   : reg_r_data = r_wdma_src_base;

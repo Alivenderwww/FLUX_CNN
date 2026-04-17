@@ -158,6 +158,15 @@ module core_top #(
     logic [4:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
+    // Streaming / ring cfg 输出（v2 用；v1 默认 0 等价 batch）
+    logic [15:0]       cfg_h_in_total;
+    logic [7:0]        cfg_ifb_strip_rows;
+    logic [5:0]        cfg_ofb_strip_rows;
+    logic [ADDR_W-1:0] cfg_ddr_ifm_row_stride;
+    logic [ADDR_W-1:0] cfg_ddr_ofm_row_stride;
+    logic              cfg_idma_streaming;
+    logic              cfg_odma_streaming;
+
     // CTRL / STATUS / DMA 相关
     logic              cfg_start_core_pulse, cfg_start_idma_pulse;
     logic              cfg_start_wdma_pulse, cfg_start_odma_pulse;
@@ -192,6 +201,13 @@ module core_top #(
         .wb_cin_step(/* unused */), .wb_cout_step(cfg_wb_cout_step),
         .ofb_cout_step(/* unused */), .tile_in_step(cfg_tile_in_step),
         .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
+        .h_in_total(cfg_h_in_total),
+        .ifb_strip_rows(cfg_ifb_strip_rows),
+        .ofb_strip_rows(cfg_ofb_strip_rows),
+        .ddr_ifm_row_stride(cfg_ddr_ifm_row_stride),
+        .ddr_ofm_row_stride(cfg_ddr_ofm_row_stride),
+        .idma_streaming(cfg_idma_streaming),
+        .odma_streaming(cfg_odma_streaming),
         .idma_src_base(dma_idma_src_base), .idma_byte_len(dma_idma_byte_len),
         .wdma_src_base(dma_wdma_src_base), .wdma_byte_len(dma_wdma_byte_len),
         .odma_dst_base(dma_odma_dst_base), .odma_byte_len(dma_odma_byte_len)

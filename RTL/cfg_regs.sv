@@ -4,11 +4,14 @@
 // cfg_regs.sv  --  Shared Configuration Register Bank
 //
 // 集中持有所有层配置参数，对外以只读端口暴露给 5 个计算/搬运模块
-// (act_feeder / wgt_feeder / mac_array / parf_accum / ofb_writer)。
+// (line_buffer / wgt_buffer / mac_array / parf_accum / ofb_writer)。
 //
-// TB 通过层次引用直接写入内部寄存器（无外部写端口）：
-//     u_core_top.u_cfg.h_out = ...;
-//
+// 特殊约定：该模块当前只在仿真阶段使用——TB 通过层次引用直接写入内部寄存器
+// (u_core_top.u_cfg.r_h_out = ...)。因此：
+//   1) 无外部写端口；clk / rst_n 保留为未来上 AXI-Lite 或自研总线预留。
+//   2) 内部 r_* 寄存器没有 always_ff 驱动：仅做 `logic ... = 0` 的仿真初值，
+//      TB 在 rst_n=1 之后直接层次写入。RTL 代码规范 §6（"所有寄存器有 reset
+//      分支"）对本模块豁免，真接总线后需要补上。
 // 字段语义见 docs/config-registers.md。
 // =============================================================================
 

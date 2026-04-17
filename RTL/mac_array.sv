@@ -86,73 +86,22 @@ module mac_array #(
     logic stage0_has_data;
     assign stage0_has_data = act_valid & wgt_valid;
 
-    always_ff @(posedge clk or negedge rst_n) begin
+    // pipe_s1_valid / pipe_s2_valid 驱动对外握手（psum_out_valid、act/wgt_ready），
+    // 属控制路径必须复位（§6.1）。同步复位；分支结构完全一致，合并维护（§4.1 例外）。
+    always_ff @(posedge clk) begin
         if (!rst_n) begin
             pipe_s1_valid <= 1'b0;
             pipe_s2_valid <= 1'b0;
         end else if (can_advance) begin
             pipe_s1_valid <= stage0_has_data;
             pipe_s2_valid <= pipe_s1_valid;
+        end else begin
+            pipe_s1_valid <= pipe_s1_valid;
+            pipe_s2_valid <= pipe_s2_valid;
         end
     end
 
     assign psum_out_valid = pipe_s2_valid;
-
-    // =========================================================================
-    // Simulation-only: 握手 & MAC 计数器
-    //   - hs_*_fire  : V=1 & R=1, 真握手成功
-    //   - hs_*_stall : V=1 & R=0, 上游被下游堵 (下游慢)
-    //   - hs_*_idle  : V=0 & R=1, 下游空等上游 (上游慢)
-    //   - true_fire_cnt : stage 0 join 成功的周期数 (= 真正送入 pipe 的 MAC 拍数)
-    // =========================================================================
-    // synthesis translate_off
-    int hs_act_fire   = 0;
-    int hs_act_stall  = 0;
-    int hs_act_idle   = 0;
-    int hs_wgt_fire   = 0;
-    int hs_wgt_stall  = 0;
-    int hs_wgt_idle   = 0;
-    int hs_psum_fire  = 0;
-    int hs_psum_stall = 0;
-    int hs_psum_idle  = 0;
-    int true_fire_cnt = 0;
-
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            hs_act_fire   <= 0;
-            hs_act_stall  <= 0;
-            hs_act_idle   <= 0;
-            hs_wgt_fire   <= 0;
-            hs_wgt_stall  <= 0;
-            hs_wgt_idle   <= 0;
-            hs_psum_fire  <= 0;
-            hs_psum_stall <= 0;
-            hs_psum_idle  <= 0;
-            true_fire_cnt <= 0;
-        end else begin
-            if      ( act_valid &&  act_ready) hs_act_fire  <= hs_act_fire  + 1;
-            else if ( act_valid && !act_ready) hs_act_stall <= hs_act_stall + 1;
-            else if (!act_valid &&  act_ready) hs_act_idle  <= hs_act_idle  + 1;
-
-            if      ( wgt_valid &&  wgt_ready) hs_wgt_fire  <= hs_wgt_fire  + 1;
-            else if ( wgt_valid && !wgt_ready) hs_wgt_stall <= hs_wgt_stall + 1;
-            else if (!wgt_valid &&  wgt_ready) hs_wgt_idle  <= hs_wgt_idle  + 1;
-
-            if      ( psum_out_valid &&  psum_in_ready) hs_psum_fire  <= hs_psum_fire  + 1;
-            else if ( psum_out_valid && !psum_in_ready) hs_psum_stall <= hs_psum_stall + 1;
-            else if (!psum_out_valid &&  psum_in_ready) hs_psum_idle  <= hs_psum_idle  + 1;
-        end
-    end
-
-    // true_fire_cnt 单独一个 always_ff (与上面的 if-else 链隔离)
-    always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            true_fire_cnt <= 0;
-        end else if (act_valid && wgt_valid && can_advance) begin
-            true_fire_cnt <= true_fire_cnt + 1;
-        end
-    end
-    // synthesis translate_on
 
     // =========================================================================
     // NUM_COL 列 PE 计算
@@ -189,5 +138,106 @@ module mac_array #(
             );
         end
     endgenerate
+
+    // =========================================================================
+    // Simulation-only: 握手 & MAC 计数器
+    //   - hs_*_fire  : V=1 & R=1, 握手成功
+    //   - hs_*_stall : V=1 & R=0, 上游被下游堵 (下游慢)
+    //   - hs_*_idle  : V=0 & R=1, 下游空等上游 (上游慢)
+    //   - mac_fire_cnt : stage 0 join 成功的周期数 (= 真正送入 pipe 的 MAC 拍数)
+    //
+    // 每组 (fire/stall/idle) 共享同一次握手观察事件、推进规则互斥分支，属强
+    // 相关 3-寄存器组；按握手边（act/wgt/psum）各维护一个 always_ff。
+    // =========================================================================
+    // synthesis translate_off
+    int hs_act_fire   = 0;
+    int hs_act_stall  = 0;
+    int hs_act_idle   = 0;
+    int hs_wgt_fire   = 0;
+    int hs_wgt_stall  = 0;
+    int hs_wgt_idle   = 0;
+    int hs_psum_fire  = 0;
+    int hs_psum_stall = 0;
+    int hs_psum_idle  = 0;
+    int mac_fire_cnt  = 0;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            hs_act_fire  <= 0;
+            hs_act_stall <= 0;
+            hs_act_idle  <= 0;
+        end else if ( act_valid &&  act_ready) begin
+            hs_act_fire  <= hs_act_fire  + 1;
+            hs_act_stall <= hs_act_stall;
+            hs_act_idle  <= hs_act_idle;
+        end else if ( act_valid && !act_ready) begin
+            hs_act_fire  <= hs_act_fire;
+            hs_act_stall <= hs_act_stall + 1;
+            hs_act_idle  <= hs_act_idle;
+        end else if (!act_valid &&  act_ready) begin
+            hs_act_fire  <= hs_act_fire;
+            hs_act_stall <= hs_act_stall;
+            hs_act_idle  <= hs_act_idle  + 1;
+        end else begin
+            hs_act_fire  <= hs_act_fire;
+            hs_act_stall <= hs_act_stall;
+            hs_act_idle  <= hs_act_idle;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            hs_wgt_fire  <= 0;
+            hs_wgt_stall <= 0;
+            hs_wgt_idle  <= 0;
+        end else if ( wgt_valid &&  wgt_ready) begin
+            hs_wgt_fire  <= hs_wgt_fire  + 1;
+            hs_wgt_stall <= hs_wgt_stall;
+            hs_wgt_idle  <= hs_wgt_idle;
+        end else if ( wgt_valid && !wgt_ready) begin
+            hs_wgt_fire  <= hs_wgt_fire;
+            hs_wgt_stall <= hs_wgt_stall + 1;
+            hs_wgt_idle  <= hs_wgt_idle;
+        end else if (!wgt_valid &&  wgt_ready) begin
+            hs_wgt_fire  <= hs_wgt_fire;
+            hs_wgt_stall <= hs_wgt_stall;
+            hs_wgt_idle  <= hs_wgt_idle  + 1;
+        end else begin
+            hs_wgt_fire  <= hs_wgt_fire;
+            hs_wgt_stall <= hs_wgt_stall;
+            hs_wgt_idle  <= hs_wgt_idle;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            hs_psum_fire  <= 0;
+            hs_psum_stall <= 0;
+            hs_psum_idle  <= 0;
+        end else if ( psum_out_valid &&  psum_in_ready) begin
+            hs_psum_fire  <= hs_psum_fire  + 1;
+            hs_psum_stall <= hs_psum_stall;
+            hs_psum_idle  <= hs_psum_idle;
+        end else if ( psum_out_valid && !psum_in_ready) begin
+            hs_psum_fire  <= hs_psum_fire;
+            hs_psum_stall <= hs_psum_stall + 1;
+            hs_psum_idle  <= hs_psum_idle;
+        end else if (!psum_out_valid &&  psum_in_ready) begin
+            hs_psum_fire  <= hs_psum_fire;
+            hs_psum_stall <= hs_psum_stall;
+            hs_psum_idle  <= hs_psum_idle  + 1;
+        end else begin
+            hs_psum_fire  <= hs_psum_fire;
+            hs_psum_stall <= hs_psum_stall;
+            hs_psum_idle  <= hs_psum_idle;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                                   mac_fire_cnt <= 0;
+        else if (act_valid && wgt_valid && can_advance)    mac_fire_cnt <= mac_fire_cnt + 1;
+        else                                               mac_fire_cnt <= mac_fire_cnt;
+    end
+    // synthesis translate_on
 
 endmodule

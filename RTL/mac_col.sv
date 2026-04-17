@@ -71,10 +71,11 @@ module mac_col #(
 
     // 打一拍 (对齐 mac_pe 的 1 拍乘法器延迟)
     // compute_en 作为 pipeline advance 闸门：stall 时保持 adder_tree_reg。
+    // 数据路径寄存器，无复位；上电 X 由下游 psum_out_valid 遮蔽（§6）。
     logic signed [PSUM_WIDTH-1:0] adder_tree_reg;
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n)           adder_tree_reg <= '0;
-        else if (compute_en)  adder_tree_reg <= adder_tree_out;
+    always_ff @(posedge clk) begin
+        if (compute_en) adder_tree_reg <= adder_tree_out;
+        else            adder_tree_reg <= adder_tree_reg;
     end
 
     assign psum_out = adder_tree_reg;

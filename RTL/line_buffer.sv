@@ -69,7 +69,7 @@ module line_buffer #(
     localparam int CNT_W   = $clog2(ARF_DEPTH+1);  // 6 bits to hold 0..32
 
     // =========================================================================
-    // 状态
+    // 状态机
     // =========================================================================
     typedef enum logic [1:0] {
         S_IDLE = 2'd0,
@@ -79,8 +79,9 @@ module line_buffer #(
     state_t state, state_next;
 
     // =========================================================================
-    // 外层 6 级 counter (仅 issue 侧)
+    // 寄存器声明
     // =========================================================================
+    // 外层 6 级 counter
     logic [3:0]  kx_cnt;
     logic [3:0]  ky_cnt;
     logic [5:0]  cins_cnt;
@@ -88,33 +89,26 @@ module line_buffer #(
     logic [15:0] yout_cnt;
     logic [5:0]  cs_cnt;
 
-    // =========================================================================
     // 5 层 running base（cs 不影响 IFB）
-    // =========================================================================
     logic [ADDR_W-1:0] ptr_yout_base;
     logic [ADDR_W-1:0] ptr_tile_base;
     logic [ADDR_W-1:0] ptr_cins_base;
     logic [ADDR_W-1:0] ptr_ky_base;
     logic [ADDR_W-1:0] ptr_kx_base;
 
-    // =========================================================================
     // Issue 内部 state
-    // =========================================================================
-    logic [5:0]        iss_pos;       // 0..cur_valid_w-1 (当前 round 内位置)
-    logic              issues_all_done;   // 所有 issue 已发出
-    logic              ifb_re_d1;     // 上拍 issue，这拍 rdata 到
+    logic [5:0]  iss_pos;            // 0..cur_valid_w-1
+    logic        issues_all_done;
+    logic        ifb_re_d1;
 
-    // =========================================================================
     // Ring buffer
-    // =========================================================================
-    logic [BUF_AW-1:0] wr_idx;        // modular 索引 act_buf
+    logic [BUF_AW-1:0] wr_idx;
     logic [BUF_AW-1:0] rd_idx;
-    logic [CNT_W-1:0]  fifo_count;    // 0..ARF_DEPTH
-
+    logic [CNT_W-1:0]  fifo_count;
     logic [NUM_PE*DATA_WIDTH-1:0] act_buf [0:ARF_DEPTH-1];
 
     // =========================================================================
-    // cur_valid_w + 边界 (issue 侧)
+    // 派生量 + 边界
     // =========================================================================
     logic [5:0] cur_valid_w;
     assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
@@ -130,15 +124,14 @@ module line_buffer #(
     logic iss_pos_is_last;
     assign iss_pos_is_last = (iss_pos == cur_valid_w - 6'd1);
 
-    logic all_is_last;   // 当前 round 是整层最后一个 round
+    logic all_is_last;
     assign all_is_last = iss_pos_is_last && kx_is_last && ky_is_last &&
                          cins_is_last && tile_is_last && yout_is_last && cs_is_last;
 
     // =========================================================================
-    // 握手
+    // 握手 + IFB 读地址
     // =========================================================================
     logic issue_ok;
-    // issue 需要：未全发完 AND buffer 有空间（考虑 in-flight 占位）
     assign issue_ok = (state == S_RUN) && !issues_all_done &&
                       ({1'b0, fifo_count} + {6'b0, ifb_re_d1} < (CNT_W+1)'(ARF_DEPTH));
 
@@ -154,167 +147,212 @@ module line_buffer #(
     assign ifb_re    = issue_ok;
     assign ifb_raddr = ptr_kx_base + ifb_rd_offset;
 
-    // Consume 侧
     assign act_valid = (fifo_count > 0);
     assign act_vec   = act_buf[rd_idx];
 
-    logic fire;
-    assign fire = act_valid & act_ready;
-
-    logic arrival;
-    assign arrival = ifb_re_d1;
+    logic act_fire, arrival;
+    assign act_fire = act_valid & act_ready;
+    assign arrival  = ifb_re_d1;
 
     // =========================================================================
-    // 状态转移
+    // 命名事件信号（comb）—— 把外层 6 级 wrap 链打平
+    //   evt_start        : IDLE 下捕获 start，下拍进 S_RUN 并初始化 counter/ptr
+    //   evt_iss_pos_wrap : issue 走完一 round (kx 进位触发)
+    //   evt_iss_kx_wrap  : kx 进位到末尾 (ky 进位触发)
+    //   evt_iss_ky_wrap  : ky 进位到末尾 (cins 进位触发)
+    //   evt_iss_cins_wrap: cins 进位到末尾 (tile 进位触发)
+    //   evt_iss_tile_wrap: tile 进位到末尾 (yout 进位触发)
+    //   evt_iss_yout_wrap: yout 进位到末尾 (cs 进位触发)
+    // =========================================================================
+    logic evt_start;
+    logic evt_iss_pos_wrap;
+    logic evt_iss_kx_wrap;
+    logic evt_iss_ky_wrap;
+    logic evt_iss_cins_wrap;
+    logic evt_iss_tile_wrap;
+    logic evt_iss_yout_wrap;
+
+    always_comb begin
+        evt_start         = (state == S_IDLE) && start;
+        evt_iss_pos_wrap  = issue_ok           && iss_pos_is_last;
+        evt_iss_kx_wrap   = evt_iss_pos_wrap   && kx_is_last;
+        evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
+        evt_iss_cins_wrap = evt_iss_ky_wrap    && cins_is_last;
+        evt_iss_tile_wrap = evt_iss_cins_wrap  && tile_is_last;
+        evt_iss_yout_wrap = evt_iss_tile_wrap  && yout_is_last;
+    end
+
+    // =========================================================================
+    // 三段式 FSM
     // =========================================================================
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE:  if (start)                                          state_next = S_RUN;
-            // 所有 issues 已发、fifo 已空、无 in-flight：DONE
-            S_RUN:   if (issues_all_done && fifo_count == 0 && !ifb_re_d1) state_next = S_DONE;
-            S_DONE:  ;
-            default: state_next = S_IDLE;
+            S_IDLE : if (start)                                              state_next = S_RUN;
+            S_RUN  : if (issues_all_done && fifo_count == 0 && !ifb_re_d1)   state_next = S_DONE;
+            S_DONE : ;
+            default:                                                          state_next = S_IDLE;
         endcase
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) state <= S_IDLE;
+        else        state <= state_next;
     end
 
     assign done = (state == S_DONE);
 
     // =========================================================================
-    // counter / ptr 推进 task（iss_pos wrap 时调用）
+    // 外层 6 级 counter
+    //   state=S_IDLE 下 issue_ok=0，counter 值不影响任何输出；evt_start 初始化。
+    //   按 §6 不加复位。
     // =========================================================================
-    task automatic advance_counters_and_ptrs();
-        if (kx_is_last) begin
-            kx_cnt <= '0;
-            if (ky_is_last) begin
-                ky_cnt <= '0;
-                if (cins_is_last) begin
-                    cins_cnt <= '0;
-                    if (tile_is_last) begin
-                        tile_cnt <= '0;
-                        if (yout_is_last) begin
-                            yout_cnt <= '0;
-                            if (!cs_is_last) begin
-                                cs_cnt <= cs_cnt + 6'd1;
-                                ptr_yout_base <= cfg_ifb_base;
-                                ptr_tile_base <= cfg_ifb_base;
-                                ptr_cins_base <= cfg_ifb_base;
-                                ptr_ky_base   <= cfg_ifb_base;
-                                ptr_kx_base   <= cfg_ifb_base;
-                            end
-                        end else begin
-                            yout_cnt <= yout_cnt + 16'd1;
-                            ptr_yout_base <= ptr_yout_base + cfg_ifb_row_step;
-                            ptr_tile_base <= ptr_yout_base + cfg_ifb_row_step;
-                            ptr_cins_base <= ptr_yout_base + cfg_ifb_row_step;
-                            ptr_ky_base   <= ptr_yout_base + cfg_ifb_row_step;
-                            ptr_kx_base   <= ptr_yout_base + cfg_ifb_row_step;
-                        end
-                    end else begin
-                        tile_cnt <= tile_cnt + 8'd1;
-                        ptr_tile_base <= ptr_tile_base + cfg_tile_in_step;
-                        ptr_cins_base <= ptr_tile_base + cfg_tile_in_step;
-                        ptr_ky_base   <= ptr_tile_base + cfg_tile_in_step;
-                        ptr_kx_base   <= ptr_tile_base + cfg_tile_in_step;
-                    end
-                end else begin
-                    cins_cnt <= cins_cnt + 6'd1;
-                    ptr_cins_base <= ptr_cins_base + cfg_ifb_cin_step;
-                    ptr_ky_base   <= ptr_cins_base + cfg_ifb_cin_step;
-                    ptr_kx_base   <= ptr_cins_base + cfg_ifb_cin_step;
-                end
-            end else begin
-                ky_cnt <= ky_cnt + 4'd1;
-                ptr_ky_base <= ptr_ky_base + {{(ADDR_W-16){1'b0}}, cfg_w_in};
-                ptr_kx_base <= ptr_ky_base + {{(ADDR_W-16){1'b0}}, cfg_w_in};
-            end
-        end else begin
-            kx_cnt <= kx_cnt + 4'd1;
-            ptr_kx_base <= ptr_kx_base + {{(ADDR_W-1){1'b0}}, 1'b1};
-        end
-    endtask
+    always_ff @(posedge clk) begin
+        if      (evt_start)          iss_pos <= '0;
+        else if (evt_iss_pos_wrap)   iss_pos <= '0;
+        else if (issue_ok)           iss_pos <= iss_pos + 6'd1;
+        else                         iss_pos <= iss_pos;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)          kx_cnt <= '0;
+        else if (evt_iss_kx_wrap)    kx_cnt <= '0;
+        else if (evt_iss_pos_wrap)   kx_cnt <= kx_cnt + 4'd1;
+        else                         kx_cnt <= kx_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)          ky_cnt <= '0;
+        else if (evt_iss_ky_wrap)    ky_cnt <= '0;
+        else if (evt_iss_kx_wrap)    ky_cnt <= ky_cnt + 4'd1;
+        else                         ky_cnt <= ky_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)          cins_cnt <= '0;
+        else if (evt_iss_cins_wrap)  cins_cnt <= '0;
+        else if (evt_iss_ky_wrap)    cins_cnt <= cins_cnt + 6'd1;
+        else                         cins_cnt <= cins_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)          tile_cnt <= '0;
+        else if (evt_iss_tile_wrap)  tile_cnt <= '0;
+        else if (evt_iss_cins_wrap)  tile_cnt <= tile_cnt + 8'd1;
+        else                         tile_cnt <= tile_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)          yout_cnt <= '0;
+        else if (evt_iss_yout_wrap)  yout_cnt <= '0;
+        else if (evt_iss_tile_wrap)  yout_cnt <= yout_cnt + 16'd1;
+        else                         yout_cnt <= yout_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)                         cs_cnt <= '0;
+        else if (evt_iss_yout_wrap && !cs_is_last)  cs_cnt <= cs_cnt + 6'd1;
+        else                                        cs_cnt <= cs_cnt;
+    end
+
+    // issues_all_done 是控制标志，参与 state_next 判定 → 复位（§6.1）。
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                           issues_all_done <= 1'b0;
+        else if (evt_start)                        issues_all_done <= 1'b0;
+        else if (evt_iss_pos_wrap && all_is_last)  issues_all_done <= 1'b1;
+        else                                       issues_all_done <= issues_all_done;
+    end
 
     // =========================================================================
-    // 时序
+    // 5 层 running base（数据路径，无复位；evt_start 初始化）
+    //   层级继承：外层进位时，内层 base 跟随外层新值重置；否则按自身步长推进。
     // =========================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state           <= S_IDLE;
-            kx_cnt          <= '0;
-            ky_cnt          <= '0;
-            cins_cnt        <= '0;
-            tile_cnt        <= '0;
-            yout_cnt        <= '0;
-            cs_cnt          <= '0;
-            iss_pos         <= '0;
-            issues_all_done <= 1'b0;
-            ifb_re_d1       <= 1'b0;
-            wr_idx          <= '0;
-            rd_idx          <= '0;
-            fifo_count      <= '0;
-            ptr_yout_base   <= '0;
-            ptr_tile_base   <= '0;
-            ptr_cins_base   <= '0;
-            ptr_ky_base     <= '0;
-            ptr_kx_base     <= '0;
-            for (int i = 0; i < ARF_DEPTH; i++) act_buf[i] <= '0;
-        end else begin
-            state     <= state_next;
-            ifb_re_d1 <= issue_ok;
+    always_ff @(posedge clk) begin
+        if      (evt_start)                           ptr_yout_base <= cfg_ifb_base;
+        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_yout_base <= cfg_ifb_base;
+        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_yout_base <= ptr_yout_base + cfg_ifb_row_step;
+        else                                          ptr_yout_base <= ptr_yout_base;
+    end
 
-            // ---- IDLE → RUN: 初始化 ----
-            if (state == S_IDLE && start) begin
-                kx_cnt          <= '0;
-                ky_cnt          <= '0;
-                cins_cnt        <= '0;
-                tile_cnt        <= '0;
-                yout_cnt        <= '0;
-                cs_cnt          <= '0;
-                iss_pos         <= '0;
-                issues_all_done <= 1'b0;
-                wr_idx          <= '0;
-                rd_idx          <= '0;
-                fifo_count      <= '0;
-                ptr_yout_base   <= cfg_ifb_base;
-                ptr_tile_base   <= cfg_ifb_base;
-                ptr_cins_base   <= cfg_ifb_base;
-                ptr_ky_base     <= cfg_ifb_base;
-                ptr_kx_base     <= cfg_ifb_base;
-            end
+    always_ff @(posedge clk) begin
+        if      (evt_start)                           ptr_tile_base <= cfg_ifb_base;
+        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_tile_base <= cfg_ifb_base;
+        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_tile_base <= ptr_yout_base + cfg_ifb_row_step;
+        else if (evt_iss_cins_wrap && !tile_is_last)  ptr_tile_base <= ptr_tile_base + cfg_tile_in_step;
+        else                                          ptr_tile_base <= ptr_tile_base;
+    end
 
-            // ---- Issue 侧: iss_pos 推进 + 外层 counter wrap ----
-            if (issue_ok) begin
-                if (iss_pos_is_last) begin
-                    iss_pos <= '0;
-                    if (all_is_last) begin
-                        issues_all_done <= 1'b1;
-                    end else begin
-                        advance_counters_and_ptrs();
-                    end
-                end else begin
-                    iss_pos <= iss_pos + 6'd1;
-                end
-            end
+    always_ff @(posedge clk) begin
+        if      (evt_start)                           ptr_cins_base <= cfg_ifb_base;
+        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_cins_base <= cfg_ifb_base;
+        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_cins_base <= ptr_yout_base + cfg_ifb_row_step;
+        else if (evt_iss_cins_wrap && !tile_is_last)  ptr_cins_base <= ptr_tile_base + cfg_tile_in_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_cins_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else                                          ptr_cins_base <= ptr_cins_base;
+    end
 
-            // ---- Arrival: 写 act_buf + 推进 wr_idx ----
-            if (arrival) begin
-                act_buf[wr_idx] <= ifb_rdata;
-                wr_idx          <= wr_idx + 1'b1;    // 5-bit 自然 mod 32
-            end
+    always_ff @(posedge clk) begin
+        if      (evt_start)                           ptr_ky_base <= cfg_ifb_base;
+        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_ky_base <= cfg_ifb_base;
+        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_ky_base <= ptr_yout_base + cfg_ifb_row_step;
+        else if (evt_iss_cins_wrap && !tile_is_last)  ptr_ky_base <= ptr_tile_base + cfg_tile_in_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_ky_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else if (evt_iss_kx_wrap   && !ky_is_last)    ptr_ky_base <= ptr_ky_base   + {{(ADDR_W-16){1'b0}}, cfg_w_in};
+        else                                          ptr_ky_base <= ptr_ky_base;
+    end
 
-            // ---- Fire: 推进 rd_idx ----
-            if (fire) begin
-                rd_idx <= rd_idx + 1'b1;             // 5-bit 自然 mod 32
-            end
+    always_ff @(posedge clk) begin
+        if      (evt_start)                           ptr_kx_base <= cfg_ifb_base;
+        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_kx_base <= cfg_ifb_base;
+        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_kx_base <= ptr_yout_base + cfg_ifb_row_step;
+        else if (evt_iss_cins_wrap && !tile_is_last)  ptr_kx_base <= ptr_tile_base + cfg_tile_in_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_kx_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else if (evt_iss_kx_wrap   && !ky_is_last)    ptr_kx_base <= ptr_ky_base   + {{(ADDR_W-16){1'b0}}, cfg_w_in};
+        else if (evt_iss_pos_wrap  && !kx_is_last)    ptr_kx_base <= ptr_kx_base   + {{(ADDR_W-1){1'b0}}, 1'b1};
+        else                                          ptr_kx_base <= ptr_kx_base;
+    end
 
-            // ---- fifo_count 更新 ----
-            // arrival +1, fire -1, both/neither: no change
-            case ({arrival, fire})
-                2'b10:   fifo_count <= fifo_count + 1'b1;
-                2'b01:   fifo_count <= fifo_count - 1'b1;
-                default: ;
-            endcase
-        end
+    // =========================================================================
+    // IFB 读回延迟 1 拍：控制路径（gate act_buf 写入），复位必须。
+    // =========================================================================
+    always_ff @(posedge clk) begin
+        if (!rst_n) ifb_re_d1 <= 1'b0;
+        else        ifb_re_d1 <= issue_ok;
+    end
+
+    // =========================================================================
+    // Ring buffer 指针与占用计数
+    //   wr_idx / rd_idx：由 arrival / act_fire 驱动（gated by ifb_re_d1 和
+    //   fifo_count，两者都有复位），按 §6 不加复位；evt_start 初始化。
+    //   fifo_count：驱动 act_valid → 必须复位。
+    // =========================================================================
+    always_ff @(posedge clk) begin
+        if      (evt_start)  wr_idx <= '0;
+        else if (arrival)    wr_idx <= wr_idx + 1'b1;
+        else                 wr_idx <= wr_idx;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)  rd_idx <= '0;
+        else if (act_fire)   rd_idx <= rd_idx + 1'b1;
+        else                 rd_idx <= rd_idx;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                 fifo_count <= '0;
+        else if (evt_start)              fifo_count <= '0;
+        else if ( arrival && !act_fire)  fifo_count <= fifo_count + 1'b1;
+        else if (!arrival &&  act_fire)  fifo_count <= fifo_count - 1'b1;
+        else                             fifo_count <= fifo_count;
+    end
+
+    // =========================================================================
+    // act_buf 存储阵列（数据路径，无复位）
+    //   arrival=ifb_re_d1 门控写；下游 act_valid=fifo_count>0 遮蔽未初始化值。
+    // =========================================================================
+    always_ff @(posedge clk) begin
+        if (arrival) act_buf[wr_idx] <= ifb_rdata;
+        else         act_buf[wr_idx] <= act_buf[wr_idx];
     end
 
 endmodule

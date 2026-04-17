@@ -231,11 +231,11 @@ module tb_core_isa;
             $display("");
 
             begin
-                longint true_fire_cycles;
+                longint mac_fire_cycles;
                 longint total_mac_ops;
                 longint total_wrf_writes;
-                true_fire_cycles = u_core_top.u_mac_array.true_fire_cnt;
-                total_mac_ops    = true_fire_cycles * NUM_COL * NUM_PE;
+                mac_fire_cycles = u_core_top.u_mac_array.mac_fire_cnt;
+                total_mac_ops   = mac_fire_cycles * NUM_COL * NUM_PE;
                 total_wrf_writes = 0;
                 for (int c = 0; c < NUM_COL; c++) begin
                     for (int p = 0; p < NUM_PE; p++) begin
@@ -243,7 +243,7 @@ module tb_core_isa;
                     end
                 end
                 $display("--- PE Array Utilization ---");
-                $display("True MAC Fire Cycles: %0d", true_fire_cycles);
+                $display("MAC Fire Cycles:      %0d", mac_fire_cycles);
                 $display("Total MAC Ops:        %0d (= real_cycles * %0d PEs)", total_mac_ops, NUM_COL * NUM_PE);
                 $display("Theoretical Max MACs: %0d (= cycles * %0d PEs)",
                          total_cycles * NUM_COL * NUM_PE, NUM_COL * NUM_PE);

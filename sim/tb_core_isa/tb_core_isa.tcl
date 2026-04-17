@@ -6,4 +6,4 @@ vlog -sv -work work -mfcu -incr -suppress 2902 -f sim_file_list.f
 vsim -suppress 3486,3680,3781 -voptargs="+acc" +nowarn1 -c -sva -f sim_params.f -L work work.tb_core_isa
 # add wave calls omitted: irrelevant in -c mode, waste time building signal DB
 run -all
-quit -f
+# quit -f

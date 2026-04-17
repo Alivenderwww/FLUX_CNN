@@ -59,8 +59,10 @@ module core_top #(
 
     // =========================================================================
     // 1. 共享配置寄存器
+    //    w_out / wb_cin_step / ofb_cout_step 目前无下游消费（padding / chunked
+    //    sliding 等 phase-2 特性会用到），先空端口连接避免触发 unused-wire lint。
     // =========================================================================
-    logic [15:0]       cfg_h_out, cfg_w_out, cfg_w_in;
+    logic [15:0]       cfg_h_out, cfg_w_in;
     logic [3:0]        cfg_k;
     logic [2:0]        cfg_stride;
     logic [5:0]        cfg_cin_slices, cfg_cout_slices, cfg_tile_w, cfg_last_valid_w;
@@ -71,7 +73,7 @@ module core_top #(
     logic [5:0]        cfg_round_len_last;
     logic [ADDR_W-1:0] cfg_ifb_base, cfg_wb_base, cfg_ofb_base;
     logic [ADDR_W-1:0] cfg_ifb_cin_step, cfg_ifb_row_step;
-    logic [ADDR_W-1:0] cfg_wb_cin_step, cfg_wb_cout_step, cfg_ofb_cout_step;
+    logic [ADDR_W-1:0] cfg_wb_cout_step;
     logic [ADDR_W-1:0] cfg_tile_in_step;
     logic [4:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
@@ -80,7 +82,7 @@ module core_top #(
         .clk               (clk),
         .rst_n             (rst_n),
         .h_out             (cfg_h_out),
-        .w_out             (cfg_w_out),
+        .w_out             (/* unused */),
         .w_in              (cfg_w_in),
         .k                 (cfg_k),
         .stride            (cfg_stride),
@@ -99,9 +101,9 @@ module core_top #(
         .ofb_base          (cfg_ofb_base),
         .ifb_cin_step      (cfg_ifb_cin_step),
         .ifb_row_step      (cfg_ifb_row_step),
-        .wb_cin_step       (cfg_wb_cin_step),
+        .wb_cin_step       (/* unused (reserved for chunked sliding) */),
         .wb_cout_step      (cfg_wb_cout_step),
-        .ofb_cout_step     (cfg_ofb_cout_step),
+        .ofb_cout_step     (/* unused (OFB 物理连续，地址递增即可) */),
         .tile_in_step      (cfg_tile_in_step),
         .sdp_shift         (cfg_sdp_shift),
         .sdp_relu_en       (cfg_sdp_relu_en)
@@ -164,6 +166,8 @@ module core_top #(
 
     // =========================================================================
     // 4. line_buffer
+    //    lb_done / wb_done 仅供调试观测；顶层 done 只跟踪 ofb_writer（数据通路
+    //    最末端 → 前端模块必然已完成）。
     // =========================================================================
     logic lb_done;
 
@@ -222,14 +226,14 @@ module core_top #(
         .cfg_tile_w       (cfg_tile_w),
         .cfg_num_tiles    (cfg_num_tiles),
         .cfg_last_valid_w (cfg_last_valid_w),
-        .cfg_k            (cfg_k),
-        .cfg_kk           (cfg_kk),
-        .cfg_total_wrf    (cfg_total_wrf),
-        .cfg_wrf_packed        (cfg_wrf_packed),
-        .cfg_rounds_per_cins   (cfg_rounds_per_cins),
-        .cfg_round_len_last    (cfg_round_len_last),
-        .cfg_wb_base      (cfg_wb_base),
-        .cfg_wb_cout_step (cfg_wb_cout_step),
+        .cfg_k               (cfg_k),
+        .cfg_kk              (cfg_kk),
+        .cfg_total_wrf       (cfg_total_wrf),
+        .cfg_wrf_packed      (cfg_wrf_packed),
+        .cfg_rounds_per_cins (cfg_rounds_per_cins),
+        .cfg_round_len_last  (cfg_round_len_last),
+        .cfg_wb_base         (cfg_wb_base),
+        .cfg_wb_cout_step    (cfg_wb_cout_step),
         .wb_re            (wb_re),
         .wb_raddr         (wb_raddr),
         .wb_rdata         (wb_rdata),

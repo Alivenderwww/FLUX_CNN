@@ -70,7 +70,7 @@ module ofb_writer #(
     state_t state, state_next;
 
     // =========================================================================
-    // 四层计数器 + running pointer
+    // 四层计数器 + running pointer (声明)
     // =========================================================================
     logic [5:0]         x_cnt;        // 0..cur_valid_w-1
     logic [7:0]         tile_cnt;     // 0..cfg_num_tiles-1
@@ -82,15 +82,12 @@ module ofb_writer #(
     assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
 
     // =========================================================================
-    // 握手
+    // 握手 + 边界
     // =========================================================================
-    logic fire;
+    logic acc_fire;
     assign acc_out_ready = (state == S_RUN);
-    assign fire          = (state == S_RUN) && acc_out_valid && acc_out_ready;
+    assign acc_fire      = (state == S_RUN) && acc_out_valid && acc_out_ready;
 
-    // =========================================================================
-    // 边界
-    // =========================================================================
     logic x_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign x_is_last    = (x_cnt    == cur_valid_w       - 6'd1);
     assign tile_is_last = (tile_cnt == cfg_num_tiles     - 8'd1);
@@ -99,6 +96,25 @@ module ofb_writer #(
 
     logic all_done;
     assign all_done = x_is_last && tile_is_last && yout_is_last && cs_is_last;
+
+    // =========================================================================
+    // 命名事件信号（comb）
+    //   evt_start         : IDLE 下捕获 start
+    //   evt_fire_x_wrap   : fire 且 x 到末尾 —— x_cnt 归零，tile_cnt++
+    //   evt_fire_tile_wrap: 上述 + tile 到末尾 —— tile_cnt 归零，yout_cnt++
+    //   evt_fire_yout_wrap: 上述 + yout 到末尾 —— yout_cnt 归零，cs_cnt++
+    // =========================================================================
+    logic evt_start;
+    logic evt_fire_x_wrap;
+    logic evt_fire_tile_wrap;
+    logic evt_fire_yout_wrap;
+
+    always_comb begin
+        evt_start          = (state == S_IDLE) && start;
+        evt_fire_x_wrap    = acc_fire && x_is_last;
+        evt_fire_tile_wrap = evt_fire_x_wrap    && tile_is_last;
+        evt_fire_yout_wrap = evt_fire_tile_wrap && yout_is_last;
+    end
 
     // =========================================================================
     // SDP (组合)
@@ -111,7 +127,7 @@ module ofb_writer #(
     ) u_sdp (
         .shift_amt (cfg_sdp_shift),
         .psum_in   (acc_out_vec),
-        .valid_in  (fire),
+        .valid_in  (acc_fire),
         .relu_en   (cfg_sdp_relu_en),
         .ofm_data  (sdp_out),
         .valid_out ()
@@ -120,89 +136,102 @@ module ofb_writer #(
     // =========================================================================
     // OFB 写（同拍 fire）
     // =========================================================================
-    assign ofb_we    = fire;
+    assign ofb_we    = acc_fire;
     assign ofb_waddr = ofb_ptr[AW-1:0];
     assign ofb_wdata = sdp_out;
 
     // =========================================================================
-    // 状态转移
+    // 三段式 FSM
     // =========================================================================
+    // Seg 1: state_next 组合
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE:  if (start)             state_next = S_RUN;
-            S_RUN:   if (fire && all_done)  state_next = S_DONE;
-            S_DONE:  ;
-            default: state_next = S_IDLE;
+            S_IDLE : if (start)                  state_next = S_RUN;
+            S_RUN  : if (acc_fire && all_done)   state_next = S_DONE;
+            S_DONE : ;
+            default:                              state_next = S_IDLE;
         endcase
     end
 
+    // Seg 2: state 寄存器（独立，控制路径，同步复位）
+    always_ff @(posedge clk) begin
+        if (!rst_n) state <= S_IDLE;
+        else        state <= state_next;
+    end
+
+    // Seg 3: Moore 输出（assign done）
     assign done = (state == S_DONE);
 
     // =========================================================================
+    // 计数器 & 指针
+    //   state=S_IDLE 期间 acc_fire=0、ofb_we=0，counter/ptr 的上电 X 不产生可
+    //   观测副作用；evt_start 到来时一次性初始化。按 §6 不加复位。
+    // =========================================================================
+    always_ff @(posedge clk) begin
+        if      (evt_start)          x_cnt <= '0;
+        else if (evt_fire_x_wrap)    x_cnt <= '0;
+        else if (acc_fire)           x_cnt <= x_cnt + 6'd1;
+        else                         x_cnt <= x_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)           tile_cnt <= '0;
+        else if (evt_fire_tile_wrap)  tile_cnt <= '0;
+        else if (evt_fire_x_wrap)     tile_cnt <= tile_cnt + 8'd1;
+        else                          tile_cnt <= tile_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)           yout_cnt <= '0;
+        else if (evt_fire_yout_wrap)  yout_cnt <= '0;
+        else if (evt_fire_tile_wrap)  yout_cnt <= yout_cnt + 16'd1;
+        else                          yout_cnt <= yout_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)                          cs_cnt <= '0;
+        else if (evt_fire_yout_wrap && !cs_is_last)  cs_cnt <= cs_cnt + 6'd1;
+        else                                         cs_cnt <= cs_cnt;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start) ofb_ptr <= cfg_ofb_base;
+        else if (acc_fire)  ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
+        else                ofb_ptr <= ofb_ptr;
+    end
+
+    // =========================================================================
     // Simulation-only: acc 握手计数器 (parf_accum → ofb_writer)
+    //   三个同组握手 counter，分支结构一致，合维护（§4.1 例外）。
     // =========================================================================
     // synthesis translate_off
     int hs_acc_fire;
     int hs_acc_stall;
     int hs_acc_idle;
     always_ff @(posedge clk) begin
-        if (rst_n) begin
-            if      ( acc_out_valid &&  acc_out_ready) hs_acc_fire  <= hs_acc_fire  + 1;
-            else if ( acc_out_valid && !acc_out_ready) hs_acc_stall <= hs_acc_stall + 1;
-            else if (!acc_out_valid &&  acc_out_ready) hs_acc_idle  <= hs_acc_idle  + 1;
-        end else begin
+        if (!rst_n) begin
             hs_acc_fire  <= 0;
             hs_acc_stall <= 0;
             hs_acc_idle  <= 0;
+        end else if ( acc_out_valid &&  acc_out_ready) begin
+            hs_acc_fire  <= hs_acc_fire  + 1;
+            hs_acc_stall <= hs_acc_stall;
+            hs_acc_idle  <= hs_acc_idle;
+        end else if ( acc_out_valid && !acc_out_ready) begin
+            hs_acc_fire  <= hs_acc_fire;
+            hs_acc_stall <= hs_acc_stall + 1;
+            hs_acc_idle  <= hs_acc_idle;
+        end else if (!acc_out_valid &&  acc_out_ready) begin
+            hs_acc_fire  <= hs_acc_fire;
+            hs_acc_stall <= hs_acc_stall;
+            hs_acc_idle  <= hs_acc_idle  + 1;
+        end else begin
+            hs_acc_fire  <= hs_acc_fire;
+            hs_acc_stall <= hs_acc_stall;
+            hs_acc_idle  <= hs_acc_idle;
         end
     end
     // synthesis translate_on
-
-    // =========================================================================
-    // 时序更新
-    // =========================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            state    <= S_IDLE;
-            x_cnt    <= '0;
-            tile_cnt <= '0;
-            yout_cnt <= '0;
-            cs_cnt   <= '0;
-            ofb_ptr  <= '0;
-        end else begin
-            state <= state_next;
-
-            if (state == S_IDLE && start) begin
-                x_cnt    <= '0;
-                tile_cnt <= '0;
-                yout_cnt <= '0;
-                cs_cnt   <= '0;
-                ofb_ptr  <= cfg_ofb_base;
-            end else if (fire) begin
-                // 推进 4 层计数：x → tile → yout → cs
-                if (x_is_last) begin
-                    x_cnt <= '0;
-                    if (tile_is_last) begin
-                        tile_cnt <= '0;
-                        if (yout_is_last) begin
-                            yout_cnt <= '0;
-                            if (!cs_is_last) cs_cnt <= cs_cnt + 6'd1;
-                            // all_done 时 counters 停在末尾
-                        end else begin
-                            yout_cnt <= yout_cnt + 16'd1;
-                        end
-                    end else begin
-                        tile_cnt <= tile_cnt + 8'd1;
-                    end
-                end else begin
-                    x_cnt <= x_cnt + 6'd1;
-                end
-
-                // 地址连续递增
-                ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
-            end
-        end
-    end
 
 endmodule

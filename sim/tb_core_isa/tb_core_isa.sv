@@ -1,12 +1,13 @@
 `timescale 1ns/1ps
 
 // -----------------------------------------------------------------------------
-// tb_core_isa.sv  --  Testbench for configuration-register driven CNN core
+// tb_core_isa.sv  --  Testbench for AXI-Lite-driven CNN core
 // -----------------------------------------------------------------------------
-// Changes vs ISA-era TB:
-//   • No inst.txt loading (INST_SRAM removed)
-//   • Reads config.txt (key=value) and pokes u_ctrl.cfg_* via hierarchical refs
-//   • Everything else (IFB/WB loading, OFB verification, perf counters) kept
+// 流程：
+//   1) $readmemh 把 ifb.txt / wb.txt 灌到 u_ifb.mem / u_wb.mem (hier 直写)
+//   2) 解析 config.txt，通过 AXI-Lite S 写到 cfg_regs 对应地址
+//   3) 写 CTRL=0x1 触发 start_pulse，核内 feeder 启动
+//   4) wait (done)，hier 读 u_ofb.mem 做 OFB 校验
 // -----------------------------------------------------------------------------
 
 module tb_core_isa;
@@ -16,17 +17,68 @@ module tb_core_isa;
     localparam DATA_WIDTH = 8;
     localparam PSUM_WIDTH = 32;
     parameter  SRAM_DEPTH = 8192;
+    localparam CSR_ADDR_W = 12;
+    localparam CSR_DATA_W = 32;
 
     localparam IFB_WIDTH = NUM_PE * DATA_WIDTH;
     localparam WB_WIDTH  = NUM_COL * NUM_PE * DATA_WIDTH;
     localparam OFB_WIDTH = NUM_COL * DATA_WIDTH;
 
+    // -------------------------------------------------------------------------
+    // cfg_regs 地址常量（与 RTL/cfg_regs.sv 内部 localparam 一致）
+    // -------------------------------------------------------------------------
+    localparam [11:0] ADDR_CTRL             = 12'h000;
+    localparam [11:0] ADDR_H_OUT            = 12'h100;
+    localparam [11:0] ADDR_W_OUT            = 12'h104;
+    localparam [11:0] ADDR_W_IN             = 12'h108;
+    localparam [11:0] ADDR_K                = 12'h10C;
+    localparam [11:0] ADDR_STRIDE           = 12'h110;
+    localparam [11:0] ADDR_CIN_SLICES       = 12'h114;
+    localparam [11:0] ADDR_COUT_SLICES      = 12'h118;
+    localparam [11:0] ADDR_TILE_W           = 12'h11C;
+    localparam [11:0] ADDR_NUM_TILES        = 12'h120;
+    localparam [11:0] ADDR_LAST_VALID_W     = 12'h124;
+    localparam [11:0] ADDR_TOTAL_WRF        = 12'h128;
+    localparam [11:0] ADDR_WRF_PACKED       = 12'h12C;
+    localparam [11:0] ADDR_KK               = 12'h130;
+    localparam [11:0] ADDR_ROUNDS_PER_CINS  = 12'h134;
+    localparam [11:0] ADDR_ROUND_LEN_LAST   = 12'h138;
+    localparam [11:0] ADDR_IFB_BASE         = 12'h13C;
+    localparam [11:0] ADDR_WB_BASE          = 12'h140;
+    localparam [11:0] ADDR_OFB_BASE         = 12'h144;
+    localparam [11:0] ADDR_IFB_CIN_STEP     = 12'h148;
+    localparam [11:0] ADDR_IFB_ROW_STEP     = 12'h14C;
+    localparam [11:0] ADDR_WB_CIN_STEP      = 12'h150;
+    localparam [11:0] ADDR_WB_COUT_STEP     = 12'h154;
+    localparam [11:0] ADDR_OFB_COUT_STEP    = 12'h158;
+    localparam [11:0] ADDR_TILE_IN_STEP     = 12'h15C;
+    localparam [11:0] ADDR_SDP_SHIFT        = 12'h160;
+    localparam [11:0] ADDR_SDP_RELU_EN      = 12'h164;
+
     logic clk;
     logic rst_n;
-    logic start;
     logic done;
     logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec;
     logic [OFB_WIDTH-1:0] ofb_rdata_ext;
+
+    // AXI-Lite S 驱动信号
+    logic [CSR_ADDR_W-1:0]    csr_awaddr;
+    logic                     csr_awvalid;
+    logic                     csr_awready;
+    logic [CSR_DATA_W-1:0]    csr_wdata;
+    logic [CSR_DATA_W/8-1:0]  csr_wstrb;
+    logic                     csr_wvalid;
+    logic                     csr_wready;
+    logic [1:0]               csr_bresp;
+    logic                     csr_bvalid;
+    logic                     csr_bready;
+    logic [CSR_ADDR_W-1:0]    csr_araddr = 0;
+    logic                     csr_arvalid = 0;
+    logic                     csr_arready;
+    logic [CSR_DATA_W-1:0]    csr_rdata;
+    logic [1:0]               csr_rresp;
+    logic                     csr_rvalid;
+    logic                     csr_rready = 0;
 
     core_top #(
         .NUM_COL(NUM_COL),
@@ -36,11 +88,19 @@ module tb_core_isa;
         .WRF_DEPTH(32),
         .ARF_DEPTH(32),
         .PARF_DEPTH(32),
-        .SRAM_DEPTH(SRAM_DEPTH)
+        .SRAM_DEPTH(SRAM_DEPTH),
+        .CSR_ADDR_W(CSR_ADDR_W),
+        .CSR_DATA_W(CSR_DATA_W)
     ) u_core_top (
         .clk(clk),
         .rst_n(rst_n),
-        .start(start),
+        .csr_awaddr(csr_awaddr),   .csr_awvalid(csr_awvalid), .csr_awready(csr_awready),
+        .csr_wdata(csr_wdata),     .csr_wstrb(csr_wstrb),
+        .csr_wvalid(csr_wvalid),   .csr_wready(csr_wready),
+        .csr_bresp(csr_bresp),     .csr_bvalid(csr_bvalid),   .csr_bready(csr_bready),
+        .csr_araddr(csr_araddr),   .csr_arvalid(csr_arvalid), .csr_arready(csr_arready),
+        .csr_rdata(csr_rdata),     .csr_rresp(csr_rresp),
+        .csr_rvalid(csr_rvalid),   .csr_rready(csr_rready),
         .ifb_we_ext(1'b0),
         .ifb_waddr_ext('0),
         .ifb_wdata_ext('0),
@@ -70,18 +130,12 @@ module tb_core_isa;
     // Expected OFM
     logic [OFB_WIDTH-1:0] expected_ofm_arr [0:SRAM_DEPTH-1];
 
-    // Cycle counter
+    // Cycle counter：利用 cfg_regs 内部 r_core_busy（start_pulse 置位、core_done 清零）
     longint total_cycles = 0;
-    logic   is_running   = 0;
     always_ff @(posedge clk) begin
-        if (rst_n) begin
-            if (start) is_running <= 1;
-            if (done)  is_running <= 0;
-            if (is_running) total_cycles++;
-        end else begin
-            total_cycles <= 0;
-            is_running   <= 0;
-        end
+        if (!rst_n)                            total_cycles <= 0;
+        else if (u_core_top.u_cfg.r_core_busy) total_cycles <= total_cycles + 1;
+        else                                    total_cycles <= total_cycles;
     end
 
     // Perf arrays (mac_array 顶层 counter 负责 real MAC ops; 这里只保留 WRF 写次数统计)
@@ -97,7 +151,27 @@ module tb_core_isa;
     endgenerate
 
     // -------------------------------------------------------------------------
-    // Config loader: parse config.txt and poke u_ctrl.cfg_* registers
+    // AXI-Lite S 写单拍 task（用 nonblocking 驱动规避 Active region race；详见
+    // tb_axi_lite_csr 的 debug 过程）
+    // -------------------------------------------------------------------------
+    task automatic axi_lite_write(input [CSR_ADDR_W-1:0] addr,
+                                   input [CSR_DATA_W-1:0] data);
+        csr_awaddr  <= addr;
+        csr_awvalid <= 1'b1;
+        csr_wdata   <= data;
+        csr_wstrb   <= '1;
+        csr_wvalid  <= 1'b1;
+        do @(posedge clk); while (!(csr_awvalid && csr_awready));
+        csr_awvalid <= 1'b0;
+        while (!(csr_wvalid && csr_wready)) @(posedge clk);
+        csr_wvalid  <= 1'b0;
+        csr_bready  <= 1'b1;
+        do @(posedge clk); while (!(csr_bvalid && csr_bready));
+        csr_bready  <= 1'b0;
+    endtask
+
+    // -------------------------------------------------------------------------
+    // Config loader：解析 config.txt，逐字段 AXI-Lite 写入 cfg_regs
     // -------------------------------------------------------------------------
     task automatic load_config();
         int      fd;
@@ -113,37 +187,36 @@ module tb_core_isa;
         while (!$feof(fd)) begin
             void'($fgets(line, fd));
             if (line.len() == 0) continue;
-            // Accept "KEY = VALUE" (possibly with leading whitespace)
             count = $sscanf(line, "%s = %d", key, val);
             if (count < 2) continue;
             case (key)
-                "H_OUT"        : u_core_top.u_cfg.r_h_out        = val[15:0];
-                "W_OUT"        : u_core_top.u_cfg.r_w_out        = val[15:0];
-                "W_IN"         : u_core_top.u_cfg.r_w_in         = val[15:0];
-                "K"            : u_core_top.u_cfg.r_k            = val[3:0];
-                "STRIDE"       : u_core_top.u_cfg.r_stride       = val[2:0];
-                "CIN_SLICES"   : u_core_top.u_cfg.r_cin_slices   = val[5:0];
-                "COUT_SLICES"  : u_core_top.u_cfg.r_cout_slices  = val[5:0];
-                "TILE_W"       : u_core_top.u_cfg.r_tile_w       = val[5:0];
-                "TOTAL_WRF"      : u_core_top.u_cfg.r_total_wrf      = val[9:0];
-                "WRF_PACKED"     : u_core_top.u_cfg.r_wrf_packed     = val[0];
-                "KK"             : u_core_top.u_cfg.r_kk             = val[9:0];
-                "ROUNDS_PER_CINS": u_core_top.u_cfg.r_rounds_per_cins= val[2:0];
-                "ROUND_LEN_LAST" : u_core_top.u_cfg.r_round_len_last = val[5:0];
-                "IFB_BASE"     : u_core_top.u_cfg.r_ifb_base     = val[19:0];
-                "WB_BASE"      : u_core_top.u_cfg.r_wb_base      = val[19:0];
-                "OFB_BASE"     : u_core_top.u_cfg.r_ofb_base     = val[19:0];
-                "IFB_CIN_STEP" : u_core_top.u_cfg.r_ifb_cin_step = val[19:0];
-                "IFB_ROW_STEP" : u_core_top.u_cfg.r_ifb_row_step = val[19:0];
-                "WB_CIN_STEP"  : u_core_top.u_cfg.r_wb_cin_step  = val[19:0];
-                "WB_COUT_STEP" : u_core_top.u_cfg.r_wb_cout_step = val[19:0];
-                "OFB_COUT_STEP": u_core_top.u_cfg.r_ofb_cout_step= val[19:0];
-                "NUM_TILES"    : u_core_top.u_cfg.r_num_tiles    = val[7:0];
-                "LAST_VALID_W" : u_core_top.u_cfg.r_last_valid_w = val[5:0];
-                "TILE_IN_STEP" : u_core_top.u_cfg.r_tile_in_step = val[19:0];
-                "SDP_SHIFT"    : u_core_top.u_cfg.r_sdp_shift    = val[4:0];
-                "SDP_RELU_EN"  : u_core_top.u_cfg.r_sdp_relu_en  = val[0];
-                default        : $display("WARN: unknown config key '%s'", key);
+                "H_OUT"          : axi_lite_write(ADDR_H_OUT,           val);
+                "W_OUT"          : axi_lite_write(ADDR_W_OUT,           val);
+                "W_IN"           : axi_lite_write(ADDR_W_IN,            val);
+                "K"              : axi_lite_write(ADDR_K,               val);
+                "STRIDE"         : axi_lite_write(ADDR_STRIDE,          val);
+                "CIN_SLICES"     : axi_lite_write(ADDR_CIN_SLICES,      val);
+                "COUT_SLICES"    : axi_lite_write(ADDR_COUT_SLICES,     val);
+                "TILE_W"         : axi_lite_write(ADDR_TILE_W,          val);
+                "TOTAL_WRF"      : axi_lite_write(ADDR_TOTAL_WRF,       val);
+                "WRF_PACKED"     : axi_lite_write(ADDR_WRF_PACKED,      val);
+                "KK"             : axi_lite_write(ADDR_KK,              val);
+                "ROUNDS_PER_CINS": axi_lite_write(ADDR_ROUNDS_PER_CINS, val);
+                "ROUND_LEN_LAST" : axi_lite_write(ADDR_ROUND_LEN_LAST,  val);
+                "IFB_BASE"       : axi_lite_write(ADDR_IFB_BASE,        val);
+                "WB_BASE"        : axi_lite_write(ADDR_WB_BASE,         val);
+                "OFB_BASE"       : axi_lite_write(ADDR_OFB_BASE,        val);
+                "IFB_CIN_STEP"   : axi_lite_write(ADDR_IFB_CIN_STEP,    val);
+                "IFB_ROW_STEP"   : axi_lite_write(ADDR_IFB_ROW_STEP,    val);
+                "WB_CIN_STEP"    : axi_lite_write(ADDR_WB_CIN_STEP,     val);
+                "WB_COUT_STEP"   : axi_lite_write(ADDR_WB_COUT_STEP,    val);
+                "OFB_COUT_STEP"  : axi_lite_write(ADDR_OFB_COUT_STEP,   val);
+                "NUM_TILES"      : axi_lite_write(ADDR_NUM_TILES,       val);
+                "LAST_VALID_W"   : axi_lite_write(ADDR_LAST_VALID_W,    val);
+                "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
+                "SDP_SHIFT"      : axi_lite_write(ADDR_SDP_SHIFT,       val);
+                "SDP_RELU_EN"    : axi_lite_write(ADDR_SDP_RELU_EN,     val);
+                default          : $display("WARN: unknown config key '%s'", key);
             endcase
         end
         $fclose(fd);
@@ -165,8 +238,11 @@ module tb_core_isa;
     // Main sequence
     // -------------------------------------------------------------------------
     initial begin
-        rst_n = 0;
-        start = 0;
+        rst_n       = 0;
+        csr_awaddr  = 0; csr_awvalid = 0;
+        csr_wdata   = 0; csr_wstrb   = 0; csr_wvalid = 0;
+        csr_bready  = 0;
+        csr_araddr  = 0; csr_arvalid = 0; csr_rready = 0;
         #20;
         rst_n = 1;
         #10;
@@ -174,17 +250,16 @@ module tb_core_isa;
         // Load expected OFM
         $readmemh("expected_ofm.txt", expected_ofm_arr);
 
-        // Poke configuration registers
+        // 通过 AXI-Lite 写入配置
         load_config();
         #10;
 
         $display("========================================");
-        $display("Starting config-driven CNN Core...");
+        $display("Starting AXI-Lite driven CNN Core...");
         $display("========================================");
 
-        start = 1;
-        #10;
-        start = 0;
+        // 写 CTRL=0x1 触发 start_pulse
+        axi_lite_write(ADDR_CTRL, 32'h0000_0001);
 
         wait (done == 1);
         #50;

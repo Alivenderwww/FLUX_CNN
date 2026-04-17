@@ -55,7 +55,7 @@
 
 **一个 `always_ff` 原则上只维护一个寄存器。** 多个寄存器触发条件与推进规则完全相同可合并，但 **同一 `always_ff` 维护的寄存器数量不超过 4 个**。
 
-**例外——共享 if-else 结构的并列寄存器**：若多个寄存器的 if-else / case 分支结构 **完全一致**（触发条件、优先级相同，仅 RHS 不同），可并入同一 `always_ff` 作一体处理，**不计入 ≤ 4 的限制**。典型场景：同一触发下需要并行更新的一组 running base。
+**例外 1——共享 if-else 结构的并列寄存器**：若多个寄存器的 if-else / case 分支结构 **完全一致**（触发条件、优先级相同，仅 RHS 不同），可并入同一 `always_ff` 作一体处理，**不计入 ≤ 4 的限制**。典型场景：同一触发下需要并行更新的一组 running base。
 
 ```systemverilog
 // ↓ 分支结构完全一致，仅赋值不同，合写合理；不计 4-reg 限制
@@ -73,6 +73,25 @@ always_ff @(posedge clk) begin
     end
 end
 ```
+
+**例外 2——寄存器 bank（地址译码同体系写入）**：若多个寄存器虽然没有强相关，但同属一个 **寄存器 bank 体系**（共享外层使能 `reg_w_en`、通过 `reg_w_addr` case 分发到各自目标），可写在同一 `always_ff` 里，**不计入 ≤ 4 的限制**。典型场景：CSR / MMIO 寄存器集合、AXI-Lite 下挂的一整组状态寄存器。每条 case 都显式命名要写的寄存器，仍易于 grep 定位。
+
+```systemverilog
+// ↓ 典型 CSR bank：共享 reg_w_en 门控 + addr 解码
+always_ff @(posedge clk) begin
+    if (reg_w_en) begin
+        case (reg_w_addr)
+            ADDR_H_OUT : r_h_out <= reg_w_data[15:0];
+            ADDR_W_IN  : r_w_in  <= reg_w_data[15:0];
+            ADDR_K     : r_k     <= reg_w_data[3:0];
+            // ... 更多寄存器
+            default    : ;  // 未命中地址不写入任何寄存器
+        endcase
+    end
+end
+```
+
+此例下，§4.5 的「所有路径显式赋值」也豁免：未命中 case 时所有 bank 寄存器隐式保持（flop 固有行为），不要求为每个寄存器逐一写 `reg <= reg`。
 
 ### 4.2 命名事件信号模式
 

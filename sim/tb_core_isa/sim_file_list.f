@@ -2,6 +2,7 @@
 ../../RTL/std_rf.sv
 ../../RTL/sdp.sv
 ../../RTL/sram_model.sv
+../../RTL/AXI4/axi_lite_csr.sv
 ../../RTL/cfg_regs.sv
 ../../RTL/mac_pe.sv
 ../../RTL/mac_col.sv

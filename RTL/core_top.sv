@@ -11,8 +11,9 @@
 //                                                                        ofb_writer → OFB
 //
 // 每个 feeder 自带 6 层循环 + start/done；模块间握手对齐节拍，天然消除气泡。
-// TB 通过层次引用 u_core_top.u_cfg.r_* 写入配置，随后拉 start 一拍启动；
-// done = ofb_writer.done（OFB 最后 1 拍写完后拉高）。
+// 外部 host 通过 AXI-Lite S 写入配置 + DMA 描述符 + 启停控制；done 仍作顶层
+// observability 输出。TB 用 $readmemh 填 IFB/WB mem（hier），用 AXI-Lite 下
+// 发 cfg 和 start。
 // =============================================================================
 
 module core_top #(
@@ -23,26 +24,44 @@ module core_top #(
     parameter int WRF_DEPTH   = 32,
     parameter int ARF_DEPTH   = 32,
     parameter int PARF_DEPTH  = 32,
-    parameter int SRAM_DEPTH  = 8192
+    parameter int SRAM_DEPTH  = 8192,
+    parameter int CSR_ADDR_W  = 12,       // AXI-Lite 地址位宽
+    parameter int CSR_DATA_W  = 32
 )(
-    input  logic                                clk,
-    input  logic                                rst_n,
+    input  logic                                 clk,
+    input  logic                                 rst_n,
 
-    input  logic                                start,
+    // ---- AXI-Lite Slave (host 配置通道) ----
+    input  logic [CSR_ADDR_W-1:0]                csr_awaddr,
+    input  logic                                 csr_awvalid,
+    output logic                                 csr_awready,
+    input  logic [CSR_DATA_W-1:0]                csr_wdata,
+    input  logic [CSR_DATA_W/8-1:0]              csr_wstrb,
+    input  logic                                 csr_wvalid,
+    output logic                                 csr_wready,
+    output logic [1:0]                           csr_bresp,
+    output logic                                 csr_bvalid,
+    input  logic                                 csr_bready,
+    input  logic [CSR_ADDR_W-1:0]                csr_araddr,
+    input  logic                                 csr_arvalid,
+    output logic                                 csr_arready,
+    output logic [CSR_DATA_W-1:0]                csr_rdata,
+    output logic [1:0]                           csr_rresp,
+    output logic                                 csr_rvalid,
+    input  logic                                 csr_rready,
 
-    // TB 外部 SRAM 写口 (加载 IFB / WB)
-    input  logic                                ifb_we_ext,
-    input  logic [$clog2(SRAM_DEPTH)-1:0]       ifb_waddr_ext,
-    input  logic [NUM_PE*DATA_WIDTH-1:0]        ifb_wdata_ext,
+    // TB 外部 SRAM 写口 (加载 IFB / WB) — 仿真期 DMA 未接入时保留
+    input  logic                                 ifb_we_ext,
+    input  logic [$clog2(SRAM_DEPTH)-1:0]        ifb_waddr_ext,
+    input  logic [NUM_PE*DATA_WIDTH-1:0]         ifb_wdata_ext,
 
-    input  logic                                wb_we_ext,
-    input  logic [$clog2(SRAM_DEPTH)-1:0]       wb_waddr_ext,
-    input  logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0]wb_wdata_ext,
+    input  logic                                 wb_we_ext,
+    input  logic [$clog2(SRAM_DEPTH)-1:0]        wb_waddr_ext,
+    input  logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0] wb_wdata_ext,
 
-    // TB 外部 OFB 读口 (提取结果)
-    input  logic                                ofb_re_ext,
-    input  logic [$clog2(SRAM_DEPTH)-1:0]       ofb_raddr_ext,
-    output logic [NUM_COL*DATA_WIDTH-1:0]       ofb_rdata_ext,
+    input  logic                                 ofb_re_ext,
+    input  logic [$clog2(SRAM_DEPTH)-1:0]        ofb_raddr_ext,
+    output logic [NUM_COL*DATA_WIDTH-1:0]        ofb_rdata_ext,
 
     // TB 调试观测 (mac_array 实时 psum)
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
@@ -58,10 +77,33 @@ module core_top #(
     localparam int AW        = $clog2(SRAM_DEPTH);
 
     // =========================================================================
-    // 1. 共享配置寄存器
-    //    w_out / wb_cin_step / ofb_cout_step 目前无下游消费（padding / chunked
-    //    sliding 等 phase-2 特性会用到），先空端口连接避免触发 unused-wire lint。
+    // 1. AXI-Lite CSR bridge + 共享配置寄存器
+    //    axi_lite_csr 解码 AXI-Lite → (reg_w_en/addr/data/strb, reg_r_addr/data)
+    //    cfg_regs 消费这些信号，产生 cfg_* 输出 + start_pulse + DMA 描述符
+    //    w_out / wb_cin_step / ofb_cout_step 目前无下游消费（phase-2 特性用），
+    //    空连接避免 unused-wire lint。
     // =========================================================================
+    logic                   reg_w_en;
+    logic [CSR_ADDR_W-1:0]  reg_w_addr;
+    logic [CSR_DATA_W-1:0]  reg_w_data;
+    logic [CSR_DATA_W/8-1:0]reg_w_strb;
+    logic [CSR_ADDR_W-1:0]  reg_r_addr;
+    logic [CSR_DATA_W-1:0]  reg_r_data;
+
+    axi_lite_csr #(
+        .ADDR_W(CSR_ADDR_W),
+        .DATA_W(CSR_DATA_W)
+    ) u_csr_bridge (
+        .clk(clk), .rstn(rst_n),
+        .AWADDR(csr_awaddr),   .AWVALID(csr_awvalid), .AWREADY(csr_awready),
+        .WDATA(csr_wdata),     .WSTRB(csr_wstrb),     .WVALID(csr_wvalid),  .WREADY(csr_wready),
+        .BRESP(csr_bresp),     .BVALID(csr_bvalid),   .BREADY(csr_bready),
+        .ARADDR(csr_araddr),   .ARVALID(csr_arvalid), .ARREADY(csr_arready),
+        .RDATA(csr_rdata),     .RRESP(csr_rresp),     .RVALID(csr_rvalid),  .RREADY(csr_rready),
+        .reg_w_en(reg_w_en),   .reg_w_addr(reg_w_addr), .reg_w_data(reg_w_data), .reg_w_strb(reg_w_strb),
+        .reg_r_addr(reg_r_addr), .reg_r_data(reg_r_data)
+    );
+
     logic [15:0]       cfg_h_out, cfg_w_in;
     logic [3:0]        cfg_k;
     logic [2:0]        cfg_stride;
@@ -78,35 +120,37 @@ module core_top #(
     logic [4:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
-    cfg_regs #(.ADDR_W(ADDR_W)) u_cfg (
-        .clk               (clk),
-        .rst_n             (rst_n),
-        .h_out             (cfg_h_out),
-        .w_out             (/* unused */),
-        .w_in              (cfg_w_in),
-        .k                 (cfg_k),
-        .stride            (cfg_stride),
-        .cin_slices        (cfg_cin_slices),
-        .cout_slices       (cfg_cout_slices),
-        .tile_w            (cfg_tile_w),
-        .num_tiles         (cfg_num_tiles),
-        .last_valid_w      (cfg_last_valid_w),
-        .total_wrf         (cfg_total_wrf),
-        .wrf_packed        (cfg_wrf_packed),
-        .kk                (cfg_kk),
-        .rounds_per_cins   (cfg_rounds_per_cins),
-        .round_len_last    (cfg_round_len_last),
-        .ifb_base          (cfg_ifb_base),
-        .wb_base           (cfg_wb_base),
-        .ofb_base          (cfg_ofb_base),
-        .ifb_cin_step      (cfg_ifb_cin_step),
-        .ifb_row_step      (cfg_ifb_row_step),
-        .wb_cin_step       (/* unused (reserved for chunked sliding) */),
-        .wb_cout_step      (cfg_wb_cout_step),
-        .ofb_cout_step     (/* unused (OFB 物理连续，地址递增即可) */),
-        .tile_in_step      (cfg_tile_in_step),
-        .sdp_shift         (cfg_sdp_shift),
-        .sdp_relu_en       (cfg_sdp_relu_en)
+    // CTRL / STATUS / DMA 相关（DMA 未实装时 busy/done 回填 0）
+    logic              cfg_start_pulse;
+    logic [31:0]       dma_idma_src_base, dma_wdma_src_base, dma_odma_dst_base;
+    logic [23:0]       dma_idma_byte_len, dma_wdma_byte_len, dma_odma_byte_len;
+
+    cfg_regs #(
+        .ADDR_W(CSR_ADDR_W),
+        .DATA_W(CSR_DATA_W),
+        .CORE_ADDR_W(ADDR_W)
+    ) u_cfg (
+        .clk(clk), .rst_n(rst_n),
+        .reg_w_en(reg_w_en), .reg_w_addr(reg_w_addr),
+        .reg_w_data(reg_w_data), .reg_w_strb(reg_w_strb),
+        .reg_r_addr(reg_r_addr), .reg_r_data(reg_r_data),
+        .core_done(done), .idma_busy(1'b0), .wdma_busy(1'b0), .odma_busy(1'b0),
+        .idma_done(1'b0), .wdma_done(1'b0), .odma_done(1'b0),
+        .start_pulse(cfg_start_pulse),
+        .h_out(cfg_h_out), .w_out(/* unused */), .w_in(cfg_w_in),
+        .k(cfg_k), .stride(cfg_stride),
+        .cin_slices(cfg_cin_slices), .cout_slices(cfg_cout_slices),
+        .tile_w(cfg_tile_w), .num_tiles(cfg_num_tiles), .last_valid_w(cfg_last_valid_w),
+        .total_wrf(cfg_total_wrf), .wrf_packed(cfg_wrf_packed),
+        .kk(cfg_kk), .rounds_per_cins(cfg_rounds_per_cins), .round_len_last(cfg_round_len_last),
+        .ifb_base(cfg_ifb_base), .wb_base(cfg_wb_base), .ofb_base(cfg_ofb_base),
+        .ifb_cin_step(cfg_ifb_cin_step), .ifb_row_step(cfg_ifb_row_step),
+        .wb_cin_step(/* unused */), .wb_cout_step(cfg_wb_cout_step),
+        .ofb_cout_step(/* unused */), .tile_in_step(cfg_tile_in_step),
+        .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
+        .idma_src_base(dma_idma_src_base), .idma_byte_len(dma_idma_byte_len),
+        .wdma_src_base(dma_wdma_src_base), .wdma_byte_len(dma_wdma_byte_len),
+        .odma_dst_base(dma_odma_dst_base), .odma_byte_len(dma_odma_byte_len)
     );
 
     // =========================================================================
@@ -180,7 +224,7 @@ module core_top #(
     ) u_line_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (start),
+        .start            (cfg_start_pulse),
         .done             (lb_done),
         .cfg_h_out        (cfg_h_out),
         .cfg_w_in         (cfg_w_in),
@@ -218,7 +262,7 @@ module core_top #(
     ) u_wgt_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (start),
+        .start            (cfg_start_pulse),
         .done             (wb_done),
         .cfg_h_out        (cfg_h_out),
         .cfg_cin_slices   (cfg_cin_slices),
@@ -308,7 +352,7 @@ module core_top #(
     ) u_ofb_writer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (start),
+        .start            (cfg_start_pulse),
         .done             (ow_done),
         .cfg_h_out        (cfg_h_out),
         .cfg_tile_w       (cfg_tile_w),

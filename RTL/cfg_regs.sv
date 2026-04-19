@@ -7,14 +7,12 @@
 // 读写。Bridge 在 axi_lite_csr.sv 里；本模块只做 address decode + 寄存器组。
 //
 // Register map（4 字节对齐）：
-//   0x000  CTRL              [0]=start_core (legacy, 兼容老 TB 直接写 CTRL=0xB)
-//                             [1]=start_idma  [2]=start_wdma  [3]=start_odma
-//                             [4]=start_dfe   [5]=start_layer (new, Phase C-1)
-//   0x004  STATUS  (RO)      [0]=core_done     [1]=core_busy
-//                             [2]=idma_busy    [3]=wdma_busy [4]=odma_busy
-//                             [5]=idma_done    [6]=wdma_done [7]=odma_done
-//                             [8]=dfe_busy     [9]=dfe_done
-//                             [10]=layer_busy  [11]=layer_done
+//   0x000  CTRL              [4]=start_dfe    [5]=start_layer
+//   0x004  STATUS  (RO)      [0]=core_done    [1]=core_busy
+//                             [2]=idma_busy   [3]=wdma_busy [4]=odma_busy
+//                             [5]=idma_done   [6]=wdma_done [7]=odma_done
+//                             [8]=dfe_busy    [9]=dfe_done
+//                             [10]=layer_busy [11]=layer_done
 //   0x100  H_OUT             [15:0]
 //   0x104  W_OUT             [15:0]
 //   0x108  W_IN              [15:0]
@@ -39,32 +37,29 @@
 //   0x154  WB_COUT_STEP      [19:0]
 //   0x158  OFB_COUT_STEP     [19:0]
 //   0x15C  TILE_IN_STEP      [19:0]
-//   0x160  SDP_SHIFT         [5:0]   (Phase C: 5→6 bit)
+//   0x160  SDP_SHIFT         [5:0]
 //   0x164  SDP_RELU_EN       [0]
-//   0x168  H_IN_TOTAL        [15:0]            整图输入高度（streaming 用）
+//   0x168  H_IN_TOTAL        [15:0]            整图输入高度
 //   0x16C  IFB_STRIP_ROWS    [7:0]             IFB ring 容纳输入行数
 //   0x170  OFB_STRIP_ROWS    [5:0]             OFB ring 容纳输出行数
 //   0x174  DDR_IFM_ROW_STRIDE[19:0]            DDR 相邻输入行跨度（字节）
 //   0x178  DDR_OFM_ROW_STRIDE[19:0]            DDR 相邻输出行跨度（字节）
 //   0x17C  DMA_MODE          [0]=idma_stream [1]=odma_stream
-//   0x180  DESC_LIST_BASE    [31:0]  (Phase C)
-//   0x184  DESC_COUNT        [15:0]  (Phase C)
-//   0x188  SDP_MULT          [31:0]  signed (Phase C)
-//   0x18C  SDP_ZP_OUT        [8:0]   signed (Phase C)
-//   0x190  SDP_CLIP_MIN      [8:0]   signed (Phase C)
-//   0x194  SDP_CLIP_MAX      [8:0]   signed (Phase C)
-//   0x198  SDP_ROUND_EN      [0]            (Phase C)
-//   0x1A0  PAD_TOP           [3:0]          (Phase C-2 临时全局 cfg，供老 CTRL 路径验证 pad)
-//   0x1A4  PAD_LEFT          [3:0]          (Phase C-2 同上)
+//   0x180  DESC_LIST_BASE    [31:0]
+//   0x184  DESC_COUNT        [15:0]
+//   0x188  SDP_MULT          [31:0]  signed
+//   0x18C  SDP_ZP_OUT        [8:0]   signed
+//   0x190  SDP_CLIP_MIN      [8:0]   signed
+//   0x194  SDP_CLIP_MAX      [8:0]   signed
+//   0x198  SDP_ROUND_EN      [0]
 //   0x200  IDMA_SRC_BASE     [31:0]
-//   0x204  IDMA_BYTE_LEN     [23:0]
+//   0x204  IDMA_BYTE_LEN     [23:0]             (保留，WDMA 用；IDMA 实际 len 由 descriptor 覆盖)
 //   0x210  WDMA_SRC_BASE     [31:0]
 //   0x214  WDMA_BYTE_LEN     [23:0]
 //   0x220  ODMA_DST_BASE     [31:0]
-//   0x224  ODMA_BYTE_LEN     [23:0]
+//   0x224  ODMA_BYTE_LEN     [23:0]             (保留；ODMA 实际 len 由 descriptor 覆盖)
 //
-// 复位：按 §6，数据路径 cfg / DMA 寄存器不加复位（上电 X，靠上游 TB/host
-// 先写再 start 保证 valid）。控制路径 core_busy 有复位。
+// 复位：按 §6，数据路径 cfg / DMA 寄存器不加复位。控制路径 DMA_MODE 有复位。
 // =============================================================================
 
 module cfg_regs #(
@@ -96,13 +91,9 @@ module cfg_regs #(
     input  logic                     layer_busy,
     input  logic                     layer_done,
 
-    // ---- CTRL 输出（6 个独立 1-拍脉冲） ----
-    output logic                     start_core_pulse,  // CTRL[0] 写 1 (legacy)
-    output logic                     start_idma_pulse,  // CTRL[1] 写 1 (legacy)
-    output logic                     start_wdma_pulse,  // CTRL[2] 写 1 (legacy)
-    output logic                     start_odma_pulse,  // CTRL[3] 写 1 (legacy)
-    output logic                     start_dfe_pulse,   // CTRL[4] 写 1 (Phase C)
-    output logic                     start_layer_pulse, // CTRL[5] 写 1 (Phase C)
+    // ---- CTRL 输出：host 触发 DFE 拉 descriptor 和 Sequencer 启动 ----
+    output logic                     start_dfe_pulse,    // CTRL[4] 写 1
+    output logic                     start_layer_pulse,  // CTRL[5] 写 1
 
     // ---- 配置输出 ----
     output logic [15:0]              h_out,
@@ -132,17 +123,6 @@ module cfg_regs #(
     output logic [5:0]               sdp_shift,
     output logic                     sdp_relu_en,
 
-    // ---- Phase C: descriptor fetch + new SDP fields ----
-    output logic [31:0]              desc_list_base,
-    output logic [15:0]              desc_count,
-    output logic signed [31:0]       sdp_mult,
-    output logic signed [8:0]        sdp_zp_out,
-    output logic signed [8:0]        sdp_clip_min,
-    output logic signed [8:0]        sdp_clip_max,
-    output logic                     sdp_round_en,
-    output logic [3:0]               pad_top,        // Phase C-2: 老路径 pad 验证
-    output logic [3:0]               pad_left,
-
     // ---- Streaming / ring 配置输出 ----
     output logic [15:0]              h_in_total,
     output logic [7:0]               ifb_strip_rows,
@@ -152,13 +132,22 @@ module cfg_regs #(
     output logic                     idma_streaming,
     output logic                     odma_streaming,
 
-    // ---- DMA 描述符输出 ----
+    // ---- DMA 描述符输出（layer-level base；per-strip offset/len 由 Sequencer 叠加）----
     output logic [31:0]              idma_src_base,
     output logic [23:0]              idma_byte_len,
     output logic [31:0]              wdma_src_base,
     output logic [23:0]              wdma_byte_len,
     output logic [31:0]              odma_dst_base,
-    output logic [23:0]              odma_byte_len
+    output logic [23:0]              odma_byte_len,
+
+    // ---- Descriptor list + new SDP fields ----
+    output logic [31:0]              desc_list_base,
+    output logic [15:0]              desc_count,
+    output logic signed [31:0]       sdp_mult,
+    output logic signed [8:0]        sdp_zp_out,
+    output logic signed [8:0]        sdp_clip_min,
+    output logic signed [8:0]        sdp_clip_max,
+    output logic                     sdp_round_en
 );
 
     // =========================================================================
@@ -208,8 +197,6 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MIN     = 12'h190;
     localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MAX     = 12'h194;
     localparam [ADDR_W-1:0] ADDR_SDP_ROUND_EN     = 12'h198;
-    localparam [ADDR_W-1:0] ADDR_PAD_TOP          = 12'h1A0;
-    localparam [ADDR_W-1:0] ADDR_PAD_LEFT         = 12'h1A4;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -219,33 +206,18 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_ODMA_BYTE_LEN    = 12'h224;
 
     // =========================================================================
-    // start_*_pulse 生成：CTRL 写 1 → 当拍 pulse（reg_w_en 本身就是 1-拍脉冲）
+    // start pulse 生成：CTRL 写 1 → 当拍 pulse
     // =========================================================================
-    assign start_core_pulse  = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[0];
-    assign start_idma_pulse  = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[1];
-    assign start_wdma_pulse  = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[2];
-    assign start_odma_pulse  = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[3];
     assign start_dfe_pulse   = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[4];
     assign start_layer_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[5];
 
     // =========================================================================
-    // core_busy：start_core_pulse 置位，core_done 清零（控制路径，复位必须）
+    // DMA_MODE 是控制路径，必须复位（§6.1）
     // =========================================================================
-    logic r_core_busy;
-    always_ff @(posedge clk) begin
-        if      (!rst_n)             r_core_busy <= 1'b0;
-        else if (start_core_pulse)   r_core_busy <= 1'b1;
-        else if (core_done)          r_core_busy <= 1'b0;
-        else                         r_core_busy <= r_core_busy;
-    end
-
-    // DMA_MODE 是控制路径，必须复位（§6.1）。从 bank always_ff 里拉出来单独维护。
-    // 默认 0 → batch 模式，兼容 v1 所有测试。
     logic [1:0] r_dma_mode_ctrl;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                    r_dma_mode_ctrl <= 2'b00;
         else if (reg_w_en && reg_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= reg_w_data[1:0];
-        else                                                r_dma_mode_ctrl <= r_dma_mode_ctrl;
     end
 
     // =========================================================================
@@ -277,6 +249,17 @@ module cfg_regs #(
     logic [CORE_ADDR_W-1:0]  r_tile_in_step;
     logic [5:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
+    logic [15:0]             r_h_in_total;
+    logic [7:0]              r_ifb_strip_rows;
+    logic [5:0]              r_ofb_strip_rows;
+    logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
+    logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
+    logic [31:0]             r_idma_src_base;
+    logic [23:0]             r_idma_byte_len;
+    logic [31:0]             r_wdma_src_base;
+    logic [23:0]             r_wdma_byte_len;
+    logic [31:0]             r_odma_dst_base;
+    logic [23:0]             r_odma_byte_len;
     logic [31:0]             r_desc_list_base;
     logic [15:0]             r_desc_count;
     logic signed [31:0]      r_sdp_mult;
@@ -284,24 +267,9 @@ module cfg_regs #(
     logic signed [8:0]       r_sdp_clip_min;
     logic signed [8:0]       r_sdp_clip_max;
     logic                    r_sdp_round_en;
-    logic [3:0]              r_pad_top;
-    logic [3:0]              r_pad_left;
-    logic [15:0]             r_h_in_total;
-    logic [7:0]              r_ifb_strip_rows;
-    logic [5:0]              r_ofb_strip_rows;
-    logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
-    logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
-    // r_dma_mode_ctrl 声明在上面（有复位）
-    logic [31:0]             r_idma_src_base;
-    logic [23:0]             r_idma_byte_len;
-    logic [31:0]             r_wdma_src_base;
-    logic [23:0]             r_wdma_byte_len;
-    logic [31:0]             r_odma_dst_base;
-    logic [23:0]             r_odma_byte_len;
 
     // 寄存器 bank 写入（§4.1 例外 2：共享 reg_w_en 门控 + addr 解码，
-    // 所有寄存器写在同一 always_ff 内，不计 4-reg 限制；未命中时所有寄存器
-    // 按 flop 语义隐式保持）。
+    // 所有寄存器写在同一 always_ff 内，未命中时所有寄存器隐式保持）。
     always_ff @(posedge clk) begin
         if (reg_w_en) begin
             case (reg_w_addr)
@@ -331,6 +299,17 @@ module cfg_regs #(
                 ADDR_TILE_IN_STEP    : r_tile_in_step    <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= reg_w_data[5:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= reg_w_data[0];
+                ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
+                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= reg_w_data[7:0];
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= reg_w_data[5:0];
+                ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= reg_w_data[31:0];
+                ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= reg_w_data[23:0];
+                ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= reg_w_data[31:0];
+                ADDR_WDMA_BYTE_LEN   : r_wdma_byte_len   <= reg_w_data[23:0];
+                ADDR_ODMA_DST_BASE   : r_odma_dst_base   <= reg_w_data[31:0];
+                ADDR_ODMA_BYTE_LEN   : r_odma_byte_len   <= reg_w_data[23:0];
                 ADDR_DESC_LIST_BASE  : r_desc_list_base  <= reg_w_data[31:0];
                 ADDR_DESC_COUNT      : r_desc_count      <= reg_w_data[15:0];
                 ADDR_SDP_MULT        : r_sdp_mult        <= $signed(reg_w_data[31:0]);
@@ -338,21 +317,7 @@ module cfg_regs #(
                 ADDR_SDP_CLIP_MIN    : r_sdp_clip_min    <= $signed(reg_w_data[8:0]);
                 ADDR_SDP_CLIP_MAX    : r_sdp_clip_max    <= $signed(reg_w_data[8:0]);
                 ADDR_SDP_ROUND_EN    : r_sdp_round_en    <= reg_w_data[0];
-                ADDR_PAD_TOP         : r_pad_top         <= reg_w_data[3:0];
-                ADDR_PAD_LEFT        : r_pad_left        <= reg_w_data[3:0];
-                ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
-                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= reg_w_data[7:0];
-                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= reg_w_data[5:0];
-                ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
-                // ADDR_DMA_MODE 已单独 r_dma_mode_ctrl 维护（含复位），此处不需要
-                ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= reg_w_data[31:0];
-                ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= reg_w_data[23:0];
-                ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= reg_w_data[31:0];
-                ADDR_WDMA_BYTE_LEN   : r_wdma_byte_len   <= reg_w_data[23:0];
-                ADDR_ODMA_DST_BASE   : r_odma_dst_base   <= reg_w_data[31:0];
-                ADDR_ODMA_BYTE_LEN   : r_odma_byte_len   <= reg_w_data[23:0];
-                default              : ;   // CTRL / STATUS / 未使用地址：不写入 bank
+                default              : ;   // CTRL / STATUS / DMA_MODE / 未使用地址
             endcase
         end
     end
@@ -386,15 +351,6 @@ module cfg_regs #(
     assign tile_in_step    = r_tile_in_step;
     assign sdp_shift       = r_sdp_shift;
     assign sdp_relu_en     = r_sdp_relu_en;
-    assign desc_list_base  = r_desc_list_base;
-    assign desc_count      = r_desc_count;
-    assign sdp_mult        = r_sdp_mult;
-    assign sdp_zp_out      = r_sdp_zp_out;
-    assign sdp_clip_min    = r_sdp_clip_min;
-    assign sdp_clip_max    = r_sdp_clip_max;
-    assign sdp_round_en    = r_sdp_round_en;
-    assign pad_top         = r_pad_top;
-    assign pad_left        = r_pad_left;
     assign h_in_total         = r_h_in_total;
     assign ifb_strip_rows     = r_ifb_strip_rows;
     assign ofb_strip_rows     = r_ofb_strip_rows;
@@ -408,6 +364,13 @@ module cfg_regs #(
     assign wdma_byte_len   = r_wdma_byte_len;
     assign odma_dst_base   = r_odma_dst_base;
     assign odma_byte_len   = r_odma_byte_len;
+    assign desc_list_base  = r_desc_list_base;
+    assign desc_count      = r_desc_count;
+    assign sdp_mult        = r_sdp_mult;
+    assign sdp_zp_out      = r_sdp_zp_out;
+    assign sdp_clip_min    = r_sdp_clip_min;
+    assign sdp_clip_max    = r_sdp_clip_max;
+    assign sdp_round_en    = r_sdp_round_en;
 
     // =========================================================================
     // 读 mux：按 reg_r_addr 选择返回数据（组合）
@@ -417,7 +380,7 @@ module cfg_regs #(
                           layer_done, layer_busy, dfe_done, dfe_busy,
                           odma_done,  wdma_done,  idma_done,
                           odma_busy,  wdma_busy,  idma_busy,
-                          r_core_busy, core_done};
+                          layer_busy, core_done};
 
     always_comb begin
         case (reg_r_addr)
@@ -449,6 +412,12 @@ module cfg_regs #(
             ADDR_TILE_IN_STEP    : reg_r_data = {12'd0, r_tile_in_step};
             ADDR_SDP_SHIFT       : reg_r_data = {26'd0, r_sdp_shift};
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
+            ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
+            ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
+            ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
+            ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
+            ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
+            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};
             ADDR_DESC_LIST_BASE  : reg_r_data = r_desc_list_base;
             ADDR_DESC_COUNT      : reg_r_data = {16'd0, r_desc_count};
             ADDR_SDP_MULT        : reg_r_data = $unsigned(r_sdp_mult);
@@ -456,14 +425,6 @@ module cfg_regs #(
             ADDR_SDP_CLIP_MIN    : reg_r_data = {{23{r_sdp_clip_min[8]}}, r_sdp_clip_min};
             ADDR_SDP_CLIP_MAX    : reg_r_data = {{23{r_sdp_clip_max[8]}}, r_sdp_clip_max};
             ADDR_SDP_ROUND_EN    : reg_r_data = {31'd0, r_sdp_round_en};
-            ADDR_PAD_TOP         : reg_r_data = {28'd0, r_pad_top};
-            ADDR_PAD_LEFT        : reg_r_data = {28'd0, r_pad_left};
-            ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
-            ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
-            ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
-            ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
-            ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
-            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};
             ADDR_IDMA_SRC_BASE   : reg_r_data = r_idma_src_base;
             ADDR_IDMA_BYTE_LEN   : reg_r_data = {8'd0, r_idma_byte_len};
             ADDR_WDMA_SRC_BASE   : reg_r_data = r_wdma_src_base;

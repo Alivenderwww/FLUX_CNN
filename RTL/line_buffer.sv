@@ -244,7 +244,7 @@ module line_buffer #(
     logic evt_iss_yout_wrap;
 
     always_comb begin
-        evt_start         = (state == S_IDLE) && start;
+        evt_start         = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_iss_pos_wrap  = issue_ok           && iss_pos_is_last;
         evt_iss_kx_wrap   = evt_iss_pos_wrap   && kx_is_last;
         evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
@@ -261,7 +261,7 @@ module line_buffer #(
         case (state)
             S_IDLE : if (start)                                              state_next = S_RUN;
             S_RUN  : if (issues_all_done && fifo_count == 0 && !issue_advance_d1) state_next = S_DONE;
-            S_DONE : ;
+            S_DONE : if (start)                                              state_next = S_RUN;   // 多 strip 重启
             default:                                                          state_next = S_IDLE;
         endcase
     end

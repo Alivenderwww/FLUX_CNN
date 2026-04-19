@@ -127,7 +127,7 @@ module ofb_writer #(
     logic evt_fire_yout_wrap;
 
     always_comb begin
-        evt_start          = (state == S_IDLE) && start;
+        evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_fire_x_wrap    = acc_fire && x_is_last;
         evt_fire_tile_wrap = evt_fire_x_wrap    && tile_is_last;
         evt_fire_yout_wrap = evt_fire_tile_wrap && yout_is_last;
@@ -166,7 +166,7 @@ module ofb_writer #(
         case (state)
             S_IDLE : if (start)                  state_next = S_RUN;
             S_RUN  : if (acc_fire && all_done)   state_next = S_DONE;
-            S_DONE : ;
+            S_DONE : if (start)                  state_next = S_RUN;   // 多 strip 重启
             default:                              state_next = S_IDLE;
         endcase
     end

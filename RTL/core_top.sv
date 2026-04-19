@@ -159,13 +159,12 @@ module core_top #(
     logic [5:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
-    // Phase C: descriptor list + new SDP fields
+    // Descriptor list + new SDP fields
     logic [31:0]       cfg_desc_list_base;
     logic [15:0]       cfg_desc_count;
     logic signed [31:0] cfg_sdp_mult;
     logic signed [8:0]  cfg_sdp_zp_out, cfg_sdp_clip_min, cfg_sdp_clip_max;
     logic              cfg_sdp_round_en;
-    logic [3:0]        cfg_pad_top_global, cfg_pad_left_global;
 
     // Streaming / ring cfg 输出（v2 用；v1 默认 0 等价 batch）
     logic [15:0]       cfg_h_in_total;
@@ -176,43 +175,42 @@ module core_top #(
     logic              cfg_idma_streaming;
     logic              cfg_odma_streaming;
 
-    // CTRL / STATUS / DMA 相关
-    logic              cfg_start_core_pulse, cfg_start_idma_pulse;
-    logic              cfg_start_wdma_pulse, cfg_start_odma_pulse;
+    // CTRL / STATUS
     logic              cfg_start_dfe_pulse, cfg_start_layer_pulse;
     logic [31:0]       dma_idma_src_base, dma_wdma_src_base, dma_odma_dst_base;
     logic [23:0]       dma_idma_byte_len, dma_wdma_byte_len, dma_odma_byte_len;
     logic              idma_busy, idma_done, wdma_busy, wdma_done, odma_busy, odma_done;
     logic              dfe_busy, dfe_done, layer_busy, layer_done;
 
-    // Sequencer → core pipeline
+    // Sequencer → core pipeline + DMA
     logic              seq_start_core_pulse, seq_start_wgt_pulse;
+    logic              seq_start_idma_pulse, seq_start_odma_pulse, seq_start_wdma_pulse;
     logic [15:0]       seq_strip_n_yout;
     logic [3:0]        seq_pad_top, seq_pad_bot, seq_pad_left, seq_pad_right;
     logic              seq_streaming_en;
     logic [15:0]       seq_strip_y_start;
+    logic [19:0]       seq_strip_ifb_ddr_offset, seq_strip_ofb_ddr_offset;
+    logic [23:0]       seq_strip_ifb_byte_len, seq_strip_ofb_byte_len;
 
-    // Effective pad / ifb_base: layer_busy 时用 Sequencer 输出 (来自 descriptor);
-    // 否则用 cfg_regs 全局值 (Phase C-2 老 CTRL 路径 pad 验证通道)
-    logic [3:0]        eff_pad_top, eff_pad_left;
-    logic [ADDR_W-1:0] eff_ifb_base;
-    assign eff_pad_top  = layer_busy ? seq_pad_top  : cfg_pad_top_global;
-    assign eff_pad_left = layer_busy ? seq_pad_left : cfg_pad_left_global;
-    // 预扣 pad offset: cfg_ifb_base - pad_top * w_in - pad_left
+    // IFB base 预扣 pad offset: cfg_ifb_base - pad_top * w_in - pad_left
     //   pad_top 4 bit × w_in 16 bit → 20 bit
+    logic [ADDR_W-1:0] eff_ifb_base;
     assign eff_ifb_base = cfg_ifb_base
-                        - ({{(ADDR_W-20){1'b0}}, {12'd0, eff_pad_top} * {4'd0, cfg_w_in}})
-                        - {{(ADDR_W-4){1'b0}}, eff_pad_left};
+                        - ({{(ADDR_W-20){1'b0}}, {12'd0, seq_pad_top} * {4'd0, cfg_w_in}})
+                        - {{(ADDR_W-4){1'b0}}, seq_pad_left};
+
+    // Per-strip DMA src_base / byte_len = 全局 base + descriptor offset
+    logic [31:0]       eff_idma_src_base, eff_odma_dst_base;
+    logic [23:0]       eff_idma_byte_len, eff_odma_byte_len;
+    assign eff_idma_src_base = dma_idma_src_base + {12'd0, seq_strip_ifb_ddr_offset};
+    assign eff_odma_dst_base = dma_odma_dst_base + {12'd0, seq_strip_ofb_ddr_offset};
+    assign eff_idma_byte_len = seq_strip_ifb_byte_len;
+    assign eff_odma_byte_len = seq_strip_ofb_byte_len;
 
     // desc FIFO
     logic [255:0]      desc_fifo_wdata, desc_fifo_rdata;
     logic              desc_fifo_we, desc_fifo_re;
     logic              desc_fifo_full, desc_fifo_empty;
-
-    // Effective start + strip-level n_yout to core pipeline
-    logic              eff_start_core_pulse, eff_start_wgt_pulse;
-    assign eff_start_core_pulse = cfg_start_core_pulse | seq_start_core_pulse;
-    assign eff_start_wgt_pulse  = cfg_start_core_pulse | seq_start_wgt_pulse;
 
     cfg_regs #(
         .ADDR_W(CSR_ADDR_W),
@@ -228,10 +226,6 @@ module core_top #(
         .idma_done(idma_done), .wdma_done(wdma_done), .odma_done(odma_done),
         .dfe_busy(dfe_busy), .dfe_done(dfe_done),
         .layer_busy(layer_busy), .layer_done(layer_done),
-        .start_core_pulse(cfg_start_core_pulse),
-        .start_idma_pulse(cfg_start_idma_pulse),
-        .start_wdma_pulse(cfg_start_wdma_pulse),
-        .start_odma_pulse(cfg_start_odma_pulse),
         .start_dfe_pulse(cfg_start_dfe_pulse),
         .start_layer_pulse(cfg_start_layer_pulse),
         .h_out(cfg_h_out), .w_out(cfg_w_out), .w_in(cfg_w_in),
@@ -258,8 +252,7 @@ module core_top #(
         .desc_list_base(cfg_desc_list_base), .desc_count(cfg_desc_count),
         .sdp_mult(cfg_sdp_mult), .sdp_zp_out(cfg_sdp_zp_out),
         .sdp_clip_min(cfg_sdp_clip_min), .sdp_clip_max(cfg_sdp_clip_max),
-        .sdp_round_en(cfg_sdp_round_en),
-        .pad_top(cfg_pad_top_global), .pad_left(cfg_pad_left_global)
+        .sdp_round_en(cfg_sdp_round_en)
     );
 
     // =========================================================================
@@ -278,24 +271,33 @@ module core_top #(
 
     sequencer u_sequencer (
         .clk(clk), .rst_n(rst_n),
-        .start_layer_pulse   (cfg_start_layer_pulse),
-        .layer_busy          (layer_busy),
-        .layer_done          (layer_done),
-        .fifo_rd_data        (desc_fifo_rdata),
-        .fifo_empty          (desc_fifo_empty),
-        .fifo_rd_en          (desc_fifo_re),
-        .cfg_h_out_total     (cfg_h_out),
-        .strip_n_yout        (seq_strip_n_yout),
-        .strip_pad_top       (seq_pad_top),
-        .strip_pad_bot       (seq_pad_bot),
-        .strip_pad_left      (seq_pad_left),
-        .strip_pad_right     (seq_pad_right),
-        .strip_streaming_en  (seq_streaming_en),
-        .strip_y_start       (seq_strip_y_start),
-        .start_core_pulse    (seq_start_core_pulse),
-        .start_wgt_pulse     (seq_start_wgt_pulse),
-        .core_strip_done     (done),
-        .wdma_done           (wdma_done)
+        .start_layer_pulse     (cfg_start_layer_pulse),
+        .layer_busy            (layer_busy),
+        .layer_done            (layer_done),
+        .fifo_rd_data          (desc_fifo_rdata),
+        .fifo_empty            (desc_fifo_empty),
+        .fifo_rd_en            (desc_fifo_re),
+        .cfg_h_out_total       (cfg_h_out),
+        .strip_n_yout          (seq_strip_n_yout),
+        .strip_pad_top         (seq_pad_top),
+        .strip_pad_bot         (seq_pad_bot),
+        .strip_pad_left        (seq_pad_left),
+        .strip_pad_right       (seq_pad_right),
+        .strip_streaming_en    (seq_streaming_en),
+        .strip_y_start         (seq_strip_y_start),
+        .strip_ifb_ddr_offset  (seq_strip_ifb_ddr_offset),
+        .strip_ifb_byte_len    (seq_strip_ifb_byte_len),
+        .strip_ofb_ddr_offset  (seq_strip_ofb_ddr_offset),
+        .strip_ofb_byte_len    (seq_strip_ofb_byte_len),
+        .start_core_pulse      (seq_start_core_pulse),
+        .start_wgt_pulse       (seq_start_wgt_pulse),
+        .start_idma_pulse      (seq_start_idma_pulse),
+        .start_odma_pulse      (seq_start_odma_pulse),
+        .start_wdma_pulse      (seq_start_wdma_pulse),
+        .core_strip_done       (done),
+        .idma_strip_done       (idma_done),
+        .odma_strip_done       (odma_done),
+        .wdma_done             (wdma_done)
     );
 
     // =========================================================================
@@ -410,7 +412,7 @@ module core_top #(
     ) u_line_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (eff_start_core_pulse),
+        .start            (seq_start_core_pulse),
         .done             (lb_done),
         .cfg_h_out        (seq_strip_n_yout),
         .cfg_w_in         (cfg_w_in),
@@ -425,8 +427,8 @@ module core_top #(
         .cfg_ifb_cin_step (cfg_ifb_cin_step),
         .cfg_ifb_row_step (cfg_ifb_row_step),
         .cfg_tile_in_step (cfg_tile_in_step),
-        .cfg_pad_top      (eff_pad_top),
-        .cfg_pad_left     (eff_pad_left),
+        .cfg_pad_top      (seq_pad_top),
+        .cfg_pad_left     (seq_pad_left),
         .cfg_h_in         (cfg_h_in_total),
         .cfg_idma_streaming(cfg_idma_streaming),
         .ifb_re           (ifb_re),
@@ -454,7 +456,7 @@ module core_top #(
     ) u_wgt_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (eff_start_wgt_pulse),
+        .start            (seq_start_wgt_pulse),
         .done             (wb_done),
         .cfg_h_out        (cfg_h_out),
         .cfg_cin_slices   (cfg_cin_slices),
@@ -549,7 +551,7 @@ module core_top #(
     ) u_ofb_writer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (eff_start_core_pulse),
+        .start            (seq_start_core_pulse),
         .done             (ow_done),
         .cfg_h_out        (seq_strip_n_yout),
         .cfg_tile_w       (cfg_tile_w),
@@ -648,8 +650,8 @@ module core_top #(
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_idma (
         .clk(clk), .rst_n(rst_n),
-        .start(cfg_start_idma_pulse), .done(idma_done), .busy(idma_busy),
-        .src_base(dma_idma_src_base), .byte_len(dma_idma_byte_len),
+        .start(seq_start_idma_pulse), .done(idma_done), .busy(idma_busy),
+        .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
         .cfg_idma_streaming(cfg_idma_streaming),
         .cfg_h_in_total    (cfg_h_in_total),
         .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
@@ -675,7 +677,7 @@ module core_top #(
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_wdma (
         .clk(clk), .rst_n(rst_n),
-        .start(cfg_start_wdma_pulse), .done(wdma_done), .busy(wdma_busy),
+        .start(seq_start_wdma_pulse), .done(wdma_done), .busy(wdma_busy),
         .src_base(dma_wdma_src_base), .byte_len(dma_wdma_byte_len),
         .M_AWID(m_awid[1]), .M_AWADDR(m_awaddr[1]), .M_AWLEN(m_awlen[1]),
         .M_AWBURST(m_awburst[1]), .M_AWVALID(m_awvalid[1]), .M_AWREADY(m_awready[1]),
@@ -695,8 +697,8 @@ module core_top #(
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_odma (
         .clk(clk), .rst_n(rst_n),
-        .start(cfg_start_odma_pulse), .done(odma_done), .busy(odma_busy),
-        .dst_base(dma_odma_dst_base), .byte_len(dma_odma_byte_len),
+        .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy),
+        .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
         .cfg_odma_streaming    (cfg_odma_streaming),
         .cfg_h_out_total       (cfg_h_out),
         .cfg_w_out             (cfg_w_out),

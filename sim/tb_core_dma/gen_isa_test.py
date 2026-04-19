@@ -305,12 +305,16 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     strip_rows_eff = strip_rows if (strip_rows > 0 and strip_rows < H_OUT) else H_OUT
     n_strips = (H_OUT + strip_rows_eff - 1) // strip_rows_eff
 
-    # Byte sizes per row (AXI 128-bit word = 16 byte)
+    # Byte sizes per row per cin_slice (AXI 128-bit word = 16 byte)
+    # IFB DDR layout: cin_slice-major (外层 cins，内层 y，最内 x)
+    #   → 同一 y 不同 slice 不相邻，IDMA linear DMA 只能整块搬
     AXI_BYTES = 16
-    ifb_bytes_per_row = W_IN  * AXI_BYTES * cin_slices
-    ofb_bytes_per_row = W_OUT * AXI_BYTES * cout_slices
-    ifb_total_bytes   = H_IN  * ifb_bytes_per_row
-    ofb_total_bytes   = H_OUT * ofb_bytes_per_row
+    ifb_bytes_per_row = W_IN  * AXI_BYTES         # per slice per row
+    ifb_bytes_per_slice = H_IN * ifb_bytes_per_row
+    ifb_total_bytes   = ifb_bytes_per_slice * cin_slices
+    ofb_bytes_per_row = W_OUT * AXI_BYTES         # per cout_slice per row
+    ofb_bytes_per_slice = H_OUT * ofb_bytes_per_row
+    ofb_total_bytes   = ofb_bytes_per_slice * cout_slices
 
     descs = []
     for i in range(n_strips):
@@ -322,21 +326,25 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         # Per-strip pad：边缘 strip 保留全局 pad，内部 strip 归零
         local_pad_top   = pad_top   if is_first else 0
         local_pad_bot   = pad_bot   if is_last  else 0
-        local_pad_left  = pad_left              # 水平 pad 所有 strip 共享
+        local_pad_left  = pad_left
         local_pad_right = pad_right
 
-        # IFB DDR offset：strip 对应的 IFM 起始行
-        #   strip 第一个 yout 访问的最小 src_y = strip_y_start*stride - pad_top
-        #   取 max(0) 去掉 pad 部分（DDR 里无 pad 数据）
-        ifb_y_start = max(0, strip_y_start * stride - pad_top)
-        ifb_y_end   = min(H_IN, (strip_y_start + n_yout - 1) * stride + K - pad_top)
-        ifb_rows    = max(0, ifb_y_end - ifb_y_start)
-        ifb_ddr_offset = ifb_y_start * ifb_bytes_per_row
-        ifb_byte_len   = ifb_rows    * ifb_bytes_per_row
-
-        # OFB DDR offset：strip 产出的 OFM 起始行
-        ofb_ddr_offset = strip_y_start * ofb_bytes_per_row
-        ofb_byte_len   = n_yout        * ofb_bytes_per_row
+        # IFB/OFB DDR descriptor (batch 模式，单 strip):
+        #   因为 DDR layout 是 slice-major，IDMA 无法只搬 partial rows
+        #   per slice（会拉同 slice 非连续数据），所以搬**整图**所有 slice 所有 row。
+        #   Streaming 模式下 IDMA 按 cfg_ifb_strip_rows ring 自动 pacing，但
+        #   byte_len 仍用整图作 totals。
+        if n_strips == 1:
+            ifb_ddr_offset = 0
+            ifb_byte_len   = ifb_total_bytes
+            ofb_ddr_offset = 0
+            ofb_byte_len   = ofb_total_bytes
+        else:
+            # multi strip: 每 strip 仍搬整图（冗余但正确，简化首版实现）
+            ifb_ddr_offset = 0
+            ifb_byte_len   = ifb_total_bytes
+            ofb_ddr_offset = strip_y_start * ofb_bytes_per_row
+            ofb_byte_len   = n_yout        * ofb_bytes_per_row * cout_slices
 
         flags = 0
         if is_first: flags |= FLAG_IS_FIRST

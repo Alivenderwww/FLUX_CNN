@@ -1,15 +1,16 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// tb_core_dma.sv  --  End-to-end DMA TB
+// tb_core_dma.sv  --  End-to-end descriptor-driven TB
 //
-// 完整流程：
-//   1. $readmemh 把 ifb.txt (128-bit)、wb.txt (2048-bit) 预填到 DDR stub 不同区域
-//   2. AXI-Lite 写所有 cfg 寄存器 + 3 个 DMA descriptor
-//   3. 写 CTRL=0x6 同时触发 IDMA+WDMA；等 busy 双双归 0
-//   4. 写 CTRL=0x1 触发核；wait core done
-//   5. 写 CTRL=0x8 触发 ODMA；等 busy 归 0
-//   6. 读 DDR OFB 区对比 expected_ofm.txt
+// 流程：
+//   1. $readmemh 把 ifb.txt / wb.txt / desc_list.hex 预填到 DDR stub 各区域
+//   2. AXI-Lite 写 layer-level cfg (K/stride/...、DMA base、SDP 等)
+//   3. AXI-Lite 写 DESC_LIST_BASE + DESC_COUNT
+//   4. 写 CTRL[4]=1 启动 DFE 拉 descriptor 到片内 FIFO
+//   5. 写 CTRL[5]=1 启动 Sequencer 消费 descriptor，驱动核流水 + 所有 DMA
+//   6. Poll STATUS[11] = layer_done
+//   7. 读 DDR OFB 区对比 expected_ofm.txt
 // =============================================================================
 
 module tb_core_dma;
@@ -34,12 +35,14 @@ module tb_core_dma;
     localparam OFB_WIDTH  = NUM_COL * DATA_WIDTH;      // 128
 
     // DDR 布局（byte 地址）
-    //   IFB:  [0, 8MB)  — 480x640x16 = 4.9 MB 够用
+    //   IFB:  [0, 8MB - 64KB)  — 480x640x16 = 4.9 MB
+    //   DESC: [8MB - 64KB, 8MB) — 64KB 足以放 ~2000 条 descriptor
     //   WB:   [8MB, 9MB) — 固定小空间
     //   OFB:  [9MB, 16MB) — 7 MB，放 480x640 OFM
-    localparam [31:0] DDR_IFB_BASE = 32'h0000_0000;
-    localparam [31:0] DDR_WB_BASE  = 32'h0080_0000;
-    localparam [31:0] DDR_OFB_BASE = 32'h0090_0000;
+    localparam [31:0] DDR_IFB_BASE  = 32'h0000_0000;
+    localparam [31:0] DDR_DESC_BASE = 32'h007F_0000;
+    localparam [31:0] DDR_WB_BASE   = 32'h0080_0000;
+    localparam [31:0] DDR_OFB_BASE  = 32'h0090_0000;
 
     // cfg_regs 地址（和 RTL 对齐）
     localparam [11:0] ADDR_CTRL             = 12'h000;
@@ -75,8 +78,9 @@ module tb_core_dma;
     localparam [11:0] ADDR_DDR_IFM_ROW_STR  = 12'h174;
     localparam [11:0] ADDR_DDR_OFM_ROW_STR  = 12'h178;
     localparam [11:0] ADDR_DMA_MODE         = 12'h17C;
-    localparam [11:0] ADDR_PAD_TOP          = 12'h1A0;
-    localparam [11:0] ADDR_PAD_LEFT         = 12'h1A4;
+    localparam [11:0] ADDR_DESC_LIST_BASE   = 12'h180;
+    localparam [11:0] ADDR_DESC_COUNT       = 12'h184;
+    localparam [11:0] ADDR_STATUS           = 12'h004;
     localparam [11:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [11:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
     localparam [11:0] ADDR_WDMA_SRC_BASE    = 12'h210;
@@ -164,18 +168,19 @@ module tb_core_dma;
     );
 
     // ================== 预填 DDR ==================
-    // 数组尺寸 = DDR_DEPTH 的同量级，支持 480x640 级别流式
-    logic [BUS_DATA_W-1:0] ifb_arr [0:524287];
-    logic [WB_WIDTH-1:0]   wb_arr  [0:2047];
-    logic [OFB_WIDTH-1:0]  exp_arr [0:524287];
-    // 注意：这里保留 512K 上限（480x640=307200 < 524288），够用；
-    // 若将来测更大图再同步 DDR_DEPTH / 数组尺寸。
+    logic [BUS_DATA_W-1:0] ifb_arr  [0:524287];
+    logic [WB_WIDTH-1:0]   wb_arr   [0:2047];
+    logic [OFB_WIDTH-1:0]  exp_arr  [0:524287];
+    logic [BUS_DATA_W-1:0] desc_arr [0:4095];     // 2 beats/desc × up to 2048 desc
 
-    task automatic preload_ddr(input int ifb_words, input int wb_words);
-        int ifb_base_w = DDR_IFB_BASE / 16;
-        int wb_base_w  = DDR_WB_BASE  / 16;
-        $readmemh("./ifb.txt", ifb_arr);
-        $readmemh("./wb.txt",  wb_arr);
+    task automatic preload_ddr(input int ifb_words, input int wb_words,
+                                input int desc_beats);
+        int ifb_base_w  = DDR_IFB_BASE  / 16;
+        int wb_base_w   = DDR_WB_BASE   / 16;
+        int desc_base_w = DDR_DESC_BASE / 16;
+        $readmemh("./ifb.txt",       ifb_arr);
+        $readmemh("./wb.txt",        wb_arr);
+        $readmemh("./desc_list.hex", desc_arr);
 
         // IFB: 128-bit lines 直接填 DDR
         for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
@@ -184,6 +189,9 @@ module tb_core_dma;
         for (int i = 0; i < wb_words; i++)
             for (int b = 0; b < 16; b++)
                 u_ddr.mem[wb_base_w + i*16 + b] = wb_arr[i][b*BUS_DATA_W +: BUS_DATA_W];
+
+        // Descriptor list: 每 descriptor 2 × 128-bit beat (little-endian)
+        for (int i = 0; i < desc_beats; i++) u_ddr.mem[desc_base_w + i] = desc_arr[i];
     endtask
 
     // ================== AXI-Lite 驱动 ==================
@@ -254,22 +262,21 @@ module tb_core_dma;
                                       axi_lite_write(ADDR_DMA_MODE,     val);
                                       dma_mode_cfg = val[1:0];
                                    end
-                "PAD_TOP"        : axi_lite_write(ADDR_PAD_TOP,         val);
-                "PAD_LEFT"       : axi_lite_write(ADDR_PAD_LEFT,        val);
+                "DESC_COUNT"     : axi_lite_write(ADDR_DESC_COUNT,      val);
                 default          : ;
             endcase
         end
         $fclose(fd);
     endtask
 
-    // ================== Core cycle counter & perf ==================
-    // r_core_busy 来自 cfg_regs，在 start_core_pulse 置位、core_done 清零，
-    // 正好框定 "core 开始接收 IFB 数据 → 整个核跑完" 的窗口。
+
+    // ================== Layer cycle counter & perf ==================
+    // layer_busy 覆盖 Sequencer 从 start_layer_pulse 到 layer_done 之间整个
+    // 跨 strip 执行期；反映整 layer 端到端时间（含 DMA + core 流水）。
     longint core_cycles = 0;
     always_ff @(posedge clk) begin
-        if      (!rst_n)                         core_cycles <= 0;
-        else if (u_core.u_cfg.r_core_busy)       core_cycles <= core_cycles + 1;
-        else                                      core_cycles <= core_cycles;
+        if      (!rst_n)                 core_cycles <= 0;
+        else if (u_core.layer_busy)      core_cycles <= core_cycles + 1;
     end
 
     int pe_wrf_write_arr [0:NUM_COL-1][0:NUM_PE-1];
@@ -293,6 +300,7 @@ module tb_core_dma;
     initial begin
         int h_out_val, w_out_val, cout_slices_val;
         int ifb_words, wb_words, ofb_words;
+        int desc_count_val, desc_beats;
         int ifb_bytes, wb_bytes, ofb_bytes;
         int mismatch_cnt;
         logic [OFB_WIDTH-1:0] expected, got;
@@ -304,83 +312,54 @@ module tb_core_dma;
         #20 rst_n = 1;
         #10;
 
-        // 从 plusargs 拿尺寸；sim_params.f 已有 +H_OUT/+W_OUT/+COUT_SLICES
         if (!$value$plusargs("H_OUT=%d",        h_out_val))       h_out_val = 66;
         if (!$value$plusargs("W_OUT=%d",        w_out_val))       w_out_val = 118;
         if (!$value$plusargs("COUT_SLICES=%d",  cout_slices_val)) cout_slices_val = 1;
-
-        // 按 gen_isa_test.py 的算法反推大小。此 TB 只关心 K=3 C8C8 规模验证；
-        // 其他尺寸得外部传入 IFB_WORDS/WB_WORDS（这里写死简单版）
-        if (!$value$plusargs("IFB_WORDS=%d", ifb_words)) ifb_words = 8160;
-        if (!$value$plusargs("WB_WORDS=%d",  wb_words))  wb_words  = 9;
-        ofb_words = h_out_val * w_out_val * cout_slices_val;
+        if (!$value$plusargs("IFB_WORDS=%d",    ifb_words))       ifb_words = 8160;
+        if (!$value$plusargs("WB_WORDS=%d",     wb_words))        wb_words  = 9;
+        if (!$value$plusargs("DESC_COUNT=%d",   desc_count_val))  desc_count_val = 2;
+        ofb_words  = h_out_val * w_out_val * cout_slices_val;
+        desc_beats = desc_count_val * 2;                 // 每 desc 2 beat
 
         ifb_bytes = ifb_words * (BUS_DATA_W/8);
-        wb_bytes  = wb_words  * (WB_WIDTH/8);      // WB word = 256 B
+        wb_bytes  = wb_words  * (WB_WIDTH/8);
         ofb_bytes = ofb_words * (BUS_DATA_W/8);
 
-        $display("== tb_core_dma ==  ifb=%0d words (%0d B) wb=%0d words (%0d B) ofb=%0d words (%0d B)",
-                 ifb_words, ifb_bytes, wb_words, wb_bytes, ofb_words, ofb_bytes);
+        $display("== tb_core_dma ==  ifb=%0d words  wb=%0d words  ofb=%0d words  desc=%0d",
+                 ifb_words, wb_words, ofb_words, desc_count_val);
 
-        // DDR 预填
-        preload_ddr(ifb_words, wb_words);
+        preload_ddr(ifb_words, wb_words, desc_beats);
         $readmemh("./expected_ofm.txt", exp_arr);
 
-        // cfg
+        // ---- Layer-level cfg (K / stride / SDP / strip_rows / ...) ----
         load_config();
 
-        // DMA descriptors
+        // ---- DMA layer-level base (每 strip 的 offset/len 由 descriptor 叠加) ----
         axi_lite_write(ADDR_IDMA_SRC_BASE, DDR_IFB_BASE);
-        axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);
+        axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);   // 保留兼容 (IDMA byte_len 实际由 Sequencer 覆盖)
         axi_lite_write(ADDR_WDMA_SRC_BASE, DDR_WB_BASE);
         axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
         axi_lite_write(ADDR_ODMA_DST_BASE, DDR_OFB_BASE);
         axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
 
-        if (dma_mode_cfg == 2'b00) begin
-            // ---------------- Batch mode ----------------
-            $display("== Phase 1: trigger IDMA + WDMA ==");
-            axi_lite_write(ADDR_CTRL, 32'h0000_0006);   // CTRL[1]=IDMA, [2]=WDMA
-            wait (u_core.idma_busy == 1'b1);
-            wait (u_core.wdma_busy == 1'b1);
-            wait (u_core.idma_busy == 1'b0);
-            wait (u_core.wdma_busy == 1'b0);
-            @(posedge clk);
-            $display("   IDMA+WDMA done at t=%0t", $time);
+        // ---- Descriptor list pointer ----
+        axi_lite_write(ADDR_DESC_LIST_BASE, DDR_DESC_BASE);
+        // DESC_COUNT 已由 load_config() 从 config.txt 写入
 
-            $display("== Phase 2: trigger core ==");
-            axi_lite_write(ADDR_CTRL, 32'h0000_0001);
-            wait (done == 1'b1);
-            @(posedge clk);
-            $display("   Core done at t=%0t", $time);
+        // ---- 启动 DFE 拉 descriptor 到片内 FIFO ----
+        $display("== Start DFE ==");
+        axi_lite_write(ADDR_CTRL, 32'h0000_0010);   // CTRL[4]=start_dfe
+        wait (u_core.dfe_busy == 1'b1);
+        wait (u_core.dfe_busy == 1'b0);
+        $display("   DFE done at t=%0t", $time);
 
-            $display("== Phase 3: trigger ODMA ==");
-            axi_lite_write(ADDR_CTRL, 32'h0000_0008);
-            wait (u_core.odma_busy == 1'b1);
-            wait (u_core.odma_busy == 1'b0);
-            @(posedge clk);
-            $display("   ODMA done at t=%0t", $time);
-        end else begin
-            // ---------------- Streaming mode ----------------
-            // Phase 1: WDMA 独跑（权重必须 ready 后 wgt_buffer 才能读）
-            $display("== Streaming Phase 1: trigger WDMA ==");
-            axi_lite_write(ADDR_CTRL, 32'h0000_0004);   // CTRL[2]=WDMA
-            wait (u_core.wdma_busy == 1'b1);
-            wait (u_core.wdma_busy == 1'b0);
-            @(posedge clk);
-            $display("   WDMA done at t=%0t", $time);
-
-            // Phase 2: IDMA + CORE + ODMA 三路并发 (CTRL[0,1,3]=1, 即 0xB)
-            $display("== Streaming Phase 2: IDMA + CORE + ODMA concurrent ==");
-            axi_lite_write(ADDR_CTRL, 32'h0000_000B);
-            wait (u_core.idma_busy == 1'b1);
-            wait (u_core.odma_busy == 1'b1);
-            wait (done == 1'b1);
-            wait (u_core.idma_busy == 1'b0);
-            wait (u_core.odma_busy == 1'b0);
-            @(posedge clk);
-            $display("   Stream done: core+idma+odma all quiet at t=%0t", $time);
-        end
+        // ---- 启动 Sequencer 消费 descriptor ----
+        $display("== Start Layer ==");
+        axi_lite_write(ADDR_CTRL, 32'h0000_0020);   // CTRL[5]=start_layer
+        wait (u_core.layer_busy == 1'b1);
+        wait (u_core.layer_done == 1'b1);
+        @(posedge clk);
+        $display("   Layer done at t=%0t", $time);
 
         // 对比 DDR 的 OFB 区 vs expected
         mismatch_cnt = 0;

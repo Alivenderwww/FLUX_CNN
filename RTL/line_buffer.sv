@@ -4,6 +4,8 @@
 // line_buffer.sv  --  Activation Stream Feeder (IFB → ring act_buf → MAC)
 //
 // v3 优化：跨 round pipeline。消除 v2 中 per-round 的 2 拍 startup bubble。
+// Phase C-2 扩展：padding 支持 (pad_top / pad_left 影响 issue 坐标；越界位置
+// 不发 IFB 读、直接给 act_buf 喂 0)。
 //
 // 核心思想：
 //   - consume 侧不需要 counter（只顺序读 act_buf）；act_buf 作纯 ring buffer，
@@ -13,17 +15,23 @@
 //     下一拍立即 issue 新 round 的第 0 个 read，无需 bubble。
 //   - fifo_count 追踪 act_buf 占用；issue 以 (fifo_count+in_flight < ARF_DEPTH)
 //     背压，mac 吃得慢时 issue 自然停。
-//   - 首 round 仍有 2 拍 startup (IFB 读 1 拍延迟 + 首个数据到达前 1 拍)；
-//     这是 1-cycle IFB 延迟的物理下限，整层只发生 1 次。
+//
+// Padding 实现（Phase C-2）：
+//   - 用 signed 累加器 y_row_base / x_tile_base 跟踪窗口起点，避免 signed 乘法
+//     (yout*stride, tile*tile_w*stride) 在 line_buffer 内部展开
+//       y_row_base:  strip 开始 = -pad_top；每 yout wrap += stride
+//       x_tile_base: strip 开始 = -pad_left；每 tile wrap += tile_in_step
+//       iss_pos_s:   = iss_pos * stride （复用原 ifb_rd_offset 的 shift 逻辑）
+//   - current_src_y = y_row_base + ky_cnt (signed)
+//     current_src_x = x_tile_base + iss_pos_s + kx_cnt (signed)
+//   - is_pad = (src_y<0) | (src_y>=cfg_h_in) | (src_x<0) | (src_x>=cfg_w_in)
+//   - issue_advance 每拍 +1 (含 pad)；ifb_re 只在非 pad 拍 1
+//   - arrival 用 is_pad_d1 选择 0 或 ifb_rdata 入 act_buf
+//   - cfg_ifb_base 由 Sequencer 预扣 pad offset: cfg_ifb_base - pad_top*w_in
+//     - pad_left。ptr_*_base 推进逻辑不变（=虚拟坐标累加），物理 IFB 地址
+//     在 ky=pad_top && kx=pad_left (首个非 pad 位置) 时自然指向全局 cfg_ifb_base。
 //
 // 6 层外层循环 (issue 侧自跑)：for cs / yout / tile / cins / ky / kx
-//
-// 时序 (cur_valid_w=32)：
-//   T=0..T=31: issue round 0 的 32 个位置；T=31 拍 advance counter 到 round 1
-//   T=32:      issue round 1 的 pos 0 (new ptr_kx_base); arrival/fire old round
-//   T=33 起:   round 1 的 issues 继续；fire round 1 pos 0 @ T=34
-//   per round (非首): 32 拍 = 32 fires, 0 bubble
-//   整层: 2 (首 startup) + sum(cur_valid_w) = 2 + total_MAC_fires
 // =============================================================================
 
 module line_buffer #(
@@ -53,6 +61,11 @@ module line_buffer #(
     input  logic [ADDR_W-1:0]                    cfg_ifb_row_step,
     input  logic [ADDR_W-1:0]                    cfg_tile_in_step,
 
+    // ---- Padding (Phase C-2) ----
+    input  logic [3:0]                           cfg_pad_top,
+    input  logic [3:0]                           cfg_pad_left,
+    input  logic [15:0]                          cfg_h_in,     // 虚拟图像高度 (pad 前的有效输入行数)
+
     // ---- Streaming 配置（v2） ----
     // cfg_idma_streaming=1 时启用 ring wrap：每个 cin_slice 在 IFB 占
     // cfg_ifb_cin_step = strip_rows * W_IN 字；pointer 推进时 mod 这个值
@@ -71,7 +84,10 @@ module line_buffer #(
 
     // ---- Row credit 输出（给 IDMA streaming mode） ----
     // rows_consumed = "line_buffer 已彻底用完的输入行数"，yout 每推进 1 就 +stride
-    output logic [15:0]                          rows_consumed
+    output logic [15:0]                          rows_consumed,
+
+    // ---- Row forward-pressure 输入（streaming 下 IDMA 已写完的行数） ----
+    input  logic [15:0]                          rows_available
 );
 
     localparam int AW      = $clog2(SRAM_DEPTH);
@@ -109,7 +125,12 @@ module line_buffer #(
     // Issue 内部 state
     logic [5:0]  iss_pos;            // 0..cur_valid_w-1
     logic        issues_all_done;
-    logic        ifb_re_d1;
+    logic        issue_advance_d1;   // 原 ifb_re_d1 语义重命名：每个 issue 动作延迟 1 拍 (含 pad)
+
+    // Padding 累加器 (Phase C-2)
+    logic signed [16:0] y_row_base;   // yout=0 时 = -pad_top；每 yout wrap += stride
+    logic signed [16:0] x_tile_base;  // tile=0 时 = -pad_left；每 tile wrap += tile_in_step
+    logic               is_pad_d1;    // arrival 对齐的 pad 标志
 
     // Ring buffer
     logic [BUF_AW-1:0] wr_idx;
@@ -139,12 +160,52 @@ module line_buffer #(
                          cins_is_last && tile_is_last && yout_is_last && cs_is_last;
 
     // =========================================================================
+    // Padding 判定（组合）—— 用累加器 + ky/kx 得 signed 坐标，和 cfg_h_in/w_in 比较
+    //   状态机三态（PAD_TOP → DATA → PAD_BOT 以 ky 为自然维度；PAD_LEFT →
+    //   DATA → PAD_RIGHT 以 kx 为自然维度）由 is_pad_{top/bot/left/right} 组合
+    //   信号隐式表达，无需独立 state 寄存器。
+    // =========================================================================
+    // iss_pos_s = iss_pos * stride（继承原 ifb_rd_offset 的 shift 实现，支持 stride 1/2）
+    logic signed [16:0] iss_pos_s;
+    always_comb begin
+        case (cfg_stride)
+            3'd1:    iss_pos_s = $signed({11'd0, iss_pos});
+            3'd2:    iss_pos_s = $signed({10'd0, iss_pos, 1'b0});
+            default: iss_pos_s = $signed({11'd0, iss_pos});
+        endcase
+    end
+
+    logic signed [16:0] current_src_y, current_src_x;
+    assign current_src_y = y_row_base  + $signed({13'd0, ky_cnt});
+    assign current_src_x = x_tile_base + iss_pos_s + $signed({13'd0, kx_cnt});
+
+    logic is_pad_top_y, is_pad_bot_y, is_pad_left_x, is_pad_right_x, is_pad;
+    assign is_pad_top_y   = (current_src_y < 0);
+    assign is_pad_bot_y   = ($signed({1'b0, cfg_h_in}) <= current_src_y);
+    assign is_pad_left_x  = (current_src_x < 0);
+    assign is_pad_right_x = ($signed({1'b0, cfg_w_in}) <= current_src_x);
+    assign is_pad         = is_pad_top_y | is_pad_bot_y | is_pad_left_x | is_pad_right_x;
+
+    // =========================================================================
     // 握手 + IFB 读地址
     // =========================================================================
+    // Streaming forward-pressure: yout=Y 需要的最大行号 < rows_available 才可 issue。
+    //   新公式（考虑 pad_top）：rows_needed = max(y_row_base + K, 0)
+    //   y_row_base + K 在负数时表示"本 yout 完全在 pad_top 区，无需 IDMA 提供"
+    logic signed [16:0] rows_needed_signed;
+    logic [15:0] rows_needed;
+    assign rows_needed_signed = y_row_base + $signed({13'd0, cfg_k});
+    assign rows_needed        = (rows_needed_signed < 0) ? 16'd0 : rows_needed_signed[15:0];
+
+    logic streaming_rows_ready;
+    assign streaming_rows_ready = !cfg_idma_streaming || (rows_available >= rows_needed);
+
     logic issue_ok;
     assign issue_ok = (state == S_RUN) && !issues_all_done &&
-                      ({1'b0, fifo_count} + {6'b0, ifb_re_d1} < (CNT_W+1)'(ARF_DEPTH));
+                      ({1'b0, fifo_count} + {6'b0, issue_advance_d1} < (CNT_W+1)'(ARF_DEPTH)) &&
+                      streaming_rows_ready;
 
+    // 物理 IFB 读地址：沿用原 shift-based offset（stride 1/2）
     logic [ADDR_W-1:0] ifb_rd_offset;
     always_comb begin
         case (cfg_stride)
@@ -154,7 +215,7 @@ module line_buffer #(
         endcase
     end
 
-    assign ifb_re    = issue_ok;
+    assign ifb_re    = issue_ok && !is_pad;     // pad 位置不读 SRAM
     assign ifb_raddr = ptr_kx_base + ifb_rd_offset;
 
     assign act_valid = (fifo_count > 0);
@@ -162,7 +223,7 @@ module line_buffer #(
 
     logic act_fire, arrival;
     assign act_fire = act_valid & act_ready;
-    assign arrival  = ifb_re_d1;
+    assign arrival  = issue_advance_d1;          // 每个 issue 动作（含 pad）1 拍后入队
 
     // =========================================================================
     // 命名事件信号（comb）—— 把外层 6 级 wrap 链打平
@@ -199,7 +260,7 @@ module line_buffer #(
         state_next = state;
         case (state)
             S_IDLE : if (start)                                              state_next = S_RUN;
-            S_RUN  : if (issues_all_done && fifo_count == 0 && !ifb_re_d1)   state_next = S_DONE;
+            S_RUN  : if (issues_all_done && fifo_count == 0 && !issue_advance_d1) state_next = S_DONE;
             S_DONE : ;
             default:                                                          state_next = S_IDLE;
         endcase
@@ -361,11 +422,46 @@ module line_buffer #(
     end
 
     // =========================================================================
-    // IFB 读回延迟 1 拍：控制路径（gate act_buf 写入），复位必须。
+    // Padding 累加器 (Phase C-2)
+    //   y_row_base:  strip start = -pad_top; 每 yout 推进 += stride;
+    //                 cs 切换时回到 -pad_top。
+    //   x_tile_base: strip start = -pad_left; 每 tile 推进 += tile_in_step;
+    //                 yout 推进或 cs 切换时回到 -pad_left。
+    //   数据路径，evt_start 初始化（§6）。Signed 17-bit 足以覆盖负的 pad 起点
+    //   和正的 h_out * stride / w_in 终点。
+    // =========================================================================
+    logic signed [16:0] neg_pad_top_ext, neg_pad_left_ext;
+    assign neg_pad_top_ext  = -$signed({13'd0, cfg_pad_top});
+    assign neg_pad_left_ext = -$signed({13'd0, cfg_pad_left});
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)                            y_row_base <= neg_pad_top_ext;
+        else if (evt_iss_yout_wrap && !cs_is_last)     y_row_base <= neg_pad_top_ext;
+        else if (evt_iss_tile_wrap && !yout_is_last)   y_row_base <= y_row_base + $signed({14'd0, cfg_stride});
+        else                                           y_row_base <= y_row_base;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)                            x_tile_base <= neg_pad_left_ext;
+        else if (evt_iss_yout_wrap && !cs_is_last)     x_tile_base <= neg_pad_left_ext;
+        else if (evt_iss_tile_wrap && !yout_is_last)   x_tile_base <= neg_pad_left_ext;  // 新 yout 的 tile 0
+        else if (evt_iss_cins_wrap && !tile_is_last)   x_tile_base <= x_tile_base + $signed({1'b0, cfg_tile_in_step[15:0]});
+        else                                           x_tile_base <= x_tile_base;
+    end
+
+    // =========================================================================
+    // issue_advance 延迟 1 拍：控制路径（gate act_buf 写入），复位必须。
+    //   注意：原 ifb_re_d1 == issue_ok 延迟，现在 ifb_re = issue_ok & !is_pad，
+    //   但 issue_advance_d1 仍然 = issue_ok 延迟（pad 拍也要 arrival 把 0 入队）。
     // =========================================================================
     always_ff @(posedge clk) begin
-        if (!rst_n) ifb_re_d1 <= 1'b0;
-        else        ifb_re_d1 <= issue_ok;
+        if (!rst_n) issue_advance_d1 <= 1'b0;
+        else        issue_advance_d1 <= issue_ok;
+    end
+
+    // is_pad 延迟 1 拍，供 arrival 时选 0 / ifb_rdata
+    always_ff @(posedge clk) begin
+        if (issue_ok) is_pad_d1 <= is_pad;
     end
 
     // =========================================================================
@@ -396,10 +492,11 @@ module line_buffer #(
 
     // =========================================================================
     // act_buf 存储阵列（数据路径，无复位）
-    //   arrival=ifb_re_d1 门控写；下游 act_valid=fifo_count>0 遮蔽未初始化值。
+    //   arrival=issue_advance_d1 门控写；pad 位置 (is_pad_d1) 写 0，正常位置写
+    //   ifb_rdata。下游 act_valid=fifo_count>0 遮蔽未初始化值。
     // =========================================================================
     always_ff @(posedge clk) begin
-        if (arrival) act_buf[wr_idx] <= ifb_rdata;
+        if (arrival) act_buf[wr_idx] <= is_pad_d1 ? '0 : ifb_rdata;
         else         act_buf[wr_idx] <= act_buf[wr_idx];
     end
 

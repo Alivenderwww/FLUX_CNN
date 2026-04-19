@@ -43,8 +43,16 @@ module ofb_writer #(
     input  logic [7:0]                           cfg_num_tiles,
     input  logic [5:0]                           cfg_cout_slices,
     input  logic [ADDR_W-1:0]                    cfg_ofb_base,
-    input  logic [4:0]                           cfg_sdp_shift,
+    input  logic [5:0]                           cfg_sdp_shift,
     input  logic                                 cfg_sdp_relu_en,
+
+    // ---- Streaming 配置（v2） ----
+    // cfg_odma_streaming=1 时 OFB 变 ring；ofb_ptr 按 cfg_ofb_cout_step wrap；
+    // (rows_written - rows_drained >= cfg_ofb_strip_rows) 时反压 acc_out_ready=0
+    input  logic                                 cfg_odma_streaming,
+    input  logic [ADDR_W-1:0]                    cfg_ofb_cout_step,  // 环大小 in words
+    input  logic [5:0]                           cfg_ofb_strip_rows,
+    input  logic [15:0]                          rows_drained,       // 来自 ODMA
 
     // ---- upstream: parf_accum ----
     input  logic                                 acc_out_valid,
@@ -54,7 +62,11 @@ module ofb_writer #(
     // ---- OFB SRAM 写端口 ----
     output logic                                 ofb_we,
     output logic [$clog2(SRAM_DEPTH)-1:0]        ofb_waddr,
-    output logic [NUM_COL*DATA_WIDTH-1:0]        ofb_wdata
+    output logic [NUM_COL*DATA_WIDTH-1:0]        ofb_wdata,
+
+    // ---- Row-level credit 输出（给 ODMA streaming mode） ----
+    output logic                                 row_done_pulse,   // 每写完 1 行 OFM 脉冲
+    output logic [15:0]                          rows_written      // 累计写完的 OFM 行数
 );
 
     localparam int AW = $clog2(SRAM_DEPTH);
@@ -84,9 +96,14 @@ module ofb_writer #(
     // =========================================================================
     // 握手 + 边界
     // =========================================================================
+    // Streaming ring 反压：写满 strip_rows 行未被 ODMA 消费则停
+    logic ring_full;
+    assign ring_full = cfg_odma_streaming &&
+                       ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
+
     logic acc_fire;
-    assign acc_out_ready = (state == S_RUN);
-    assign acc_fire      = (state == S_RUN) && acc_out_valid && acc_out_ready;
+    assign acc_out_ready = (state == S_RUN) && !ring_full;
+    assign acc_fire      = acc_out_valid && acc_out_ready;
 
     logic x_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign x_is_last    = (x_cnt    == cur_valid_w       - 6'd1);
@@ -195,11 +212,36 @@ module ofb_writer #(
         else                                         cs_cnt <= cs_cnt;
     end
 
+    // ofb_ptr：streaming 模式按 cfg_ofb_cout_step wrap 回 cfg_ofb_base
+    logic [ADDR_W-1:0] ofb_ptr_wrap_limit_m1;
+    assign ofb_ptr_wrap_limit_m1 = cfg_ofb_base + cfg_ofb_cout_step - {{(ADDR_W-1){1'b0}}, 1'b1};
+
     always_ff @(posedge clk) begin
         if      (evt_start) ofb_ptr <= cfg_ofb_base;
-        else if (acc_fire)  ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
+        else if (acc_fire) begin
+            if (cfg_odma_streaming && (ofb_ptr == ofb_ptr_wrap_limit_m1))
+                ofb_ptr <= cfg_ofb_base;
+            else
+                ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
+        end
         else                ofb_ptr <= ofb_ptr;
     end
+
+    // =========================================================================
+    // Row-level credit 输出
+    //   row_done_pulse: 每次 evt_fire_tile_wrap （1 OFM 行写完）脉冲
+    //   rows_written: 累计计数（控制路径，复位必须）
+    // =========================================================================
+    assign row_done_pulse = evt_fire_tile_wrap;
+
+    logic [15:0] r_rows_written;
+    always_ff @(posedge clk) begin
+        if      (!rst_n)              r_rows_written <= 16'd0;
+        else if (evt_start)           r_rows_written <= 16'd0;
+        else if (evt_fire_tile_wrap)  r_rows_written <= r_rows_written + 16'd1;
+        else                          r_rows_written <= r_rows_written;
+    end
+    assign rows_written = r_rows_written;
 
     // =========================================================================
     // Simulation-only: acc 握手计数器 (parf_accum → ofb_writer)

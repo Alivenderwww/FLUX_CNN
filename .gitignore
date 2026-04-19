@@ -1,13 +1,16 @@
 sim/*/work
+sim/*/work_*
 sim/*/modelsim.ini
 sim/*/sim_results.txt
 sim/*/transcript
 sim/*/vsim.wlf
 sim/*/vsim_run.wlf
 sim/*/*.txt
+sim/*/*.hex
 sim/*/wlft*
 sim/*/__pycache__/
 sim/*/sim_params.f
+.claude/scheduled_tasks.lock
 work
 
 analysis

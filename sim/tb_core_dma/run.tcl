@@ -11,6 +11,9 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/DMA/idma.sv \
     ../../RTL/DMA/wdma.sv \
     ../../RTL/DMA/odma.sv \
+    ../../RTL/DMA/dfe.sv \
+    ../../RTL/desc_fifo.sv \
+    ../../RTL/sequencer.sv \
     ../../RTL/cfg_regs.sv \
     ../../RTL/mac_pe.sv \
     ../../RTL/mac_col.sv \
@@ -22,6 +25,6 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/core_top.sv \
     ../tb_axi_m_mux/axi_slave_mem.sv \
     tb_core_dma.sv
-vsim -c -sva -f ../tb_core_isa/sim_params.f -L work work.tb_core_dma
+vsim -c -voptargs="+acc" -sva -f sim_params.f -L work work.tb_core_dma
 run -all
 quit -f

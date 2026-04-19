@@ -142,7 +142,7 @@ module core_top #(
         .reg_r_addr(reg_r_addr), .reg_r_data(reg_r_data)
     );
 
-    logic [15:0]       cfg_h_out, cfg_w_in;
+    logic [15:0]       cfg_h_out, cfg_w_out, cfg_w_in;
     logic [3:0]        cfg_k;
     logic [2:0]        cfg_stride;
     logic [5:0]        cfg_cin_slices, cfg_cout_slices, cfg_tile_w, cfg_last_valid_w;
@@ -154,9 +154,18 @@ module core_top #(
     logic [ADDR_W-1:0] cfg_ifb_base, cfg_wb_base, cfg_ofb_base;
     logic [ADDR_W-1:0] cfg_ifb_cin_step, cfg_ifb_row_step;
     logic [ADDR_W-1:0] cfg_wb_cout_step;
+    logic [ADDR_W-1:0] cfg_ofb_cout_step;
     logic [ADDR_W-1:0] cfg_tile_in_step;
-    logic [4:0]        cfg_sdp_shift;
+    logic [5:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
+
+    // Phase C: descriptor list + new SDP fields
+    logic [31:0]       cfg_desc_list_base;
+    logic [15:0]       cfg_desc_count;
+    logic signed [31:0] cfg_sdp_mult;
+    logic signed [8:0]  cfg_sdp_zp_out, cfg_sdp_clip_min, cfg_sdp_clip_max;
+    logic              cfg_sdp_round_en;
+    logic [3:0]        cfg_pad_top_global, cfg_pad_left_global;
 
     // Streaming / ring cfg 输出（v2 用；v1 默认 0 等价 batch）
     logic [15:0]       cfg_h_in_total;
@@ -170,9 +179,40 @@ module core_top #(
     // CTRL / STATUS / DMA 相关
     logic              cfg_start_core_pulse, cfg_start_idma_pulse;
     logic              cfg_start_wdma_pulse, cfg_start_odma_pulse;
+    logic              cfg_start_dfe_pulse, cfg_start_layer_pulse;
     logic [31:0]       dma_idma_src_base, dma_wdma_src_base, dma_odma_dst_base;
     logic [23:0]       dma_idma_byte_len, dma_wdma_byte_len, dma_odma_byte_len;
     logic              idma_busy, idma_done, wdma_busy, wdma_done, odma_busy, odma_done;
+    logic              dfe_busy, dfe_done, layer_busy, layer_done;
+
+    // Sequencer → core pipeline
+    logic              seq_start_core_pulse, seq_start_wgt_pulse;
+    logic [15:0]       seq_strip_n_yout;
+    logic [3:0]        seq_pad_top, seq_pad_bot, seq_pad_left, seq_pad_right;
+    logic              seq_streaming_en;
+    logic [15:0]       seq_strip_y_start;
+
+    // Effective pad / ifb_base: layer_busy 时用 Sequencer 输出 (来自 descriptor);
+    // 否则用 cfg_regs 全局值 (Phase C-2 老 CTRL 路径 pad 验证通道)
+    logic [3:0]        eff_pad_top, eff_pad_left;
+    logic [ADDR_W-1:0] eff_ifb_base;
+    assign eff_pad_top  = layer_busy ? seq_pad_top  : cfg_pad_top_global;
+    assign eff_pad_left = layer_busy ? seq_pad_left : cfg_pad_left_global;
+    // 预扣 pad offset: cfg_ifb_base - pad_top * w_in - pad_left
+    //   pad_top 4 bit × w_in 16 bit → 20 bit
+    assign eff_ifb_base = cfg_ifb_base
+                        - ({{(ADDR_W-20){1'b0}}, {12'd0, eff_pad_top} * {4'd0, cfg_w_in}})
+                        - {{(ADDR_W-4){1'b0}}, eff_pad_left};
+
+    // desc FIFO
+    logic [255:0]      desc_fifo_wdata, desc_fifo_rdata;
+    logic              desc_fifo_we, desc_fifo_re;
+    logic              desc_fifo_full, desc_fifo_empty;
+
+    // Effective start + strip-level n_yout to core pipeline
+    logic              eff_start_core_pulse, eff_start_wgt_pulse;
+    assign eff_start_core_pulse = cfg_start_core_pulse | seq_start_core_pulse;
+    assign eff_start_wgt_pulse  = cfg_start_core_pulse | seq_start_wgt_pulse;
 
     cfg_regs #(
         .ADDR_W(CSR_ADDR_W),
@@ -186,11 +226,15 @@ module core_top #(
         .core_done(done),
         .idma_busy(idma_busy), .wdma_busy(wdma_busy), .odma_busy(odma_busy),
         .idma_done(idma_done), .wdma_done(wdma_done), .odma_done(odma_done),
+        .dfe_busy(dfe_busy), .dfe_done(dfe_done),
+        .layer_busy(layer_busy), .layer_done(layer_done),
         .start_core_pulse(cfg_start_core_pulse),
         .start_idma_pulse(cfg_start_idma_pulse),
         .start_wdma_pulse(cfg_start_wdma_pulse),
         .start_odma_pulse(cfg_start_odma_pulse),
-        .h_out(cfg_h_out), .w_out(/* unused */), .w_in(cfg_w_in),
+        .start_dfe_pulse(cfg_start_dfe_pulse),
+        .start_layer_pulse(cfg_start_layer_pulse),
+        .h_out(cfg_h_out), .w_out(cfg_w_out), .w_in(cfg_w_in),
         .k(cfg_k), .stride(cfg_stride),
         .cin_slices(cfg_cin_slices), .cout_slices(cfg_cout_slices),
         .tile_w(cfg_tile_w), .num_tiles(cfg_num_tiles), .last_valid_w(cfg_last_valid_w),
@@ -199,7 +243,7 @@ module core_top #(
         .ifb_base(cfg_ifb_base), .wb_base(cfg_wb_base), .ofb_base(cfg_ofb_base),
         .ifb_cin_step(cfg_ifb_cin_step), .ifb_row_step(cfg_ifb_row_step),
         .wb_cin_step(/* unused */), .wb_cout_step(cfg_wb_cout_step),
-        .ofb_cout_step(/* unused */), .tile_in_step(cfg_tile_in_step),
+        .ofb_cout_step(cfg_ofb_cout_step), .tile_in_step(cfg_tile_in_step),
         .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
         .h_in_total(cfg_h_in_total),
         .ifb_strip_rows(cfg_ifb_strip_rows),
@@ -210,7 +254,48 @@ module core_top #(
         .odma_streaming(cfg_odma_streaming),
         .idma_src_base(dma_idma_src_base), .idma_byte_len(dma_idma_byte_len),
         .wdma_src_base(dma_wdma_src_base), .wdma_byte_len(dma_wdma_byte_len),
-        .odma_dst_base(dma_odma_dst_base), .odma_byte_len(dma_odma_byte_len)
+        .odma_dst_base(dma_odma_dst_base), .odma_byte_len(dma_odma_byte_len),
+        .desc_list_base(cfg_desc_list_base), .desc_count(cfg_desc_count),
+        .sdp_mult(cfg_sdp_mult), .sdp_zp_out(cfg_sdp_zp_out),
+        .sdp_clip_min(cfg_sdp_clip_min), .sdp_clip_max(cfg_sdp_clip_max),
+        .sdp_round_en(cfg_sdp_round_en),
+        .pad_top(cfg_pad_top_global), .pad_left(cfg_pad_left_global)
+    );
+
+    // =========================================================================
+    // 1b. Descriptor FIFO + Sequencer (Phase C-1)
+    // =========================================================================
+    desc_fifo #(.DEPTH(32), .WIDTH(256)) u_desc_fifo (
+        .clk(clk), .rst_n(rst_n),
+        .wr_en  (desc_fifo_we),
+        .wr_data(desc_fifo_wdata),
+        .full   (desc_fifo_full),
+        .rd_en  (desc_fifo_re),
+        .rd_data(desc_fifo_rdata),
+        .empty  (desc_fifo_empty),
+        .count  ()
+    );
+
+    sequencer u_sequencer (
+        .clk(clk), .rst_n(rst_n),
+        .start_layer_pulse   (cfg_start_layer_pulse),
+        .layer_busy          (layer_busy),
+        .layer_done          (layer_done),
+        .fifo_rd_data        (desc_fifo_rdata),
+        .fifo_empty          (desc_fifo_empty),
+        .fifo_rd_en          (desc_fifo_re),
+        .cfg_h_out_total     (cfg_h_out),
+        .strip_n_yout        (seq_strip_n_yout),
+        .strip_pad_top       (seq_pad_top),
+        .strip_pad_bot       (seq_pad_bot),
+        .strip_pad_left      (seq_pad_left),
+        .strip_pad_right     (seq_pad_right),
+        .strip_streaming_en  (seq_streaming_en),
+        .strip_y_start       (seq_strip_y_start),
+        .start_core_pulse    (seq_start_core_pulse),
+        .start_wgt_pulse     (seq_start_wgt_pulse),
+        .core_strip_done     (done),
+        .wdma_done           (wdma_done)
     );
 
     // =========================================================================
@@ -314,6 +399,7 @@ module core_top #(
     // =========================================================================
     logic lb_done;
     logic [15:0] rows_consumed;
+    logic [15:0] rows_available;   // IDMA rows_written → line_buffer 做 forward-pressure
 
     line_buffer #(
         .NUM_PE    (NUM_PE),
@@ -324,9 +410,9 @@ module core_top #(
     ) u_line_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (cfg_start_core_pulse),
+        .start            (eff_start_core_pulse),
         .done             (lb_done),
-        .cfg_h_out        (cfg_h_out),
+        .cfg_h_out        (seq_strip_n_yout),
         .cfg_w_in         (cfg_w_in),
         .cfg_k            (cfg_k),
         .cfg_stride       (cfg_stride),
@@ -335,10 +421,13 @@ module core_top #(
         .cfg_tile_w       (cfg_tile_w),
         .cfg_num_tiles    (cfg_num_tiles),
         .cfg_last_valid_w (cfg_last_valid_w),
-        .cfg_ifb_base     (cfg_ifb_base),
+        .cfg_ifb_base     (eff_ifb_base),
         .cfg_ifb_cin_step (cfg_ifb_cin_step),
         .cfg_ifb_row_step (cfg_ifb_row_step),
         .cfg_tile_in_step (cfg_tile_in_step),
+        .cfg_pad_top      (eff_pad_top),
+        .cfg_pad_left     (eff_pad_left),
+        .cfg_h_in         (cfg_h_in_total),
         .cfg_idma_streaming(cfg_idma_streaming),
         .ifb_re           (ifb_re),
         .ifb_raddr        (ifb_raddr),
@@ -346,7 +435,8 @@ module core_top #(
         .act_valid        (act_valid),
         .act_vec          (act_vec),
         .act_ready        (act_ready),
-        .rows_consumed    (rows_consumed)
+        .rows_consumed    (rows_consumed),
+        .rows_available   (rows_available)
     );
 
     // =========================================================================
@@ -364,7 +454,7 @@ module core_top #(
     ) u_wgt_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (cfg_start_core_pulse),
+        .start            (eff_start_wgt_pulse),
         .done             (wb_done),
         .cfg_h_out        (cfg_h_out),
         .cfg_cin_slices   (cfg_cin_slices),
@@ -442,8 +532,13 @@ module core_top #(
 
     // =========================================================================
     // 8. ofb_writer (含 SDP)
+    //    streaming 下 row_done_pulse → ODMA，ODMA 的 rows_drained 反馈回来做
+    //    OFB ring 反压
     // =========================================================================
     logic ow_done;
+    logic row_done_pulse;
+    logic [15:0] rows_written;   // debug only
+    logic [15:0] rows_drained;
 
     ofb_writer #(
         .NUM_COL   (NUM_COL),
@@ -454,9 +549,9 @@ module core_top #(
     ) u_ofb_writer (
         .clk              (clk),
         .rst_n            (rst_n),
-        .start            (cfg_start_core_pulse),
+        .start            (eff_start_core_pulse),
         .done             (ow_done),
-        .cfg_h_out        (cfg_h_out),
+        .cfg_h_out        (seq_strip_n_yout),
         .cfg_tile_w       (cfg_tile_w),
         .cfg_last_valid_w (cfg_last_valid_w),
         .cfg_num_tiles    (cfg_num_tiles),
@@ -464,12 +559,18 @@ module core_top #(
         .cfg_ofb_base     (cfg_ofb_base),
         .cfg_sdp_shift    (cfg_sdp_shift),
         .cfg_sdp_relu_en  (cfg_sdp_relu_en),
+        .cfg_odma_streaming(cfg_odma_streaming),
+        .cfg_ofb_cout_step (cfg_ofb_cout_step),
+        .cfg_ofb_strip_rows(cfg_ofb_strip_rows),
+        .rows_drained      (rows_drained),
         .acc_out_valid    (acc_out_valid),
         .acc_out_vec      (acc_out_vec),
         .acc_out_ready    (acc_out_ready),
         .ofb_we           (ofb_we),
         .ofb_waddr        (ofb_waddr),
-        .ofb_wdata        (ofb_wdata)
+        .ofb_wdata        (ofb_wdata),
+        .row_done_pulse   (row_done_pulse),
+        .rows_written     (rows_written)
     );
 
     // =========================================================================
@@ -512,7 +613,7 @@ module core_top #(
     logic [N_MST-1:0]                     m_rvalid;
     logic [N_MST-1:0]                     m_rready;
 
-    // M[3] (reserved) tie 0
+    // M[3] = DFE (read only; AW/W/B 通道 tie 0)
     assign m_awid   [3] = '0;
     assign m_awaddr [3] = '0;
     assign m_awlen  [3] = '0;
@@ -523,12 +624,23 @@ module core_top #(
     assign m_wlast  [3] = 1'b0;
     assign m_wvalid [3] = 1'b0;
     assign m_bready [3] = 1'b1;
-    assign m_arid   [3] = '0;
-    assign m_araddr [3] = '0;
-    assign m_arlen  [3] = '0;
-    assign m_arburst[3] = 2'b01;
-    assign m_arvalid[3] = 1'b0;
-    assign m_rready [3] = 1'b1;
+
+    dfe #(
+        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+        .M_ID(AXI_M_ID), .FIFO_W(256)
+    ) u_dfe (
+        .clk(clk), .rst_n(rst_n),
+        .start          (cfg_start_dfe_pulse),
+        .done           (dfe_done),
+        .busy           (dfe_busy),
+        .desc_list_base (cfg_desc_list_base),
+        .desc_count     (cfg_desc_count),
+        .M_ARID(m_arid[3]), .M_ARADDR(m_araddr[3]), .M_ARLEN(m_arlen[3]),
+        .M_ARBURST(m_arburst[3]), .M_ARVALID(m_arvalid[3]), .M_ARREADY(m_arready[3]),
+        .M_RID(m_rid[3]), .M_RDATA(m_rdata[3]), .M_RRESP(m_rresp[3]),
+        .M_RLAST(m_rlast[3]), .M_RVALID(m_rvalid[3]), .M_RREADY(m_rready[3]),
+        .fifo_wdata(desc_fifo_wdata), .fifo_we(desc_fifo_we), .fifo_full(desc_fifo_full)
+    );
 
     // IDMA (M[0])
     idma #(
@@ -544,6 +656,7 @@ module core_top #(
         .cfg_w_in          (cfg_w_in),
         .cfg_ifb_cin_step  (cfg_ifb_cin_step),
         .rows_consumed     (rows_consumed),
+        .rows_available    (rows_available),
         .M_AWID(m_awid[0]), .M_AWADDR(m_awaddr[0]), .M_AWLEN(m_awlen[0]),
         .M_AWBURST(m_awburst[0]), .M_AWVALID(m_awvalid[0]), .M_AWREADY(m_awready[0]),
         .M_WDATA(m_wdata[0]), .M_WSTRB(m_wstrb[0]), .M_WLAST(m_wlast[0]),
@@ -584,6 +697,13 @@ module core_top #(
         .clk(clk), .rst_n(rst_n),
         .start(cfg_start_odma_pulse), .done(odma_done), .busy(odma_busy),
         .dst_base(dma_odma_dst_base), .byte_len(dma_odma_byte_len),
+        .cfg_odma_streaming    (cfg_odma_streaming),
+        .cfg_h_out_total       (cfg_h_out),
+        .cfg_w_out             (cfg_w_out),
+        .cfg_ddr_ofm_row_stride({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ofm_row_stride}),
+        .cfg_ofb_cout_step     (cfg_ofb_cout_step),
+        .row_done_pulse        (row_done_pulse),
+        .rows_drained          (rows_drained),
         .M_AWID(m_awid[2]), .M_AWADDR(m_awaddr[2]), .M_AWLEN(m_awlen[2]),
         .M_AWBURST(m_awburst[2]), .M_AWVALID(m_awvalid[2]), .M_AWREADY(m_awready[2]),
         .M_WDATA(m_wdata[2]), .M_WSTRB(m_wstrb[2]), .M_WLAST(m_wlast[2]),

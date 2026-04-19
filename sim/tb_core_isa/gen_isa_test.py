@@ -40,6 +40,10 @@ def parse_args():
     p.add_argument('--tile_w',   type=int, default=32)
     p.add_argument('--seed',     type=int, default=42)
     p.add_argument('--shift',    type=int, default=0)
+    # Phase C-2 padding（对称：top=bot, left=right）
+    p.add_argument('--pad',      type=int, default=0, help='symmetric pad (pad_top=pad_left=pad)')
+    p.add_argument('--pad_top',  type=int, default=None)
+    p.add_argument('--pad_left', type=int, default=None)
     return p.parse_args()
 
 
@@ -47,7 +51,9 @@ def parse_args():
 # Main generation
 # ---------------------------------------------------------------------------
 def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
-             shift_amt=0, stride=1, HW_PE=16, HW_COL=16):
+             shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
+             pad_top=0, pad_left=0):
+    pad_bot, pad_right = pad_top, pad_left  # 对称 pad
     import random
     random.seed(seed)
 
@@ -57,9 +63,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     cin_slices  = (NUM_CIN  + HW_PE  - 1) // HW_PE
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
 
-    # No padding in phase 1 FSM
-    H_OUT = (H_IN - K) // stride + 1
-    W_OUT = (W_IN - K) // stride + 1
+    # Phase C-2: H/W_OUT 考虑 padding
+    H_OUT = (H_IN + pad_top + pad_bot - K) // stride + 1
+    W_OUT = (W_IN + pad_left + pad_right - K) // stride + 1
     if H_OUT <= 0 or W_OUT <= 0:
         sys.exit(f"ERROR: invalid output {H_OUT}x{W_OUT}")
 
@@ -167,9 +173,11 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
                     for ky in range(K):
                         for kx in range(K):
                             for cin in range(NUM_CIN):
-                                iy = yout * stride + ky
-                                ix = px   * stride + kx
-                                psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
+                                iy = yout * stride + ky - pad_top
+                                ix = px   * stride + kx - pad_left
+                                if 0 <= iy < H_IN and 0 <= ix < W_IN:
+                                    psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
+                                # else: pad 0, contributes nothing
                     act = max(0, min(255, psum >> shift_amt))
                     pixel_val |= (act & 0xFF) << (lc * 8)
                 expected_ofm.append(f"{pixel_val:0{HW_COL * 2}X}")
@@ -207,6 +215,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         'TILE_IN_STEP'  : TILE_IN_STEP,
         'SDP_SHIFT'     : shift_amt,
         'SDP_RELU_EN'   : 1,
+        'H_IN_TOTAL'    : H_IN,        # Phase C-2: line_buffer 用 cfg_h_in 判 is_pad_bot_y
+        'PAD_TOP'       : pad_top,
+        'PAD_LEFT'      : pad_left,
     }
     with open('config.txt', 'w') as f:
         for k, v in cfg.items():
@@ -222,8 +233,11 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
 
 if __name__ == '__main__':
     args = parse_args()
+    pad_t = args.pad_top  if args.pad_top  is not None else args.pad
+    pad_l = args.pad_left if args.pad_left is not None else args.pad
     generate(H_IN=args.h_in, W_IN=args.w_in, K=args.k,
              NUM_CIN=args.num_cin, NUM_COUT=args.num_cout,
              TILE_W=args.tile_w, seed=args.seed,
              shift_amt=args.shift, stride=args.stride,
-             HW_PE=args.hw_pe, HW_COL=args.hw_col)
+             HW_PE=args.hw_pe, HW_COL=args.hw_col,
+             pad_top=pad_t, pad_left=pad_l)

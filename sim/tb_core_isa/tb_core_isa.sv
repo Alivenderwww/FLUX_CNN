@@ -54,6 +54,9 @@ module tb_core_isa;
     localparam [11:0] ADDR_TILE_IN_STEP     = 12'h15C;
     localparam [11:0] ADDR_SDP_SHIFT        = 12'h160;
     localparam [11:0] ADDR_SDP_RELU_EN      = 12'h164;
+    localparam [11:0] ADDR_H_IN_TOTAL       = 12'h168;
+    localparam [11:0] ADDR_PAD_TOP          = 12'h1A0;
+    localparam [11:0] ADDR_PAD_LEFT         = 12'h1A4;
 
     logic clk;
     logic rst_n;
@@ -225,6 +228,9 @@ module tb_core_isa;
                 "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
                 "SDP_SHIFT"      : axi_lite_write(ADDR_SDP_SHIFT,       val);
                 "SDP_RELU_EN"    : axi_lite_write(ADDR_SDP_RELU_EN,     val);
+                "H_IN_TOTAL"     : axi_lite_write(ADDR_H_IN_TOTAL,      val);
+                "PAD_TOP"        : axi_lite_write(ADDR_PAD_TOP,         val);
+                "PAD_LEFT"       : axi_lite_write(ADDR_PAD_LEFT,        val);
                 default          : $display("WARN: unknown config key '%s'", key);
             endcase
         end
@@ -240,6 +246,41 @@ module tb_core_isa;
         $display("========================================");
         $display("FATAL: simulation timeout (50ms)");
         $display("========================================");
+        $display("-- line_buffer --");
+        $display("  state=%0d issues_all_done=%0d",
+                 u_core_top.u_line_buffer.state,
+                 u_core_top.u_line_buffer.issues_all_done);
+        $display("  iss_pos=%0d kx=%0d ky=%0d cins=%0d tile=%0d yout=%0d cs=%0d",
+                 u_core_top.u_line_buffer.iss_pos,
+                 u_core_top.u_line_buffer.kx_cnt,
+                 u_core_top.u_line_buffer.ky_cnt,
+                 u_core_top.u_line_buffer.cins_cnt,
+                 u_core_top.u_line_buffer.tile_cnt,
+                 u_core_top.u_line_buffer.yout_cnt,
+                 u_core_top.u_line_buffer.cs_cnt);
+        $display("  fifo_count=%0d wr_idx=%0d rd_idx=%0d issue_advance_d1=%0d",
+                 u_core_top.u_line_buffer.fifo_count,
+                 u_core_top.u_line_buffer.wr_idx,
+                 u_core_top.u_line_buffer.rd_idx,
+                 u_core_top.u_line_buffer.issue_advance_d1);
+        $display("  act_valid=%0d act_ready=%0d is_pad=%0d",
+                 u_core_top.u_line_buffer.act_valid,
+                 u_core_top.u_line_buffer.act_ready,
+                 u_core_top.u_line_buffer.is_pad);
+        $display("  cur_valid_w=%0d iss_pos_is_last=%0d evt_iss_pos_wrap=%0d",
+                 u_core_top.u_line_buffer.cur_valid_w,
+                 u_core_top.u_line_buffer.iss_pos_is_last,
+                 u_core_top.u_line_buffer.evt_iss_pos_wrap);
+        $display("-- ofb_writer --");
+        $display("  state=%0d x_cnt=%0d tile_cnt=%0d yout_cnt=%0d cs_cnt=%0d",
+                 u_core_top.u_ofb_writer.state,
+                 u_core_top.u_ofb_writer.x_cnt,
+                 u_core_top.u_ofb_writer.tile_cnt,
+                 u_core_top.u_ofb_writer.yout_cnt,
+                 u_core_top.u_ofb_writer.cs_cnt);
+        $display("  acc_out_valid=%0d acc_out_ready=%0d",
+                 u_core_top.u_ofb_writer.acc_out_valid,
+                 u_core_top.u_ofb_writer.acc_out_ready);
         $stop;
     end
 

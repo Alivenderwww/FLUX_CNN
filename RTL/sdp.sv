@@ -22,7 +22,7 @@ module sdp #(
     parameter int PSUM_WIDTH = 32
 )(
     // --- Parameter configuration (静态，由 cfg_regs 直接驱动) ---
-    input  logic [4:0]                        shift_amt,      // arithmetic right-shift amount
+    input  logic [5:0]                        shift_amt,      // arithmetic right-shift amount
 
     // --- Data path ---
     // Input: packed partial sums from PARF, one per column

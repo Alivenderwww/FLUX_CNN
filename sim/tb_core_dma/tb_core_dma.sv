@@ -27,16 +27,19 @@ module tb_core_dma;
     localparam AXI_M_ID   = 2;
     localparam AXI_M_W    = 2;
     localparam BUS_ID_W   = AXI_M_ID + AXI_M_W;   // 4
-    localparam DDR_DEPTH  = 65536;                 // 1 MB，128-bit words
+    localparam DDR_DEPTH  = 1048576;               // 16 MB，128-bit words (支持 480x640 流式 double)
 
     localparam IFB_WIDTH  = NUM_PE * DATA_WIDTH;       // 128
     localparam WB_WIDTH   = NUM_COL*NUM_PE*DATA_WIDTH; // 2048
     localparam OFB_WIDTH  = NUM_COL * DATA_WIDTH;      // 128
 
     // DDR 布局（byte 地址）
+    //   IFB:  [0, 8MB)  — 480x640x16 = 4.9 MB 够用
+    //   WB:   [8MB, 9MB) — 固定小空间
+    //   OFB:  [9MB, 16MB) — 7 MB，放 480x640 OFM
     localparam [31:0] DDR_IFB_BASE = 32'h0000_0000;
-    localparam [31:0] DDR_WB_BASE  = 32'h0002_0000;   // 128 KB offset
-    localparam [31:0] DDR_OFB_BASE = 32'h0004_0000;   // 256 KB offset
+    localparam [31:0] DDR_WB_BASE  = 32'h0080_0000;
+    localparam [31:0] DDR_OFB_BASE = 32'h0090_0000;
 
     // cfg_regs 地址（和 RTL 对齐）
     localparam [11:0] ADDR_CTRL             = 12'h000;
@@ -66,6 +69,14 @@ module tb_core_dma;
     localparam [11:0] ADDR_TILE_IN_STEP     = 12'h15C;
     localparam [11:0] ADDR_SDP_SHIFT        = 12'h160;
     localparam [11:0] ADDR_SDP_RELU_EN      = 12'h164;
+    localparam [11:0] ADDR_H_IN_TOTAL       = 12'h168;
+    localparam [11:0] ADDR_IFB_STRIP_ROWS   = 12'h16C;
+    localparam [11:0] ADDR_OFB_STRIP_ROWS   = 12'h170;
+    localparam [11:0] ADDR_DDR_IFM_ROW_STR  = 12'h174;
+    localparam [11:0] ADDR_DDR_OFM_ROW_STR  = 12'h178;
+    localparam [11:0] ADDR_DMA_MODE         = 12'h17C;
+    localparam [11:0] ADDR_PAD_TOP          = 12'h1A0;
+    localparam [11:0] ADDR_PAD_LEFT         = 12'h1A4;
     localparam [11:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [11:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
     localparam [11:0] ADDR_WDMA_SRC_BASE    = 12'h210;
@@ -153,15 +164,18 @@ module tb_core_dma;
     );
 
     // ================== 预填 DDR ==================
-    logic [BUS_DATA_W-1:0] ifb_arr [0:65535];
+    // 数组尺寸 = DDR_DEPTH 的同量级，支持 480x640 级别流式
+    logic [BUS_DATA_W-1:0] ifb_arr [0:524287];
     logic [WB_WIDTH-1:0]   wb_arr  [0:2047];
-    logic [OFB_WIDTH-1:0]  exp_arr [0:65535];
+    logic [OFB_WIDTH-1:0]  exp_arr [0:524287];
+    // 注意：这里保留 512K 上限（480x640=307200 < 524288），够用；
+    // 若将来测更大图再同步 DDR_DEPTH / 数组尺寸。
 
     task automatic preload_ddr(input int ifb_words, input int wb_words);
         int ifb_base_w = DDR_IFB_BASE / 16;
         int wb_base_w  = DDR_WB_BASE  / 16;
-        $readmemh("../tb_core_isa/ifb.txt", ifb_arr);
-        $readmemh("../tb_core_isa/wb.txt",  wb_arr);
+        $readmemh("./ifb.txt", ifb_arr);
+        $readmemh("./wb.txt",  wb_arr);
 
         // IFB: 128-bit lines 直接填 DDR
         for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
@@ -189,13 +203,16 @@ module tb_core_dma;
         csr_bready  <= 1'b0;
     endtask
 
+    // TB 侧记录的 DMA_MODE（load_config 里更新）——用于主流程分流 batch / streaming
+    logic [1:0] dma_mode_cfg = 2'b00;
+
     task automatic load_config();
         int      fd;
         string   line;
         string   key;
         int      val;
         int      count;
-        fd = $fopen("../tb_core_isa/config.txt", "r");
+        fd = $fopen("./config.txt", "r");
         while (!$feof(fd)) begin
             void'($fgets(line, fd));
             if (line.len() == 0) continue;
@@ -228,6 +245,17 @@ module tb_core_dma;
                 "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
                 "SDP_SHIFT"      : axi_lite_write(ADDR_SDP_SHIFT,       val);
                 "SDP_RELU_EN"    : axi_lite_write(ADDR_SDP_RELU_EN,     val);
+                "H_IN_TOTAL"     : axi_lite_write(ADDR_H_IN_TOTAL,      val);
+                "IFB_STRIP_ROWS" : axi_lite_write(ADDR_IFB_STRIP_ROWS,  val);
+                "OFB_STRIP_ROWS" : axi_lite_write(ADDR_OFB_STRIP_ROWS,  val);
+                "DDR_IFM_ROW_STRIDE" : axi_lite_write(ADDR_DDR_IFM_ROW_STR, val);
+                "DDR_OFM_ROW_STRIDE" : axi_lite_write(ADDR_DDR_OFM_ROW_STR, val);
+                "DMA_MODE"       : begin
+                                      axi_lite_write(ADDR_DMA_MODE,     val);
+                                      dma_mode_cfg = val[1:0];
+                                   end
+                "PAD_TOP"        : axi_lite_write(ADDR_PAD_TOP,         val);
+                "PAD_LEFT"       : axi_lite_write(ADDR_PAD_LEFT,        val);
                 default          : ;
             endcase
         end
@@ -296,7 +324,7 @@ module tb_core_dma;
 
         // DDR 预填
         preload_ddr(ifb_words, wb_words);
-        $readmemh("../tb_core_isa/expected_ofm.txt", exp_arr);
+        $readmemh("./expected_ofm.txt", exp_arr);
 
         // cfg
         load_config();
@@ -309,30 +337,50 @@ module tb_core_dma;
         axi_lite_write(ADDR_ODMA_DST_BASE, DDR_OFB_BASE);
         axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
 
-        // Phase 1: IDMA + WDMA
-        $display("== Phase 1: trigger IDMA + WDMA ==");
-        axi_lite_write(ADDR_CTRL, 32'h0000_0006);   // CTRL[1]=IDMA, [2]=WDMA
-        wait (u_core.idma_busy == 1'b1);
-        wait (u_core.wdma_busy == 1'b1);
-        wait (u_core.idma_busy == 1'b0);
-        wait (u_core.wdma_busy == 1'b0);
-        @(posedge clk);
-        $display("   IDMA+WDMA done at t=%0t", $time);
+        if (dma_mode_cfg == 2'b00) begin
+            // ---------------- Batch mode ----------------
+            $display("== Phase 1: trigger IDMA + WDMA ==");
+            axi_lite_write(ADDR_CTRL, 32'h0000_0006);   // CTRL[1]=IDMA, [2]=WDMA
+            wait (u_core.idma_busy == 1'b1);
+            wait (u_core.wdma_busy == 1'b1);
+            wait (u_core.idma_busy == 1'b0);
+            wait (u_core.wdma_busy == 1'b0);
+            @(posedge clk);
+            $display("   IDMA+WDMA done at t=%0t", $time);
 
-        // Phase 2: core
-        $display("== Phase 2: trigger core ==");
-        axi_lite_write(ADDR_CTRL, 32'h0000_0001);
-        wait (done == 1'b1);
-        @(posedge clk);
-        $display("   Core done at t=%0t", $time);
+            $display("== Phase 2: trigger core ==");
+            axi_lite_write(ADDR_CTRL, 32'h0000_0001);
+            wait (done == 1'b1);
+            @(posedge clk);
+            $display("   Core done at t=%0t", $time);
 
-        // Phase 3: ODMA
-        $display("== Phase 3: trigger ODMA ==");
-        axi_lite_write(ADDR_CTRL, 32'h0000_0008);
-        wait (u_core.odma_busy == 1'b1);
-        wait (u_core.odma_busy == 1'b0);
-        @(posedge clk);
-        $display("   ODMA done at t=%0t", $time);
+            $display("== Phase 3: trigger ODMA ==");
+            axi_lite_write(ADDR_CTRL, 32'h0000_0008);
+            wait (u_core.odma_busy == 1'b1);
+            wait (u_core.odma_busy == 1'b0);
+            @(posedge clk);
+            $display("   ODMA done at t=%0t", $time);
+        end else begin
+            // ---------------- Streaming mode ----------------
+            // Phase 1: WDMA 独跑（权重必须 ready 后 wgt_buffer 才能读）
+            $display("== Streaming Phase 1: trigger WDMA ==");
+            axi_lite_write(ADDR_CTRL, 32'h0000_0004);   // CTRL[2]=WDMA
+            wait (u_core.wdma_busy == 1'b1);
+            wait (u_core.wdma_busy == 1'b0);
+            @(posedge clk);
+            $display("   WDMA done at t=%0t", $time);
+
+            // Phase 2: IDMA + CORE + ODMA 三路并发 (CTRL[0,1,3]=1, 即 0xB)
+            $display("== Streaming Phase 2: IDMA + CORE + ODMA concurrent ==");
+            axi_lite_write(ADDR_CTRL, 32'h0000_000B);
+            wait (u_core.idma_busy == 1'b1);
+            wait (u_core.odma_busy == 1'b1);
+            wait (done == 1'b1);
+            wait (u_core.idma_busy == 1'b0);
+            wait (u_core.odma_busy == 1'b0);
+            @(posedge clk);
+            $display("   Stream done: core+idma+odma all quiet at t=%0t", $time);
+        end
 
         // 对比 DDR 的 OFB 区 vs expected
         mismatch_cnt = 0;

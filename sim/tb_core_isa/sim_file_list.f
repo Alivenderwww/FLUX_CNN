@@ -8,6 +8,9 @@
 ../../RTL/DMA/idma.sv
 ../../RTL/DMA/wdma.sv
 ../../RTL/DMA/odma.sv
+../../RTL/DMA/dfe.sv
+../../RTL/desc_fifo.sv
+../../RTL/sequencer.sv
 ../../RTL/cfg_regs.sv
 ../../RTL/mac_pe.sv
 ../../RTL/mac_col.sv

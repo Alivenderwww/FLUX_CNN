@@ -14,9 +14,17 @@
 //   - 同拍同址：组合读旧值 → drain 拿 tile N；同步写覆盖 → 下拍 register = tile N+1
 //   - 但 fill 不能在 first_round 内领先 drain (否则后续 drain 会读到 tile N+1)
 //
-// 同步规则：**overlap 期间 fill 只能在 drain 也 fire 时 fire**。
+// 同步规则 1（overlap first_round）：
 //   overlap = drain_active && fill_first_round
 //   psum_in_ready = overlap ? acc_out_ready : 1'b1
+//
+// 同步规则 2（fill_tile_done vs drain_tile_done，Phase C-2 bug fix）：
+//   当 cur_valid_w_fill 很小（特别是 last_valid_w=1）时，fill tile 总时间
+//   (kk × cins × cur_valid_w) 可能 **小于** drain 前一 tile 的时间
+//   (cur_valid_w_drain)。此时 fill 提前完成会触发 fill_tile_done，
+//   进而覆盖 drain_tile_cnt / rd_addr，破坏进行中的 drain 导致死锁。
+//   Fix：fill 的最后一 fire (会触发 fill_tile_done) 需要等 drain 完成前一
+//   tile（drain_tile_done 拉高或 drain_active=0）。
 // =============================================================================
 
 module parf_accum #(
@@ -84,14 +92,25 @@ module parf_accum #(
 
     // =========================================================================
     // 握手
+    //   规则 1：overlap 同步 (first_round)
+    //   规则 2：fill 即将 tile_done 但 drain 前一 tile 未完，stall fill 最后一
+    //           fire（否则会覆盖 drain_tile_cnt / rd_addr 导致死锁）
     // =========================================================================
-    assign psum_in_ready = !overlap || acc_out_ready;
+    logic drain_fire;
+    assign drain_fire = drain_active && acc_out_ready;
+
+    logic fill_would_tile_done;
+    logic drain_stall_fill;
+    assign fill_would_tile_done = wr_is_last_col && kk_is_last && cins_is_last;
+    assign drain_stall_fill     = fill_would_tile_done && drain_active &&
+                                  !(drain_fire && rd_is_last);  // drain 本拍不完成
+
+    assign psum_in_ready = (!overlap || acc_out_ready) && !drain_stall_fill;
     assign acc_out_valid = drain_active;
     assign acc_out_vec   = parf_data[rd_addr];
 
-    logic fill_fire, drain_fire;
-    assign fill_fire  = psum_in_valid && psum_in_ready;
-    assign drain_fire = drain_active  && acc_out_ready;
+    logic fill_fire;
+    assign fill_fire = psum_in_valid && psum_in_ready;
 
     // =========================================================================
     // 命名事件（comb）—— 把 FILL 推进链打平成一组 wrap 标志

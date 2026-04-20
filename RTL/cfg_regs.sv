@@ -31,12 +31,9 @@
 //   0x13C  IFB_BASE          [19:0]
 //   0x140  WB_BASE           [19:0]
 //   0x144  OFB_BASE          [19:0]
-//   0x148  IFB_CIN_STEP      [19:0]
-//   0x14C  IFB_ROW_STEP      [19:0]
-//   0x150  WB_CIN_STEP       [19:0]
+//   0x14C  IFB_ROW_STEP      [19:0]            (NHWC: stride × W_IN × cin_slices)
 //   0x154  WB_COUT_STEP      [19:0]
-//   0x158  OFB_COUT_STEP     [19:0]
-//   0x15C  TILE_IN_STEP      [19:0]
+//   0x15C  TILE_IN_STEP      [19:0]            (NHWC: TILE_W × stride × cin_slices)
 //   0x160  SDP_SHIFT         [5:0]
 //   0x164  SDP_RELU_EN       [0]
 //   0x168  H_IN_TOTAL        [15:0]            整图输入高度
@@ -52,6 +49,12 @@
 //   0x190  SDP_CLIP_MIN      [8:0]   signed
 //   0x194  SDP_CLIP_MAX      [8:0]   signed
 //   0x198  SDP_ROUND_EN      [0]
+//   0x1A0  IFB_RING_WORDS    [19:0]            (ifb_strip_rows × W_IN × cin_slices, word 单位)
+//   0x1A4  OFB_ROW_WORDS     [19:0]            (W_OUT × cout_slices, word 单位)
+//   0x1A8  OFB_RING_WORDS    [19:0]            (ofb_strip_rows × W_OUT × cout_slices)
+//   0x1AC  IFB_ISS_STEP      [19:0]            (stride × cin_slices, IFB 跨像素 word 步长)
+//   0x1B0  IFB_KY_STEP       [19:0]            (W_IN × cin_slices, IFB 跨 ky 行 word 步长)
+//   0x1B4  TILE_PIX_STEP     [15:0]            (TILE_W × stride, 像素域 tile 步长 for pad 判定)
 //   0x200  IDMA_SRC_BASE     [31:0]
 //   0x204  IDMA_BYTE_LEN     [23:0]             (保留，WDMA 用；IDMA 实际 len 由 descriptor 覆盖)
 //   0x210  WDMA_SRC_BASE     [31:0]
@@ -114,11 +117,8 @@ module cfg_regs #(
     output logic [CORE_ADDR_W-1:0]   ifb_base,
     output logic [CORE_ADDR_W-1:0]   wb_base,
     output logic [CORE_ADDR_W-1:0]   ofb_base,
-    output logic [CORE_ADDR_W-1:0]   ifb_cin_step,
     output logic [CORE_ADDR_W-1:0]   ifb_row_step,
-    output logic [CORE_ADDR_W-1:0]   wb_cin_step,
     output logic [CORE_ADDR_W-1:0]   wb_cout_step,
-    output logic [CORE_ADDR_W-1:0]   ofb_cout_step,
     output logic [CORE_ADDR_W-1:0]   tile_in_step,
     output logic [5:0]               sdp_shift,
     output logic                     sdp_relu_en,
@@ -147,7 +147,15 @@ module cfg_regs #(
     output logic signed [8:0]        sdp_zp_out,
     output logic signed [8:0]        sdp_clip_min,
     output logic signed [8:0]        sdp_clip_max,
-    output logic                     sdp_round_en
+    output logic                     sdp_round_en,
+
+    // ---- Phase D: NHWC + 方式 1 预算值 ----
+    output logic [CORE_ADDR_W-1:0]   ifb_ring_words,
+    output logic [CORE_ADDR_W-1:0]   ofb_row_words,
+    output logic [CORE_ADDR_W-1:0]   ofb_ring_words,
+    output logic [CORE_ADDR_W-1:0]   ifb_iss_step,
+    output logic [CORE_ADDR_W-1:0]   ifb_ky_step,
+    output logic [15:0]              tile_pix_step
 );
 
     // =========================================================================
@@ -174,11 +182,8 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_IFB_BASE         = 12'h13C;
     localparam [ADDR_W-1:0] ADDR_WB_BASE          = 12'h140;
     localparam [ADDR_W-1:0] ADDR_OFB_BASE         = 12'h144;
-    localparam [ADDR_W-1:0] ADDR_IFB_CIN_STEP     = 12'h148;
     localparam [ADDR_W-1:0] ADDR_IFB_ROW_STEP     = 12'h14C;
-    localparam [ADDR_W-1:0] ADDR_WB_CIN_STEP      = 12'h150;
     localparam [ADDR_W-1:0] ADDR_WB_COUT_STEP     = 12'h154;
-    localparam [ADDR_W-1:0] ADDR_OFB_COUT_STEP    = 12'h158;
     localparam [ADDR_W-1:0] ADDR_TILE_IN_STEP     = 12'h15C;
     localparam [ADDR_W-1:0] ADDR_SDP_SHIFT        = 12'h160;
     localparam [ADDR_W-1:0] ADDR_SDP_RELU_EN      = 12'h164;
@@ -197,6 +202,12 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MIN     = 12'h190;
     localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MAX     = 12'h194;
     localparam [ADDR_W-1:0] ADDR_SDP_ROUND_EN     = 12'h198;
+    localparam [ADDR_W-1:0] ADDR_IFB_RING_WORDS   = 12'h1A0;
+    localparam [ADDR_W-1:0] ADDR_OFB_ROW_WORDS    = 12'h1A4;
+    localparam [ADDR_W-1:0] ADDR_OFB_RING_WORDS   = 12'h1A8;
+    localparam [ADDR_W-1:0] ADDR_IFB_ISS_STEP     = 12'h1AC;
+    localparam [ADDR_W-1:0] ADDR_IFB_KY_STEP      = 12'h1B0;
+    localparam [ADDR_W-1:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -241,12 +252,15 @@ module cfg_regs #(
     logic [CORE_ADDR_W-1:0]  r_ifb_base;
     logic [CORE_ADDR_W-1:0]  r_wb_base;
     logic [CORE_ADDR_W-1:0]  r_ofb_base;
-    logic [CORE_ADDR_W-1:0]  r_ifb_cin_step;
     logic [CORE_ADDR_W-1:0]  r_ifb_row_step;
-    logic [CORE_ADDR_W-1:0]  r_wb_cin_step;
     logic [CORE_ADDR_W-1:0]  r_wb_cout_step;
-    logic [CORE_ADDR_W-1:0]  r_ofb_cout_step;
     logic [CORE_ADDR_W-1:0]  r_tile_in_step;
+    logic [CORE_ADDR_W-1:0]  r_ifb_ring_words;
+    logic [CORE_ADDR_W-1:0]  r_ofb_row_words;
+    logic [CORE_ADDR_W-1:0]  r_ofb_ring_words;
+    logic [CORE_ADDR_W-1:0]  r_ifb_iss_step;
+    logic [CORE_ADDR_W-1:0]  r_ifb_ky_step;
+    logic [15:0]             r_tile_pix_step;
     logic [5:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
     logic [15:0]             r_h_in_total;
@@ -291,12 +305,15 @@ module cfg_regs #(
                 ADDR_IFB_BASE        : r_ifb_base        <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_WB_BASE         : r_wb_base         <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_OFB_BASE        : r_ofb_base        <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IFB_CIN_STEP    : r_ifb_cin_step    <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_IFB_ROW_STEP    : r_ifb_row_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_WB_CIN_STEP     : r_wb_cin_step     <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_WB_COUT_STEP    : r_wb_cout_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_OFB_COUT_STEP   : r_ofb_cout_step   <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_TILE_IN_STEP    : r_tile_in_step    <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_RING_WORDS  : r_ifb_ring_words  <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_OFB_ROW_WORDS   : r_ofb_row_words   <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_OFB_RING_WORDS  : r_ofb_ring_words  <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_ISS_STEP    : r_ifb_iss_step    <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_KY_STEP     : r_ifb_ky_step     <= reg_w_data[CORE_ADDR_W-1:0];
+                ADDR_TILE_PIX_STEP   : r_tile_pix_step   <= reg_w_data[15:0];
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= reg_w_data[5:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= reg_w_data[0];
                 ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
@@ -343,12 +360,15 @@ module cfg_regs #(
     assign ifb_base        = r_ifb_base;
     assign wb_base         = r_wb_base;
     assign ofb_base        = r_ofb_base;
-    assign ifb_cin_step    = r_ifb_cin_step;
     assign ifb_row_step    = r_ifb_row_step;
-    assign wb_cin_step     = r_wb_cin_step;
     assign wb_cout_step    = r_wb_cout_step;
-    assign ofb_cout_step   = r_ofb_cout_step;
     assign tile_in_step    = r_tile_in_step;
+    assign ifb_ring_words  = r_ifb_ring_words;
+    assign ofb_row_words   = r_ofb_row_words;
+    assign ofb_ring_words  = r_ofb_ring_words;
+    assign ifb_iss_step    = r_ifb_iss_step;
+    assign ifb_ky_step     = r_ifb_ky_step;
+    assign tile_pix_step   = r_tile_pix_step;
     assign sdp_shift       = r_sdp_shift;
     assign sdp_relu_en     = r_sdp_relu_en;
     assign h_in_total         = r_h_in_total;
@@ -404,12 +424,15 @@ module cfg_regs #(
             ADDR_IFB_BASE        : reg_r_data = {12'd0, r_ifb_base};
             ADDR_WB_BASE         : reg_r_data = {12'd0, r_wb_base};
             ADDR_OFB_BASE        : reg_r_data = {12'd0, r_ofb_base};
-            ADDR_IFB_CIN_STEP    : reg_r_data = {12'd0, r_ifb_cin_step};
             ADDR_IFB_ROW_STEP    : reg_r_data = {12'd0, r_ifb_row_step};
-            ADDR_WB_CIN_STEP     : reg_r_data = {12'd0, r_wb_cin_step};
             ADDR_WB_COUT_STEP    : reg_r_data = {12'd0, r_wb_cout_step};
-            ADDR_OFB_COUT_STEP   : reg_r_data = {12'd0, r_ofb_cout_step};
             ADDR_TILE_IN_STEP    : reg_r_data = {12'd0, r_tile_in_step};
+            ADDR_IFB_RING_WORDS  : reg_r_data = {12'd0, r_ifb_ring_words};
+            ADDR_OFB_ROW_WORDS   : reg_r_data = {12'd0, r_ofb_row_words};
+            ADDR_OFB_RING_WORDS  : reg_r_data = {12'd0, r_ofb_ring_words};
+            ADDR_IFB_ISS_STEP    : reg_r_data = {12'd0, r_ifb_iss_step};
+            ADDR_IFB_KY_STEP     : reg_r_data = {12'd0, r_ifb_ky_step};
+            ADDR_TILE_PIX_STEP   : reg_r_data = {16'd0, r_tile_pix_step};
             ADDR_SDP_SHIFT       : reg_r_data = {26'd0, r_sdp_shift};
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
             ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};

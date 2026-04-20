@@ -14,7 +14,7 @@
 //     * 每次 AR 最多发一整行（W_IN beats）或 256 beats (AXI 上限) — 取小
 //     * 每行完成后检查 rows_written - rows_consumed；若达到 strip_rows 进
 //       S_WAIT 等 line_buffer 消费
-//     * wr_ptr 在 cfg_ifb_cin_step (= strip_rows * W_IN) 处 wrap
+//     * wr_ptr 在 cfg_ifb_ring_words (= strip_rows * W_IN) 处 wrap
 //     * 整体停止条件：rows_written == cfg_h_in_total
 //   Streaming 前提 cin_slices = 1（Phase B 限制）；cin_slices > 1 留 Phase D
 //
@@ -45,9 +45,10 @@ module idma #(
     input  logic                    cfg_idma_streaming,
     input  logic [15:0]             cfg_h_in_total,    // 整图行数
     input  logic [7:0]              cfg_ifb_strip_rows,// IFB ring 行数
-    input  logic [15:0]             cfg_w_in,          // 每行 beats 数
-    input  logic [19:0]             cfg_ifb_cin_step,  // ring wrap 模数 (= strip_rows*W_IN)
+    input  logic [19:0]             cfg_ifb_ky_step,   // 每行 beats 数 (NHWC: W_IN × cin_slices)
+    input  logic [19:0]             cfg_ifb_ring_words,  // ring wrap 模数 (= strip_rows*W_IN)
     input  logic [15:0]             rows_consumed,     // 来自 line_buffer
+    output logic [15:0]             rows_available,    // 给 line_buffer 做 forward-pressure
 
     // ---- AXI4 M ----
     output logic [M_ID-1:0]         M_AWID,
@@ -128,6 +129,7 @@ module idma #(
     logic [LEN_W-1:0]        beats_remaining;  // batch 剩余 beats
     logic [15:0]             row_beats_remaining; // streaming 当前行剩余 beats
     logic [15:0]             rows_written;     // streaming 已写完的行数
+    assign rows_available = rows_written;
     logic [SRAM_ADDR_W-1:0]  wr_ptr;
     logic                    r_done;
 
@@ -168,7 +170,8 @@ module idma #(
     // =========================================================================
     assign M_ARADDR  = cur_addr;
     assign M_ARLEN   = beats_to_issue[7:0] - 8'd1;
-    assign M_ARVALID = (state == S_AR);
+    // streaming 下 ring_full 时必须抑制 AR，避免把 R 数据塞进刚装满的 ring
+    assign M_ARVALID = (state == S_AR) && !ring_full;
     assign M_RREADY  = (state == S_R);
 
     assign ifb_we    = r_fire;
@@ -226,8 +229,8 @@ module idma #(
 
     // streaming row_beats_remaining：每行开头 = W_IN，r_fire 减 1，行末回 W_IN
     always_ff @(posedge clk) begin
-        if      (start)              row_beats_remaining <= cfg_w_in;
-        else if (streaming_row_end)  row_beats_remaining <= cfg_w_in;   // 下一行
+        if      (start)              row_beats_remaining <= cfg_ifb_ky_step[15:0];
+        else if (streaming_row_end)  row_beats_remaining <= cfg_ifb_ky_step[15:0];   // 下一行
         else if (r_fire)             row_beats_remaining <= row_beats_remaining - 16'd1;
         else                         row_beats_remaining <= row_beats_remaining;
     end
@@ -239,9 +242,9 @@ module idma #(
         else                         rows_written <= rows_written;
     end
 
-    // wr_ptr: batch 线性；streaming 在 cfg_ifb_cin_step 处 wrap
+    // wr_ptr: batch 线性；streaming 在 cfg_ifb_ring_words 处 wrap
     logic [SRAM_ADDR_W-1:0] wr_ptr_wrap_limit_m1;
-    assign wr_ptr_wrap_limit_m1 = cfg_ifb_cin_step[SRAM_ADDR_W-1:0] - SRAM_ADDR_W'(1);
+    assign wr_ptr_wrap_limit_m1 = cfg_ifb_ring_words[SRAM_ADDR_W-1:0] - SRAM_ADDR_W'(1);
 
     always_ff @(posedge clk) begin
         if      (start)  wr_ptr <= '0;

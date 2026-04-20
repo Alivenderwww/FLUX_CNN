@@ -41,7 +41,7 @@ def parse_args():
     p.add_argument('--seed',     type=int, default=42)
     p.add_argument('--shift',    type=int, default=0)
     p.add_argument('--streaming', action='store_true',
-                   help='emit streaming-ring cfg (requires cin_slices=1 and cout_slices=1)')
+                   help='emit streaming-ring cfg (NHWC 布局，任意 Cin/Cout/xy)')
     p.add_argument('--ifb_strip', type=int, default=8, help='IFB ring strip_rows')
     p.add_argument('--ofb_strip', type=int, default=8, help='OFB ring strip_rows')
     # Phase C-2 padding
@@ -88,27 +88,55 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     rounds_per_cins = (kk + WRF_DEPTH - 1) // WRF_DEPTH
     round_len_last  = kk - (rounds_per_cins - 1) * WRF_DEPTH
 
-    # IFB slice stride + SRAM sizing
-    IFB_CIN_STEP  = H_IN * W_IN
-    IFB_ROW_STEP  = stride * W_IN
-    WB_CIN_STEP   = kk
+    # Phase D: NHWC 布局 —— 每行含所有 cin_slices word 连续
+    # 步长单位：word（1 word = 16 字节 = 16 个通道）
+    IFB_ROW_STEP  = stride * W_IN * cin_slices          # 跨 yout 推进 stride 行 × 每行 word 数
     WB_COUT_STEP  = kk * cin_slices
-    OFB_COUT_STEP = H_OUT * W_OUT
-    TILE_IN_STEP  = TILE_W * stride
+    TILE_IN_STEP  = TILE_W * stride * cin_slices        # 跨 tile 推进 TILE_W × stride × cin_slices word
 
-    ifb_size = IFB_CIN_STEP * cin_slices
+    ifb_size = H_IN * W_IN * cin_slices                 # 整图 IFB word 数
     wb_size  = kk * cout_slices * cin_slices
-    ofb_size = OFB_COUT_STEP * cout_slices
+    ofb_size = H_OUT * W_OUT * cout_slices
 
     PYTHON_SRAM_LIMIT = 524288   # 512K words，支持 480x640 单 slice
     for name, sz in [('IFB', ifb_size), ('WB', wb_size), ('OFB', ofb_size)]:
         if sz > PYTHON_SRAM_LIMIT:
             sys.exit(f"ERROR: {name} overflow! size={sz} > {PYTHON_SRAM_LIMIT}")
 
+    # Phase D: 片上 SRAM 固定 8192 word
+    IFB_SRAM_WORDS = 8192
+    OFB_SRAM_WORDS = 8192
+
     if streaming:
-        # streaming 下物理 SRAM 放 ring，不需要按整图尺寸扩大
+        # 方式 1 下 streaming 支持任意 Cin/Cout，编译器按容量动态算 strip_rows
+        # IFB: 下限 K+1（K 行参与当前 yout + 1 行预取），上限容量
+        ifb_row_words = W_IN * cin_slices
+        ifb_strip_rows_max = IFB_SRAM_WORDS // ifb_row_words
+        ifb_strip_rows_min = K + 1
+        if ifb_strip_rows_max < ifb_strip_rows_min:
+            sys.exit(f"ERROR: IFB SRAM 容量不足，W_IN={W_IN} × cin_slices={cin_slices} = "
+                     f"{ifb_row_words} word/row，8192 word 只能装 {ifb_strip_rows_max} 行 "
+                     f"< K+1={ifb_strip_rows_min}，无法切片")
+        # 取推荐值：下限 + margin 2，但不超过 max 和 H_IN
+        ifb_strip = min(ifb_strip_rows_min + 2, ifb_strip_rows_max, H_IN)
+
+        # OFB: 下限 2（ofb_writer 写当前行 + ODMA 搬上一行），上限容量
+        ofb_row_words_calc = W_OUT * cout_slices
+        ofb_strip_rows_max = OFB_SRAM_WORDS // ofb_row_words_calc
+        ofb_strip_rows_min = 2
+        if ofb_strip_rows_max < ofb_strip_rows_min:
+            sys.exit(f"ERROR: OFB SRAM 容量不足，W_OUT={W_OUT} × cout_slices={cout_slices} = "
+                     f"{ofb_row_words_calc} word/row，8192 word 只能装 {ofb_strip_rows_max} 行 "
+                     f"< {ofb_strip_rows_min}，无法切片")
+        ofb_strip = min(8, ofb_strip_rows_max, H_OUT)
+
         hw_sram_depth = 8192
+        print(f"Streaming strip : ifb_strip_rows={ifb_strip} (min={ifb_strip_rows_min}, max={ifb_strip_rows_max})  "
+              f"ofb_strip_rows={ofb_strip} (min={ofb_strip_rows_min}, max={ofb_strip_rows_max})")
     else:
+        # batch 模式：SRAM 装整图，strip_rows 不用于 ring wrap 但留给 TB 字段
+        ifb_strip = H_IN
+        ofb_strip = H_OUT
         hw_sram_depth = max(ifb_size, ofb_size, wb_size, 1024)
         hw_sram_depth = 1 << math.ceil(math.log2(hw_sram_depth))
 
@@ -123,21 +151,31 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     print(f"SRAM   : IFB={ifb_size}, WB={wb_size}, OFB={ofb_size} -> SRAM_DEPTH={hw_sram_depth}")
 
     # ------------------------------------------------------------------
-    # 1. IFB data (same layout as ISA version)
+    # 1. IFB data —— NHWC 布局 (y, x, cin_slice) 顺序写入 DDR
+    #    每 word = 16 bytes = 16 个 cin 通道值 (一个 cin_slice 段)
+    #    一行 = W_IN × cin_slices words
+    #    ifm_arr[y][x][cin] 先按老顺序填充保持 random 数值不变 → 回归复现性
     # ------------------------------------------------------------------
     ifb_hex_chars = HW_PE * 2
     ifm_arr = [[[0] * NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
-    ifb_data = []
+    # Step 1: 按 (cins, y, x, cin_local) 顺序调用 random.randint 保持 seed 一致
     for cins in range(cin_slices):
         local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
         for y in range(H_IN):
             for x in range(W_IN):
+                for cin_local in range(local_cin):
+                    cin = cins * HW_PE + cin_local
+                    ifm_arr[y][x][cin] = random.randint(0, 7)
+    # Step 2: 按 NHWC (y, x, cin_slice) 顺序输出到 ifb.txt
+    ifb_data = []
+    for y in range(H_IN):
+        for x in range(W_IN):
+            for cins in range(cin_slices):
+                local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
                 val = 0
                 for cin_local in range(local_cin):
                     cin = cins * HW_PE + cin_local
-                    v = random.randint(0, 7)
-                    ifm_arr[y][x][cin] = v
-                    val |= (v & 0xFF) << (cin_local * 8)
+                    val |= (ifm_arr[y][x][cin] & 0xFF) << (cin_local * 8)
                 ifb_data.append(f"{val:0{ifb_hex_chars}X}")
     with open('ifb.txt', 'w') as f:
         f.writelines(d + '\n' for d in ifb_data)
@@ -171,13 +209,14 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         f.writelines(d + '\n' for d in wb_data)
 
     # ------------------------------------------------------------------
-    # 3. Expected OFM (golden, same as ISA version)
+    # 3. Expected OFM (golden, NHWC: yout → x → cs 顺序)
+    #    一个 OFM 像素在 DDR 占 cout_slices 个 word (= 16×cout_slices 字节)
     # ------------------------------------------------------------------
     expected_ofm = []
-    for cs in range(cout_slices):
-        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
-        for yout in range(H_OUT):
-            for px in range(W_OUT):
+    for yout in range(H_OUT):
+        for px in range(W_OUT):
+            for cs in range(cout_slices):
+                local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
                 pixel_val = 0
                 for lc in range(local_cout):
                     cout = cs * HW_COL + lc
@@ -198,16 +237,18 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
 
     # ------------------------------------------------------------------
     # 4. config.txt -- register map for TB to poke into core_ctrl
-    #    One "key = value" per line (decimal).
     # ------------------------------------------------------------------
-    # Streaming (v2) requires cin_slices=1 AND cout_slices=1
-    if streaming and (cin_slices != 1 or cout_slices != 1):
-        sys.exit(f"ERROR: --streaming requires cin_slices=1 && cout_slices=1 "
-                 f"(got cin_slices={cin_slices}, cout_slices={cout_slices})")
-
-    # 在 streaming 下，IFB_CIN_STEP / OFB_COUT_STEP 含义变为 ring wrap 模数
-    ifb_cin_step_eff  = ifb_strip * W_IN  if streaming else IFB_CIN_STEP
-    ofb_cout_step_eff = ofb_strip * W_OUT if streaming else OFB_COUT_STEP
+    # Phase D: streaming 支持任意 Cin/Cout (方式 1)，无 cin_slices/cout_slices 限制
+    # NHWC 下预算值（word 单位）：
+    if streaming:
+        ifb_ring_words_val = ifb_strip * W_IN  * cin_slices
+        ofb_row_words_val  = W_OUT * cout_slices
+        ofb_ring_words_val = ofb_strip * W_OUT * cout_slices
+    else:
+        # batch 模式：整图一次搬，ring_words 即整图大小（兼容，实际 batch 下未使用）
+        ifb_ring_words_val = H_IN  * W_IN  * cin_slices
+        ofb_row_words_val  = W_OUT * cout_slices
+        ofb_ring_words_val = H_OUT * W_OUT * cout_slices
     dma_mode_val      = 0x3 if streaming else 0x0
 
     cfg = {
@@ -227,26 +268,28 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         'IFB_BASE'      : 0,
         'WB_BASE'       : 0,
         'OFB_BASE'      : 0,
-        'IFB_CIN_STEP'  : ifb_cin_step_eff,
         'IFB_ROW_STEP'  : IFB_ROW_STEP,
-        'WB_CIN_STEP'   : WB_CIN_STEP,
         'WB_COUT_STEP'  : WB_COUT_STEP,
-        'OFB_COUT_STEP' : ofb_cout_step_eff,
         'NUM_TILES'     : num_tiles,
         'LAST_VALID_W'  : last_valid_w,
         'TILE_IN_STEP'  : TILE_IN_STEP,
         'SDP_SHIFT'     : shift_amt,
         'SDP_RELU_EN'   : 1,
-        # --- Phase C-2 padding (global CSR 临时路径) ---
         'PAD_TOP'            : pad_top,
         'PAD_LEFT'           : pad_left,
-        # --- streaming v2 fields (batch mode 留 0 / 写入不影响) ---
-        'H_IN_TOTAL'         : H_IN,     # Phase C-2: batch 下也需，供 line_buffer is_pad_bot_y 判定
+        'H_IN_TOTAL'         : H_IN,
         'IFB_STRIP_ROWS'     : ifb_strip if streaming else 0,
         'OFB_STRIP_ROWS'     : ofb_strip if streaming else 0,
-        'DDR_IFM_ROW_STRIDE' : W_IN  * 16 if streaming else 0,
-        'DDR_OFM_ROW_STRIDE' : W_OUT * 16 if streaming else 0,
+        'DDR_IFM_ROW_STRIDE' : W_IN  * cin_slices * 16 if streaming else 0,
+        'DDR_OFM_ROW_STRIDE' : W_OUT * cout_slices * 16 if streaming else 0,
         'DMA_MODE'           : dma_mode_val,
+        # Phase D 新增
+        'IFB_RING_WORDS'     : ifb_ring_words_val,
+        'OFB_ROW_WORDS'      : ofb_row_words_val,
+        'OFB_RING_WORDS'     : ofb_ring_words_val,
+        'IFB_ISS_STEP'       : stride * cin_slices,   # iss_pos 步长 (word 单位)
+        'IFB_KY_STEP'        : W_IN * cin_slices,     # ky 步长 (word 单位)
+        'TILE_PIX_STEP'      : TILE_W * stride,       # 像素域 tile 步长（用于 pad 判定）
     }
     with open('config.txt', 'w') as f:
         for k, v in cfg.items():

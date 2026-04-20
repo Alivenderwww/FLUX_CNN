@@ -199,11 +199,12 @@ module wgt_buffer #(
     assign l_start_pos_next = (l_cur_round_len_next > l_cur_round_len)
                             ? l_cur_round_len : 6'd0;
 
-    // 当前 cs 的 COMPUTE 打完最后一拍
+    // 当前 (yout, cs) 的 COMPUTE 打完最后一拍（方式 1：cs 在 yout 内）
+    // 去掉 yout_is_last，每个 (yout, cs) 扫完就触发
     logic cs_compute_last;
     assign cs_compute_last = cfg_wrf_packed
-        ? (x_is_last && kx_is_last  && ky_is_last    && cins_is_last && tile_is_last && yout_is_last)
-        : (x_is_last && pos_is_last && round_is_last && cins_is_last && tile_is_last && yout_is_last);
+        ? (x_is_last && kx_is_last  && ky_is_last    && cins_is_last && tile_is_last)
+        : (x_is_last && pos_is_last && round_is_last && cins_is_last && tile_is_last);
 
     // =========================================================================
     // 握手 / hazard / gate
@@ -241,10 +242,10 @@ module wgt_buffer #(
     logic evt_cold_load_done;
 
     logic evt_pk_fire, evt_pk_x_wrap, evt_pk_kx_wrap, evt_pk_ky_wrap;
-    logic evt_pk_cins_wrap, evt_pk_tile_wrap, evt_pk_yout_wrap;
+    logic evt_pk_cins_wrap, evt_pk_tile_wrap, evt_pk_cs_wrap, evt_pk_yout_wrap;
 
     logic evt_ck_fire, evt_ck_x_wrap, evt_ck_pos_wrap, evt_ck_round_wrap;
-    logic evt_ck_cins_wrap, evt_ck_tile_wrap, evt_ck_yout_wrap;
+    logic evt_ck_cins_wrap, evt_ck_tile_wrap, evt_ck_cs_wrap, evt_ck_yout_wrap;
 
     logic evt_ld, evt_ld_round_end;
     logic evt_ld_round_wrap, evt_ld_cins_wrap, evt_ld_tile_wrap, evt_ld_yout_wrap;
@@ -259,7 +260,8 @@ module wgt_buffer #(
         evt_pk_ky_wrap    = evt_pk_kx_wrap && ky_is_last;
         evt_pk_cins_wrap  = evt_pk_ky_wrap && cins_is_last;
         evt_pk_tile_wrap  = evt_pk_cins_wrap && tile_is_last;
-        evt_pk_yout_wrap  = evt_pk_tile_wrap && yout_is_last;
+        evt_pk_cs_wrap    = evt_pk_tile_wrap && cs_is_last;
+        evt_pk_yout_wrap  = evt_pk_cs_wrap   && yout_is_last;
 
         evt_ck_fire       = !cfg_wrf_packed && (state == S_COMPUTE) && wgt_fire;
         evt_ck_x_wrap     = evt_ck_fire    && x_is_last;
@@ -267,7 +269,8 @@ module wgt_buffer #(
         evt_ck_round_wrap = evt_ck_pos_wrap && round_is_last;
         evt_ck_cins_wrap  = evt_ck_round_wrap && cins_is_last;
         evt_ck_tile_wrap  = evt_ck_cins_wrap && tile_is_last;
-        evt_ck_yout_wrap  = evt_ck_tile_wrap && yout_is_last;
+        evt_ck_cs_wrap    = evt_ck_tile_wrap && cs_is_last;
+        evt_ck_yout_wrap  = evt_ck_cs_wrap   && yout_is_last;
 
         evt_ld             = chunked_load_active;
         evt_ld_round_end   = evt_ld              && l_round_done;
@@ -305,8 +308,9 @@ module wgt_buffer #(
             S_IDLE    : if (start)          state_next = S_LOAD;
             S_LOAD    : if (sload_done)     state_next = S_COMPUTE;
             S_COMPUTE : if (wgt_fire && cs_compute_last) begin
-                // packed 下一 cs 要重 LOAD；chunked 由内部 load ptr 并行覆盖 WRF
-                state_next = cs_is_last ? S_DONE
+                // 方式 1：每 (yout, cs) 扫完；packed 都要重 LOAD 下一 (yout, cs)
+                // chunked 由内部 load ptr 并行覆盖 WRF
+                state_next = (yout_is_last && cs_is_last) ? S_DONE
                            : (cfg_wrf_packed ? S_LOAD : S_COMPUTE);
             end
             S_DONE    : ;
@@ -379,13 +383,14 @@ module wgt_buffer #(
         if      (!rst_n)                                 yout_cnt <= '0;
         else if (evt_start || evt_cold_load_done)        yout_cnt <= '0;
         else if (evt_pk_yout_wrap || evt_ck_yout_wrap)   yout_cnt <= '0;
-        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)   yout_cnt <= yout_cnt + 16'd1;
+        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)     yout_cnt <= yout_cnt + 16'd1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                                  cs_cnt <= '0;
         else if (evt_start)                                               cs_cnt <= '0;
-        else if ((evt_pk_yout_wrap || evt_ck_yout_wrap) && !cs_is_last)   cs_cnt <= cs_cnt + 6'd1;
+        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)                      cs_cnt <= '0;
+        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)                    cs_cnt <= cs_cnt + 6'd1;
     end
 
     // =========================================================================
@@ -413,16 +418,14 @@ module wgt_buffer #(
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                    wrf_base_cins <= '0;
         else if (evt_cold_load_done)                        wrf_base_cins <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap ||
-                 evt_pk_yout_wrap)                          wrf_base_cins <= '0;
+        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_cins <= '0;
         else if (evt_pk_ky_wrap)                            wrf_base_cins <= wrf_base_cins + kk_lo6;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                    wrf_base_ky <= '0;
         else if (evt_cold_load_done)                        wrf_base_ky <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap ||
-                 evt_pk_yout_wrap)                          wrf_base_ky <= '0;
+        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_ky <= '0;
         else if (evt_pk_ky_wrap)                            wrf_base_ky <= wrf_base_cins + kk_lo6;
         else if (evt_pk_kx_wrap)                            wrf_base_ky <= wrf_base_ky + k_lo6;
     end
@@ -430,8 +433,7 @@ module wgt_buffer #(
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                    wrf_base_kx <= '0;
         else if (evt_cold_load_done)                        wrf_base_kx <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap ||
-                 evt_pk_yout_wrap)                          wrf_base_kx <= '0;
+        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_kx <= '0;
         else if (evt_pk_ky_wrap)                            wrf_base_kx <= wrf_base_cins + kk_lo6;
         else if (evt_pk_kx_wrap)                            wrf_base_kx <= wrf_base_ky + k_lo6;
         else if (evt_pk_x_wrap)                             wrf_base_kx <= wrf_base_kx + 6'd1;
@@ -457,17 +459,19 @@ module wgt_buffer #(
     // =========================================================================
     // Compute 侧 cs-base（两路径共享）
     // =========================================================================
+    // 方式 1：cs 在 yout 内 → cs wrap 时 cur_wb_base_cs 归零，tile wrap 时跨到下一 cs
     always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                                  cur_wb_base_cs <= '0;
-        else if (evt_start)                                               cur_wb_base_cs <= cfg_wb_base;
-        else if ((evt_pk_yout_wrap || evt_ck_yout_wrap) && !cs_is_last)   cur_wb_base_cs <= cur_wb_base_cs + cfg_wb_cout_step;
+        if      (!rst_n)                                  cur_wb_base_cs <= '0;
+        else if (evt_start)                               cur_wb_base_cs <= cfg_wb_base;
+        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)      cur_wb_base_cs <= cfg_wb_base;
+        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)    cur_wb_base_cs <= cur_wb_base_cs + cfg_wb_cout_step;
     end
 
-    // cur_wb_rd_base 只在 packed 的 S_LOAD 阶段作 wb_raddr_sload 起点；cs 推进时同步
     always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                                  cur_wb_rd_base <= '0;
-        else if (evt_start)                                               cur_wb_rd_base <= cfg_wb_base;
-        else if ((evt_pk_yout_wrap || evt_ck_yout_wrap) && !cs_is_last)   cur_wb_rd_base <= cur_wb_base_cs + cfg_wb_cout_step;
+        if      (!rst_n)                                  cur_wb_rd_base <= '0;
+        else if (evt_start)                               cur_wb_rd_base <= cfg_wb_base;
+        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)      cur_wb_rd_base <= cfg_wb_base;
+        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)    cur_wb_rd_base <= cur_wb_base_cs + cfg_wb_cout_step;
     end
 
     // =========================================================================

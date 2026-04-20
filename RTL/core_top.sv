@@ -118,8 +118,7 @@ module core_top #(
     // 1. AXI-Lite CSR bridge + 共享配置寄存器
     //    axi_lite_csr 解码 AXI-Lite → (reg_w_en/addr/data/strb, reg_r_addr/data)
     //    cfg_regs 消费这些信号，产生 cfg_* 输出 + start_pulse + DMA 描述符
-    //    w_out / wb_cin_step / ofb_cout_step 目前无下游消费（phase-2 特性用），
-    //    空连接避免 unused-wire lint。
+    //    w_out 目前无下游消费（多核融合时用），空连接避免 unused-wire lint。
     // =========================================================================
     logic                   reg_w_en;
     logic [CSR_ADDR_W-1:0]  reg_w_addr;
@@ -152,10 +151,16 @@ module core_top #(
     logic [2:0]        cfg_rounds_per_cins;
     logic [5:0]        cfg_round_len_last;
     logic [ADDR_W-1:0] cfg_ifb_base, cfg_wb_base, cfg_ofb_base;
-    logic [ADDR_W-1:0] cfg_ifb_cin_step, cfg_ifb_row_step;
+    logic [ADDR_W-1:0] cfg_ifb_row_step;
     logic [ADDR_W-1:0] cfg_wb_cout_step;
-    logic [ADDR_W-1:0] cfg_ofb_cout_step;
     logic [ADDR_W-1:0] cfg_tile_in_step;
+    // Phase D 新增：NHWC + 方式 1 预算值
+    logic [ADDR_W-1:0] cfg_ifb_ring_words;
+    logic [ADDR_W-1:0] cfg_ofb_row_words;
+    logic [ADDR_W-1:0] cfg_ofb_ring_words;
+    logic [ADDR_W-1:0] cfg_iss_step;
+    logic [ADDR_W-1:0] cfg_ifb_ky_step;
+    logic [15:0]       cfg_tile_pix_step;
     logic [5:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
@@ -235,9 +240,15 @@ module core_top #(
         .total_wrf(cfg_total_wrf), .wrf_packed(cfg_wrf_packed),
         .kk(cfg_kk), .rounds_per_cins(cfg_rounds_per_cins), .round_len_last(cfg_round_len_last),
         .ifb_base(cfg_ifb_base), .wb_base(cfg_wb_base), .ofb_base(cfg_ofb_base),
-        .ifb_cin_step(cfg_ifb_cin_step), .ifb_row_step(cfg_ifb_row_step),
-        .wb_cin_step(/* unused */), .wb_cout_step(cfg_wb_cout_step),
-        .ofb_cout_step(cfg_ofb_cout_step), .tile_in_step(cfg_tile_in_step),
+        .ifb_row_step(cfg_ifb_row_step),
+        .wb_cout_step(cfg_wb_cout_step),
+        .tile_in_step(cfg_tile_in_step),
+        .ifb_ring_words(cfg_ifb_ring_words),
+        .ofb_row_words(cfg_ofb_row_words),
+        .ofb_ring_words(cfg_ofb_ring_words),
+        .ifb_iss_step(cfg_iss_step),
+        .ifb_ky_step(cfg_ifb_ky_step),
+        .tile_pix_step(cfg_tile_pix_step),
         .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
         .h_in_total(cfg_h_in_total),
         .ifb_strip_rows(cfg_ifb_strip_rows),
@@ -424,9 +435,12 @@ module core_top #(
         .cfg_num_tiles    (cfg_num_tiles),
         .cfg_last_valid_w (cfg_last_valid_w),
         .cfg_ifb_base     (eff_ifb_base),
-        .cfg_ifb_cin_step (cfg_ifb_cin_step),
+        .cfg_ifb_ring_words(cfg_ifb_ring_words),
         .cfg_ifb_row_step (cfg_ifb_row_step),
         .cfg_tile_in_step (cfg_tile_in_step),
+        .cfg_iss_step     (cfg_iss_step),
+        .cfg_ifb_ky_step  (cfg_ifb_ky_step),
+        .cfg_tile_pix_step(cfg_tile_pix_step),
         .cfg_pad_top      (seq_pad_top),
         .cfg_pad_left     (seq_pad_left),
         .cfg_h_in         (cfg_h_in_total),
@@ -562,7 +576,7 @@ module core_top #(
         .cfg_sdp_shift    (cfg_sdp_shift),
         .cfg_sdp_relu_en  (cfg_sdp_relu_en),
         .cfg_odma_streaming(cfg_odma_streaming),
-        .cfg_ofb_cout_step (cfg_ofb_cout_step),
+        .cfg_ofb_ring_words(cfg_ofb_ring_words),
         .cfg_ofb_strip_rows(cfg_ofb_strip_rows),
         .rows_drained      (rows_drained),
         .acc_out_valid    (acc_out_valid),
@@ -655,8 +669,8 @@ module core_top #(
         .cfg_idma_streaming(cfg_idma_streaming),
         .cfg_h_in_total    (cfg_h_in_total),
         .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
-        .cfg_w_in          (cfg_w_in),
-        .cfg_ifb_cin_step  (cfg_ifb_cin_step),
+        .cfg_ifb_ring_words(cfg_ifb_ring_words),
+        .cfg_ifb_ky_step   (cfg_ifb_ky_step),
         .rows_consumed     (rows_consumed),
         .rows_available    (rows_available),
         .M_AWID(m_awid[0]), .M_AWADDR(m_awaddr[0]), .M_AWLEN(m_awlen[0]),
@@ -702,8 +716,10 @@ module core_top #(
         .cfg_odma_streaming    (cfg_odma_streaming),
         .cfg_h_out_total       (cfg_h_out),
         .cfg_w_out             (cfg_w_out),
+        .cfg_cout_slices       (cfg_cout_slices),
+        .cfg_ofb_row_words     (cfg_ofb_row_words),
         .cfg_ddr_ofm_row_stride({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ofm_row_stride}),
-        .cfg_ofb_cout_step     (cfg_ofb_cout_step),
+        .cfg_ofb_ring_words    (cfg_ofb_ring_words),
         .row_done_pulse        (row_done_pulse),
         .rows_drained          (rows_drained),
         .M_AWID(m_awid[2]), .M_AWADDR(m_awaddr[2]), .M_AWLEN(m_awlen[2]),

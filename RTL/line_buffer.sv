@@ -57,9 +57,12 @@ module line_buffer #(
     input  logic [7:0]                           cfg_num_tiles,
     input  logic [5:0]                           cfg_last_valid_w,
     input  logic [ADDR_W-1:0]                    cfg_ifb_base,
-    input  logic [ADDR_W-1:0]                    cfg_ifb_cin_step,
+    input  logic [ADDR_W-1:0]                    cfg_ifb_ring_words,
     input  logic [ADDR_W-1:0]                    cfg_ifb_row_step,
     input  logic [ADDR_W-1:0]                    cfg_tile_in_step,
+    input  logic [ADDR_W-1:0]                    cfg_iss_step,    // stride × cin_slices (iss_pos 步长 word)
+    input  logic [ADDR_W-1:0]                    cfg_ifb_ky_step, // W_IN × cin_slices (ky 步长 word)
+    input  logic [15:0]                          cfg_tile_pix_step, // TILE_W × stride (像素步长，用于 pad 判定)
 
     // ---- Padding (Phase C-2) ----
     input  logic [3:0]                           cfg_pad_top,
@@ -68,7 +71,7 @@ module line_buffer #(
 
     // ---- Streaming 配置（v2） ----
     // cfg_idma_streaming=1 时启用 ring wrap：每个 cin_slice 在 IFB 占
-    // cfg_ifb_cin_step = strip_rows * W_IN 字；pointer 推进时 mod 这个值
+    // cfg_ifb_ring_words = ifb_strip_rows × W_IN × cin_slices；pointer 推进时 mod 这个值
     // 实现回卷。batch 模式下 (=0) 不 wrap，行为与 v1 完全一致。
     input  logic                                 cfg_idma_streaming,
 
@@ -205,18 +208,13 @@ module line_buffer #(
                       ({1'b0, fifo_count} + {6'b0, issue_advance_d1} < (CNT_W+1)'(ARF_DEPTH)) &&
                       streaming_rows_ready;
 
-    // 物理 IFB 读地址：沿用原 shift-based offset（stride 1/2）
-    logic [ADDR_W-1:0] ifb_rd_offset;
-    always_comb begin
-        case (cfg_stride)
-            3'd1:    ifb_rd_offset = {{(ADDR_W-6){1'b0}}, iss_pos};
-            3'd2:    ifb_rd_offset = {{(ADDR_W-7){1'b0}}, iss_pos, 1'b0};
-            default: ifb_rd_offset = {{(ADDR_W-6){1'b0}}, iss_pos};
-        endcase
-    end
+    // 物理 IFB 读地址：iss_offset 累加器 = iss_pos × cfg_iss_step = iss_pos × stride × cin_slices
+    //   NHWC 下同一 y 相邻 x 的 word 间距 = cin_slices；跨 iss_pos 需要乘 stride × cin_slices
+    //   累加器避免组合乘法，每 issue_ok += cfg_iss_step，iss_pos_wrap 归零
+    logic [ADDR_W-1:0] iss_offset;
 
     assign ifb_re    = issue_ok && !is_pad;     // pad 位置不读 SRAM
-    assign ifb_raddr = ptr_kx_base + ifb_rd_offset;
+    assign ifb_raddr = ptr_kx_base + iss_offset;
 
     assign act_valid = (fifo_count > 0);
     assign act_vec   = act_buf[rd_idx];
@@ -226,14 +224,15 @@ module line_buffer #(
     assign arrival  = issue_advance_d1;          // 每个 issue 动作（含 pad）1 拍后入队
 
     // =========================================================================
-    // 命名事件信号（comb）—— 把外层 6 级 wrap 链打平
-    //   evt_start        : IDLE 下捕获 start，下拍进 S_RUN 并初始化 counter/ptr
-    //   evt_iss_pos_wrap : issue 走完一 round (kx 进位触发)
-    //   evt_iss_kx_wrap  : kx 进位到末尾 (ky 进位触发)
-    //   evt_iss_ky_wrap  : ky 进位到末尾 (cins 进位触发)
-    //   evt_iss_cins_wrap: cins 进位到末尾 (tile 进位触发)
-    //   evt_iss_tile_wrap: tile 进位到末尾 (yout 进位触发)
-    //   evt_iss_yout_wrap: yout 进位到末尾 (cs 进位触发)
+    // 命名事件信号（comb）—— 方式 1：cs 下移到 yout 内
+    //   iss_pos → kx → ky → cins → tile → cs → yout（从内到外）
+    //   evt_iss_pos_wrap : iss_pos 走完 cur_valid_w（一个 (ky,kx) round）
+    //   evt_iss_kx_wrap  : kx 进位 (ky 推进)
+    //   evt_iss_ky_wrap  : ky 进位 (cins 推进)
+    //   evt_iss_cins_wrap: cins 进位 (tile 推进)
+    //   evt_iss_tile_wrap: tile 进位 (cs 推进 —— 新: 一个 (yout,cs) 完成)
+    //   evt_iss_cs_wrap  : cs 进位 (yout 推进 —— 新: 一个 yout 的所有 cs 完成)
+    //   evt_iss_yout_wrap: yout 进位 (整 strip 结束)
     // =========================================================================
     logic evt_start;
     logic evt_iss_pos_wrap;
@@ -241,6 +240,7 @@ module line_buffer #(
     logic evt_iss_ky_wrap;
     logic evt_iss_cins_wrap;
     logic evt_iss_tile_wrap;
+    logic evt_iss_cs_wrap;
     logic evt_iss_yout_wrap;
 
     always_comb begin
@@ -250,7 +250,8 @@ module line_buffer #(
         evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
         evt_iss_cins_wrap = evt_iss_ky_wrap    && cins_is_last;
         evt_iss_tile_wrap = evt_iss_cins_wrap  && tile_is_last;
-        evt_iss_yout_wrap = evt_iss_tile_wrap  && yout_is_last;
+        evt_iss_cs_wrap   = evt_iss_tile_wrap  && cs_is_last;
+        evt_iss_yout_wrap = evt_iss_cs_wrap    && yout_is_last;
     end
 
     // =========================================================================
@@ -313,17 +314,19 @@ module line_buffer #(
         else                         tile_cnt <= tile_cnt;
     end
 
+    // 方式 1：cs 在 yout 内 → cs 由 evt_iss_tile_wrap 推进，yout 由 evt_iss_cs_wrap 推进
     always_ff @(posedge clk) begin
-        if      (evt_start)          yout_cnt <= '0;
-        else if (evt_iss_yout_wrap)  yout_cnt <= '0;
-        else if (evt_iss_tile_wrap)  yout_cnt <= yout_cnt + 16'd1;
-        else                         yout_cnt <= yout_cnt;
+        if      (evt_start)          cs_cnt <= '0;
+        else if (evt_iss_cs_wrap)    cs_cnt <= '0;
+        else if (evt_iss_tile_wrap)  cs_cnt <= cs_cnt + 6'd1;
+        else                         cs_cnt <= cs_cnt;
     end
 
     always_ff @(posedge clk) begin
-        if      (evt_start)                         cs_cnt <= '0;
-        else if (evt_iss_yout_wrap && !cs_is_last)  cs_cnt <= cs_cnt + 6'd1;
-        else                                        cs_cnt <= cs_cnt;
+        if      (evt_start)          yout_cnt <= '0;
+        else if (evt_iss_yout_wrap)  yout_cnt <= '0;
+        else if (evt_iss_cs_wrap)    yout_cnt <= yout_cnt + 16'd1;
+        else                         yout_cnt <= yout_cnt;
     end
 
     // issues_all_done 是控制标志，参与 state_next 判定 → 复位（§6.1）。
@@ -334,21 +337,28 @@ module line_buffer #(
         else                                       issues_all_done <= issues_all_done;
     end
 
+    // iss_offset 累加器（数据路径）
+    always_ff @(posedge clk) begin
+        if      (evt_start)          iss_offset <= '0;
+        else if (evt_iss_pos_wrap)   iss_offset <= '0;
+        else if (issue_ok)           iss_offset <= iss_offset + cfg_iss_step;
+        else                         iss_offset <= iss_offset;
+    end
+
     // =========================================================================
     // 5 层 running base（数据路径，无复位；evt_start 初始化）
     //   层级继承：外层进位时，内层 base 跟随外层新值重置；否则按自身步长推进。
     //
     //   Streaming ring wrap（cfg_idma_streaming=1）：
-    //     cfg_ifb_cin_step 在 streaming 时 = strip_rows * W_IN = 每 slice 环大小。
-    //     "intra-slice" 方向的增量（row_step / tile_in_step / w_in / 1）wrap；
-    //     cin_slice 方向的增量（+= cfg_ifb_cin_step）不 wrap（跨 slice 加）。
+    //     NHWC 布局：每行含所有 cin_slice 的 word 相邻，跨 cin_slice 步长 = 1 word。
+    //     ring wrap 模数 = cfg_ifb_ring_words = ifb_strip_rows × W_IN × cin_slices。
     //   Batch 模式 (cfg_idma_streaming=0): wrap 函数 no-op，行为与 v1 完全一致。
     // =========================================================================
 
     // 组合 wrap 函数：若启用 streaming 且 val 跨过 cin_step 边界，减去一份 cin_step
     function automatic logic [ADDR_W-1:0] wrap_addr(input logic [ADDR_W-1:0] val);
-        if (cfg_idma_streaming && val >= cfg_ifb_cin_step)
-            wrap_addr = val - cfg_ifb_cin_step;
+        if (cfg_idma_streaming && val >= cfg_ifb_ring_words)
+            wrap_addr = val - cfg_ifb_ring_words;
         else
             wrap_addr = val;
     endfunction
@@ -359,50 +369,54 @@ module line_buffer #(
     logic [ADDR_W-1:0] w_kx_plus_one;
     assign w_yout_plus_rowstep  = wrap_addr(ptr_yout_base + cfg_ifb_row_step);
     assign w_tile_plus_tilestep = wrap_addr(ptr_tile_base + cfg_tile_in_step);
-    assign w_ky_plus_win        = wrap_addr(ptr_ky_base   + {{(ADDR_W-16){1'b0}}, cfg_w_in});
-    assign w_kx_plus_one        = wrap_addr(ptr_kx_base   + {{(ADDR_W-1){1'b0}}, 1'b1});
+    assign w_ky_plus_win        = wrap_addr(ptr_ky_base   + cfg_ifb_ky_step);
+    assign w_kx_plus_one        = wrap_addr(ptr_kx_base   + {{(ADDR_W-6){1'b0}}, cfg_cin_slices});
 
     always_ff @(posedge clk) begin
         if      (evt_start)                           ptr_yout_base <= cfg_ifb_base;
-        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_yout_base <= cfg_ifb_base;
-        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_yout_base <= w_yout_plus_rowstep;
+        else if (evt_iss_yout_wrap)    ptr_yout_base <= cfg_ifb_base;
+        else if (evt_iss_cs_wrap && !yout_is_last)  ptr_yout_base <= w_yout_plus_rowstep;
         else                                          ptr_yout_base <= ptr_yout_base;
     end
 
     always_ff @(posedge clk) begin
         if      (evt_start)                           ptr_tile_base <= cfg_ifb_base;
-        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_tile_base <= cfg_ifb_base;
-        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_tile_base <= w_yout_plus_rowstep;
+        else if (evt_iss_yout_wrap)                   ptr_tile_base <= cfg_ifb_base;
+        else if (evt_iss_cs_wrap && !yout_is_last)    ptr_tile_base <= w_yout_plus_rowstep;
+        else if (evt_iss_tile_wrap && !cs_is_last)    ptr_tile_base <= ptr_yout_base;  // cs 切换回 yout 起点
         else if (evt_iss_cins_wrap && !tile_is_last)  ptr_tile_base <= w_tile_plus_tilestep;
         else                                          ptr_tile_base <= ptr_tile_base;
     end
 
-    // cins 方向 += cfg_ifb_cin_step 是跨 slice 加，**不 wrap**
+    // NHWC 下跨 cin_slice 步长 = 1 word（相邻），所有累加仍可能 wrap 所以统一 wrap_addr
     always_ff @(posedge clk) begin
         if      (evt_start)                           ptr_cins_base <= cfg_ifb_base;
-        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_cins_base <= cfg_ifb_base;
-        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_cins_base <= w_yout_plus_rowstep;
+        else if (evt_iss_yout_wrap)                   ptr_cins_base <= cfg_ifb_base;
+        else if (evt_iss_cs_wrap && !yout_is_last)    ptr_cins_base <= w_yout_plus_rowstep;
+        else if (evt_iss_tile_wrap && !cs_is_last)    ptr_cins_base <= ptr_yout_base;  // cs 切换
         else if (evt_iss_cins_wrap && !tile_is_last)  ptr_cins_base <= w_tile_plus_tilestep;
-        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_cins_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_cins_base <= wrap_addr(ptr_cins_base + {{(ADDR_W-1){1'b0}}, 1'b1});
         else                                          ptr_cins_base <= ptr_cins_base;
     end
 
     always_ff @(posedge clk) begin
         if      (evt_start)                           ptr_ky_base <= cfg_ifb_base;
-        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_ky_base <= cfg_ifb_base;
-        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_ky_base <= w_yout_plus_rowstep;
+        else if (evt_iss_yout_wrap)                   ptr_ky_base <= cfg_ifb_base;
+        else if (evt_iss_cs_wrap && !yout_is_last)    ptr_ky_base <= w_yout_plus_rowstep;
+        else if (evt_iss_tile_wrap && !cs_is_last)    ptr_ky_base <= ptr_yout_base;  // cs 切换
         else if (evt_iss_cins_wrap && !tile_is_last)  ptr_ky_base <= w_tile_plus_tilestep;
-        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_ky_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_ky_base <= wrap_addr(ptr_cins_base + {{(ADDR_W-1){1'b0}}, 1'b1});
         else if (evt_iss_kx_wrap   && !ky_is_last)    ptr_ky_base <= w_ky_plus_win;
         else                                          ptr_ky_base <= ptr_ky_base;
     end
 
     always_ff @(posedge clk) begin
         if      (evt_start)                           ptr_kx_base <= cfg_ifb_base;
-        else if (evt_iss_yout_wrap && !cs_is_last)    ptr_kx_base <= cfg_ifb_base;
-        else if (evt_iss_tile_wrap && !yout_is_last)  ptr_kx_base <= w_yout_plus_rowstep;
+        else if (evt_iss_yout_wrap)                   ptr_kx_base <= cfg_ifb_base;
+        else if (evt_iss_cs_wrap && !yout_is_last)    ptr_kx_base <= w_yout_plus_rowstep;
+        else if (evt_iss_tile_wrap && !cs_is_last)    ptr_kx_base <= ptr_yout_base;  // cs 切换
         else if (evt_iss_cins_wrap && !tile_is_last)  ptr_kx_base <= w_tile_plus_tilestep;
-        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_kx_base <= ptr_cins_base + cfg_ifb_cin_step;
+        else if (evt_iss_ky_wrap   && !cins_is_last)  ptr_kx_base <= wrap_addr(ptr_cins_base + {{(ADDR_W-1){1'b0}}, 1'b1});
         else if (evt_iss_kx_wrap   && !ky_is_last)    ptr_kx_base <= w_ky_plus_win;
         else if (evt_iss_pos_wrap  && !kx_is_last)    ptr_kx_base <= w_kx_plus_one;
         else                                          ptr_kx_base <= ptr_kx_base;
@@ -410,14 +424,14 @@ module line_buffer #(
 
     // =========================================================================
     // rows_consumed: 已彻底用完的输入行数，yout 每推进 1 就 +cfg_stride
-    //   evt_iss_tile_wrap && !yout_is_last 表示当前拍之后 yout 要进位。
+    //   evt_iss_cs_wrap && !yout_is_last 表示当前拍之后 yout 要进位。
     //   cs 切换时归零（下一 cs 从头开始用 IFB 行）。
     //   数据路径，evt_start 初始化即可（§6）。
     // =========================================================================
     always_ff @(posedge clk) begin
         if      (evt_start)                              rows_consumed <= 16'd0;
-        else if (evt_iss_yout_wrap && !cs_is_last)       rows_consumed <= 16'd0;
-        else if (evt_iss_tile_wrap && !yout_is_last)     rows_consumed <= rows_consumed + {13'd0, cfg_stride};
+        else if (evt_iss_yout_wrap)       rows_consumed <= 16'd0;
+        else if (evt_iss_cs_wrap && !yout_is_last)     rows_consumed <= rows_consumed + {13'd0, cfg_stride};
         else                                             rows_consumed <= rows_consumed;
     end
 
@@ -436,16 +450,17 @@ module line_buffer #(
 
     always_ff @(posedge clk) begin
         if      (evt_start)                            y_row_base <= neg_pad_top_ext;
-        else if (evt_iss_yout_wrap && !cs_is_last)     y_row_base <= neg_pad_top_ext;
-        else if (evt_iss_tile_wrap && !yout_is_last)   y_row_base <= y_row_base + $signed({14'd0, cfg_stride});
+        else if (evt_iss_yout_wrap)     y_row_base <= neg_pad_top_ext;
+        else if (evt_iss_cs_wrap && !yout_is_last)   y_row_base <= y_row_base + $signed({14'd0, cfg_stride});
         else                                           y_row_base <= y_row_base;
     end
 
     always_ff @(posedge clk) begin
         if      (evt_start)                            x_tile_base <= neg_pad_left_ext;
-        else if (evt_iss_yout_wrap && !cs_is_last)     x_tile_base <= neg_pad_left_ext;
-        else if (evt_iss_tile_wrap && !yout_is_last)   x_tile_base <= neg_pad_left_ext;  // 新 yout 的 tile 0
-        else if (evt_iss_cins_wrap && !tile_is_last)   x_tile_base <= x_tile_base + $signed({1'b0, cfg_tile_in_step[15:0]});
+        else if (evt_iss_yout_wrap)                    x_tile_base <= neg_pad_left_ext;
+        else if (evt_iss_cs_wrap && !yout_is_last)     x_tile_base <= neg_pad_left_ext;  // 新 yout 的 tile 0
+        else if (evt_iss_tile_wrap && !cs_is_last)     x_tile_base <= neg_pad_left_ext;  // cs 切换回 tile 0
+        else if (evt_iss_cins_wrap && !tile_is_last)   x_tile_base <= x_tile_base + $signed({1'b0, cfg_tile_pix_step});
         else                                           x_tile_base <= x_tile_base;
     end
 

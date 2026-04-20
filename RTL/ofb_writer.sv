@@ -12,12 +12,17 @@
 //           一行 w_out = sum(tile_widths) 完美覆盖），
 //           所以 ofb_ptr 从 cfg_ofb_base 起步，每 fire 一拍就 +1。
 //
-// 四层循环（自己跑，独立于其他模块）：
-//     for cs in 0..cout_slices-1
-//       for yout in 0..h_out-1
+// 四层循环（方式 1，cs 下移到 yout 内）：
+//     for yout in 0..h_out-1
+//       for cs in 0..cout_slices-1
 //         for tile in 0..num_tiles-1
 //           for x in 0..cur_valid_w-1         // cur_valid_w = tile_w 或 last_valid_w
 //             一拍 parf valid & ready → SDP → OFB 写 1 addr
+//
+// ofb_ptr 从 cfg_ofb_base 每 fire 线性 +1，扫完一个 (yout,cs) 写 W_OUT word，
+// 扫完一个 yout 写 W_OUT × cout_slices word（NHWC 一行全部 cs 段）。
+// streaming 下 ofb_ptr 按 cfg_ofb_ring_words wrap。
+// row_done_pulse 只在 evt_fire_cs_wrap (一个 yout 全部 cs 段写完) 时发。
 //
 // SDP 是纯组合，和 OFB 写同拍完成（无额外延迟）。
 // =============================================================================
@@ -47,10 +52,10 @@ module ofb_writer #(
     input  logic                                 cfg_sdp_relu_en,
 
     // ---- Streaming 配置（v2） ----
-    // cfg_odma_streaming=1 时 OFB 变 ring；ofb_ptr 按 cfg_ofb_cout_step wrap；
+    // cfg_odma_streaming=1 时 OFB 变 ring；ofb_ptr 按 cfg_ofb_ring_words wrap；
     // (rows_written - rows_drained >= cfg_ofb_strip_rows) 时反压 acc_out_ready=0
     input  logic                                 cfg_odma_streaming,
-    input  logic [ADDR_W-1:0]                    cfg_ofb_cout_step,  // 环大小 in words
+    input  logic [ADDR_W-1:0]                    cfg_ofb_ring_words,  // 环大小 in words
     input  logic [5:0]                           cfg_ofb_strip_rows,
     input  logic [15:0]                          rows_drained,       // 来自 ODMA
 
@@ -115,22 +120,24 @@ module ofb_writer #(
     assign all_done = x_is_last && tile_is_last && yout_is_last && cs_is_last;
 
     // =========================================================================
-    // 命名事件信号（comb）
-    //   evt_start         : IDLE 下捕获 start
-    //   evt_fire_x_wrap   : fire 且 x 到末尾 —— x_cnt 归零，tile_cnt++
-    //   evt_fire_tile_wrap: 上述 + tile 到末尾 —— tile_cnt 归零，yout_cnt++
-    //   evt_fire_yout_wrap: 上述 + yout 到末尾 —— yout_cnt 归零，cs_cnt++
+    // 命名事件信号（方式 1：cs 下移到 yout 内）
+    //   evt_fire_x_wrap   : x 到末尾（tile 推进）
+    //   evt_fire_tile_wrap: tile 到末尾（cs 推进 —— 新：一个 (yout,cs) 完成）
+    //   evt_fire_cs_wrap  : cs 到末尾（yout 推进 —— 新：一个 yout 全 cs 完成）
+    //   evt_fire_yout_wrap: yout 到末尾（整 strip 结束）
     // =========================================================================
     logic evt_start;
     logic evt_fire_x_wrap;
     logic evt_fire_tile_wrap;
+    logic evt_fire_cs_wrap;
     logic evt_fire_yout_wrap;
 
     always_comb begin
         evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_fire_x_wrap    = acc_fire && x_is_last;
         evt_fire_tile_wrap = evt_fire_x_wrap    && tile_is_last;
-        evt_fire_yout_wrap = evt_fire_tile_wrap && yout_is_last;
+        evt_fire_cs_wrap   = evt_fire_tile_wrap && cs_is_last;
+        evt_fire_yout_wrap = evt_fire_cs_wrap   && yout_is_last;
     end
 
     // =========================================================================
@@ -199,22 +206,24 @@ module ofb_writer #(
         else                          tile_cnt <= tile_cnt;
     end
 
+    // 方式 1：cs 和 yout 推进事件互换
+    always_ff @(posedge clk) begin
+        if      (evt_start)           cs_cnt <= '0;
+        else if (evt_fire_cs_wrap)    cs_cnt <= '0;
+        else if (evt_fire_tile_wrap)  cs_cnt <= cs_cnt + 6'd1;
+        else                          cs_cnt <= cs_cnt;
+    end
+
     always_ff @(posedge clk) begin
         if      (evt_start)           yout_cnt <= '0;
         else if (evt_fire_yout_wrap)  yout_cnt <= '0;
-        else if (evt_fire_tile_wrap)  yout_cnt <= yout_cnt + 16'd1;
+        else if (evt_fire_cs_wrap)    yout_cnt <= yout_cnt + 16'd1;
         else                          yout_cnt <= yout_cnt;
     end
 
-    always_ff @(posedge clk) begin
-        if      (evt_start)                          cs_cnt <= '0;
-        else if (evt_fire_yout_wrap && !cs_is_last)  cs_cnt <= cs_cnt + 6'd1;
-        else                                         cs_cnt <= cs_cnt;
-    end
-
-    // ofb_ptr：streaming 模式按 cfg_ofb_cout_step wrap 回 cfg_ofb_base
+    // ofb_ptr：streaming 模式按 cfg_ofb_ring_words wrap 回 cfg_ofb_base
     logic [ADDR_W-1:0] ofb_ptr_wrap_limit_m1;
-    assign ofb_ptr_wrap_limit_m1 = cfg_ofb_base + cfg_ofb_cout_step - {{(ADDR_W-1){1'b0}}, 1'b1};
+    assign ofb_ptr_wrap_limit_m1 = cfg_ofb_base + cfg_ofb_ring_words - {{(ADDR_W-1){1'b0}}, 1'b1};
 
     always_ff @(posedge clk) begin
         if      (evt_start) ofb_ptr <= cfg_ofb_base;
@@ -228,17 +237,17 @@ module ofb_writer #(
     end
 
     // =========================================================================
-    // Row-level credit 输出
-    //   row_done_pulse: 每次 evt_fire_tile_wrap （1 OFM 行写完）脉冲
-    //   rows_written: 累计计数（控制路径，复位必须）
+    // Row-level credit 输出（方式 1）
+    //   row_done_pulse: 在 evt_fire_cs_wrap（一个 yout 所有 cs 段都写完）发
+    //   rows_written:   累计 yout 数（控制路径，复位必须）
     // =========================================================================
-    assign row_done_pulse = evt_fire_tile_wrap;
+    assign row_done_pulse = evt_fire_cs_wrap;
 
     logic [15:0] r_rows_written;
     always_ff @(posedge clk) begin
         if      (!rst_n)              r_rows_written <= 16'd0;
         else if (evt_start)           r_rows_written <= 16'd0;
-        else if (evt_fire_tile_wrap)  r_rows_written <= r_rows_written + 16'd1;
+        else if (evt_fire_cs_wrap)    r_rows_written <= r_rows_written + 16'd1;
         else                          r_rows_written <= r_rows_written;
     end
     assign rows_written = r_rows_written;

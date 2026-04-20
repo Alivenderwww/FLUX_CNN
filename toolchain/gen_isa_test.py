@@ -18,10 +18,19 @@ Outputs:
 """
 import argparse
 import math
+import os
 import sys
 
 
 WRF_DEPTH = 32  # Hardware: 5-bit wgt_rf_addr
+
+# Default output dir: sim/tb_core_dma relative to this script's location
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_OUT_DIR = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "sim", "tb_core_dma"))
+
+
+def _out_path(out_dir, fname):
+    return os.path.join(out_dir, fname)
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +60,9 @@ def parse_args():
     # Phase C-4 descriptor
     p.add_argument('--strip_rows', type=int, default=0,
                    help='Phase C-4: 0 = single strip (legacy) / >0 = multi-strip descriptor chain')
+    # Toolchain: 输出目录（默认 ../sim/tb_core_dma/）
+    p.add_argument('--out-dir', default=DEFAULT_OUT_DIR,
+                   help=f'output directory for generated files (default: {DEFAULT_OUT_DIR})')
     return p.parse_args()
 
 
@@ -60,8 +72,10 @@ def parse_args():
 def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
              shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
              streaming=False, ifb_strip=8, ofb_strip=8,
-             pad_top=0, pad_left=0, strip_rows=0):
+             pad_top=0, pad_left=0, strip_rows=0,
+             out_dir=DEFAULT_OUT_DIR):
     pad_bot, pad_right = pad_top, pad_left  # 对称 pad
+    os.makedirs(out_dir, exist_ok=True)
     import random
     random.seed(seed)
 
@@ -80,6 +94,16 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     kk           = K * K
     total_wrf    = kk * cin_slices
     wrf_packed   = total_wrf <= WRF_DEPTH
+
+    # E-2 ARF reuse: 启用时 cur_fill_len = cur_valid_w + K - 1 不能超 ARF_DEPTH=32
+    # → tile_w ≤ 33 - K。stride=1 && K>1 下自动限 tile_w。
+    ARF_DEPTH = 32
+    arf_reuse_en = (stride == 1 and K > 1)
+    if arf_reuse_en:
+        max_tile_w = ARF_DEPTH - K + 1
+        if TILE_W > max_tile_w:
+            TILE_W = max_tile_w
+
     num_tiles    = (W_OUT + TILE_W - 1) // TILE_W
     last_valid_w = W_OUT - (num_tiles - 1) * TILE_W
 
@@ -95,7 +119,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     TILE_IN_STEP  = TILE_W * stride * cin_slices        # 跨 tile 推进 TILE_W × stride × cin_slices word
 
     ifb_size = H_IN * W_IN * cin_slices                 # 整图 IFB word 数
-    wb_size  = kk * cout_slices * cin_slices
+    wb_size  = kk * cout_slices * cin_slices + cout_slices   # +cout_slices for bias prefix
     ofb_size = H_OUT * W_OUT * cout_slices
 
     PYTHON_SRAM_LIMIT = 524288   # 512K words，支持 480x640 单 slice
@@ -177,7 +201,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
                     cin = cins * HW_PE + cin_local
                     val |= (ifm_arr[y][x][cin] & 0xFF) << (cin_local * 8)
                 ifb_data.append(f"{val:0{ifb_hex_chars}X}")
-    with open('ifb.txt', 'w') as f:
+    with open(_out_path(out_dir, 'ifb.txt'), 'w') as f:
         f.writelines(d + '\n' for d in ifb_data)
 
     # ------------------------------------------------------------------
@@ -205,7 +229,12 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
                             cv |= (v & 0xFF) << (cin_local * 8)
                         val |= cv << (lc * HW_PE * 8)
                     wb_data.append(f"{val:0{wb_hex_chars}X}")
-    with open('wb.txt', 'w') as f:
+    # F-1b: WB SRAM 前缀放 bias (每 cs 一个 word，低 NUM_COL×32=512 bit 放 16 个 int32，
+    # 高位 pad 0)。此处 bias 暂全 0（F-1c 编译器会填实际量化 bias）。
+    # wb.hex 每一行 = NUM_COL×NUM_PE×8 = 2048 bit hex = 512 hex chars
+    bias_prefix = ['0' * wb_hex_chars for _ in range(cout_slices)]
+    with open(_out_path(out_dir, 'wb.txt'), 'w') as f:
+        f.writelines(d + '\n' for d in bias_prefix)
         f.writelines(d + '\n' for d in wb_data)
 
     # ------------------------------------------------------------------
@@ -232,7 +261,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
                     act = max(0, min(255, psum >> shift_amt))
                     pixel_val |= (act & 0xFF) << (lc * 8)
                 expected_ofm.append(f"{pixel_val:0{HW_COL * 2}X}")
-    with open('expected_ofm.txt', 'w') as f:
+    with open(_out_path(out_dir, 'expected_ofm.txt'), 'w') as f:
         f.writelines(d + '\n' for d in expected_ofm)
 
     # ------------------------------------------------------------------
@@ -266,7 +295,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         'ROUNDS_PER_CINS': rounds_per_cins,
         'ROUND_LEN_LAST' : round_len_last,
         'IFB_BASE'      : 0,
-        'WB_BASE'       : 0,
+        'WB_BASE'       : cout_slices,     # F-1b: weight 起点在 bias prefix 之后
         'OFB_BASE'      : 0,
         'IFB_ROW_STEP'  : IFB_ROW_STEP,
         'WB_COUT_STEP'  : WB_COUT_STEP,
@@ -275,6 +304,12 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         'TILE_IN_STEP'  : TILE_IN_STEP,
         'SDP_SHIFT'     : shift_amt,
         'SDP_RELU_EN'   : 1,
+        # E-1 兼容：mult=1, zp=0, clip=[0,255], round=0 等价于原 shift+ReLU+clip[0,255]
+        'SDP_MULT'      : 1,
+        'SDP_ZP_OUT'    : 0,
+        'SDP_CLIP_MIN'  : 0,
+        'SDP_CLIP_MAX'  : 255,
+        'SDP_ROUND_EN'  : 0,
         'PAD_TOP'            : pad_top,
         'PAD_LEFT'           : pad_left,
         'H_IN_TOTAL'         : H_IN,
@@ -290,8 +325,9 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
         'IFB_ISS_STEP'       : stride * cin_slices,   # iss_pos 步长 (word 单位)
         'IFB_KY_STEP'        : W_IN * cin_slices,     # ky 步长 (word 单位)
         'TILE_PIX_STEP'      : TILE_W * stride,       # 像素域 tile 步长（用于 pad 判定）
+        'ARF_REUSE_EN'       : 1 if arf_reuse_en else 0,  # E-2: kx sliding-window reuse
     }
-    with open('config.txt', 'w') as f:
+    with open(_out_path(out_dir, 'config.txt'), 'w') as f:
         for k, v in cfg.items():
             f.write(f"{k} = {v}\n")
 
@@ -404,13 +440,13 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     # END descriptor
     descs.append(pack_desc(TYPE_END, 0, 0, 0, 0, 0, H_OUT, 0, 0, 0, 0, 0))
 
-    with open('desc_list.hex', 'w') as f:
+    with open(_out_path(out_dir, 'desc_list.hex'), 'w') as f:
         for (beat0, beat1) in descs:
             f.write(f"{beat0:032X}\n")
             f.write(f"{beat1:032X}\n")
 
     # 补充 config.txt 的 DESC_COUNT（TB 写入 0x184 CSR，DFE 用）
-    with open('config.txt', 'a') as f:
+    with open(_out_path(out_dir, 'config.txt'), 'a') as f:
         f.write(f"DESC_COUNT = {len(descs)}\n")
         f.write(f"DESC_LIST_BASE = 0\n")   # DDR 起始地址（TB 侧决定实际物理 base）
 
@@ -418,7 +454,7 @@ def generate(H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
           f"strip_rows={strip_rows_eff}")
 
     # sim_params.f — 供 TB 通过 plusargs 获取尺寸（避免硬编码默认值）
-    with open('sim_params.f', 'w') as f:
+    with open(_out_path(out_dir, 'sim_params.f'), 'w') as f:
         f.write(f"+H_OUT={H_OUT}\n+W_OUT={W_OUT}\n+COUT_SLICES={cout_slices}\n"
                 f"+IFB_WORDS={ifb_size}\n+WB_WORDS={wb_size}\n"
                 f"+DESC_COUNT={len(descs)}\n"
@@ -439,4 +475,5 @@ if __name__ == '__main__':
              streaming=args.streaming,
              ifb_strip=args.ifb_strip, ofb_strip=args.ofb_strip,
              pad_top=pad_t, pad_left=pad_l,
-             strip_rows=args.strip_rows)
+             strip_rows=args.strip_rows,
+             out_dir=args.out_dir)

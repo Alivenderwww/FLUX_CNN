@@ -69,6 +69,11 @@ module tb_core_dma;
     localparam [11:0] ADDR_TILE_IN_STEP     = 12'h15C;
     localparam [11:0] ADDR_SDP_SHIFT        = 12'h160;
     localparam [11:0] ADDR_SDP_RELU_EN      = 12'h164;
+    localparam [11:0] ADDR_SDP_MULT         = 12'h188;
+    localparam [11:0] ADDR_SDP_ZP_OUT       = 12'h18C;
+    localparam [11:0] ADDR_SDP_CLIP_MIN     = 12'h190;
+    localparam [11:0] ADDR_SDP_CLIP_MAX     = 12'h194;
+    localparam [11:0] ADDR_SDP_ROUND_EN     = 12'h198;
     localparam [11:0] ADDR_H_IN_TOTAL       = 12'h168;
     localparam [11:0] ADDR_IFB_STRIP_ROWS   = 12'h16C;
     localparam [11:0] ADDR_OFB_STRIP_ROWS   = 12'h170;
@@ -83,6 +88,7 @@ module tb_core_dma;
     localparam [11:0] ADDR_IFB_ISS_STEP     = 12'h1AC;
     localparam [11:0] ADDR_IFB_KY_STEP      = 12'h1B0;
     localparam [11:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
+    localparam [11:0] ADDR_ARF_REUSE_EN     = 12'h1B8;
     localparam [11:0] ADDR_STATUS           = 12'h004;
     localparam [11:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [11:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -254,11 +260,17 @@ module tb_core_dma;
                 "IFB_ISS_STEP"   : axi_lite_write(ADDR_IFB_ISS_STEP,    val);
                 "IFB_KY_STEP"    : axi_lite_write(ADDR_IFB_KY_STEP,    val);
                 "TILE_PIX_STEP"  : axi_lite_write(ADDR_TILE_PIX_STEP,  val);
+                "ARF_REUSE_EN"   : axi_lite_write(ADDR_ARF_REUSE_EN,   val);
                 "NUM_TILES"      : axi_lite_write(ADDR_NUM_TILES,       val);
                 "LAST_VALID_W"   : axi_lite_write(ADDR_LAST_VALID_W,    val);
                 "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
                 "SDP_SHIFT"      : axi_lite_write(ADDR_SDP_SHIFT,       val);
                 "SDP_RELU_EN"    : axi_lite_write(ADDR_SDP_RELU_EN,     val);
+                "SDP_MULT"       : axi_lite_write(ADDR_SDP_MULT,        val);
+                "SDP_ZP_OUT"     : axi_lite_write(ADDR_SDP_ZP_OUT,      val);
+                "SDP_CLIP_MIN"   : axi_lite_write(ADDR_SDP_CLIP_MIN,    val);
+                "SDP_CLIP_MAX"   : axi_lite_write(ADDR_SDP_CLIP_MAX,    val);
+                "SDP_ROUND_EN"   : axi_lite_write(ADDR_SDP_ROUND_EN,    val);
                 "H_IN_TOTAL"     : axi_lite_write(ADDR_H_IN_TOTAL,      val);
                 "IFB_STRIP_ROWS" : axi_lite_write(ADDR_IFB_STRIP_ROWS,  val);
                 "OFB_STRIP_ROWS" : axi_lite_write(ADDR_OFB_STRIP_ROWS,  val);
@@ -295,6 +307,27 @@ module tb_core_dma;
             end
         end
     endgenerate
+
+    // ------ SRAM read/write counters (E-3) ------
+    // IFB/WB/OFB 在 core_top 里是 single-port SRAM 信号；这里用层级引用直接数
+    // we/re 的 posedge 次数。仅在 layer_busy 期间计数（与 core_cycles 对齐）。
+    longint ifb_we_cnt = 0, ifb_re_cnt = 0;
+    longint wb_we_cnt  = 0, wb_re_cnt  = 0;
+    longint ofb_we_cnt = 0, ofb_re_cnt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            ifb_we_cnt <= 0; ifb_re_cnt <= 0;
+            wb_we_cnt  <= 0; wb_re_cnt  <= 0;
+            ofb_we_cnt <= 0; ofb_re_cnt <= 0;
+        end else if (u_core.layer_busy) begin
+            if (u_core.ifb_we_mux) ifb_we_cnt <= ifb_we_cnt + 1;
+            if (u_core.ifb_re)     ifb_re_cnt <= ifb_re_cnt + 1;
+            if (u_core.wb_we_mux)  wb_we_cnt  <= wb_we_cnt  + 1;
+            if (u_core.wb_re)      wb_re_cnt  <= wb_re_cnt  + 1;
+            if (u_core.ofb_we)     ofb_we_cnt <= ofb_we_cnt + 1;
+            if (u_core.ofb_re_mux) ofb_re_cnt <= ofb_re_cnt + 1;
+        end
+    end
 
     // ================== Watchdog + main ==================
     initial begin
@@ -387,8 +420,15 @@ module tb_core_dma;
             longint mac_fire_cycles;
             longint total_mac_ops;
             longint total_wrf_writes;
+            int num_cin_val, num_cout_val;
+            int active_pe_per_fire;
             mac_fire_cycles  = u_core.u_mac_array.mac_fire_cnt;
-            total_mac_ops    = mac_fire_cycles * NUM_COL * NUM_PE;
+            if (!$value$plusargs("NUM_CIN=%d",  num_cin_val))  num_cin_val  = 16;
+            if (!$value$plusargs("NUM_COUT=%d", num_cout_val)) num_cout_val = 16;
+            // 硬件利用率 (定义 A)：每 fire 实际激活 PE 数 = min(Cin,16) × min(Cout,16)
+            active_pe_per_fire = ((num_cin_val  > NUM_PE)  ? NUM_PE  : num_cin_val) *
+                                 ((num_cout_val > NUM_COL) ? NUM_COL : num_cout_val);
+            total_mac_ops    = mac_fire_cycles * active_pe_per_fire;
             total_wrf_writes = 0;
             for (int c = 0; c < NUM_COL; c++)
                 for (int p = 0; p < NUM_PE; p++)
@@ -399,8 +439,10 @@ module tb_core_dma;
             $display("========================================");
             $display("Core Active Cycles:   %0d", core_cycles);
             $display("MAC Fire Cycles:      %0d", mac_fire_cycles);
-            $display("Total MAC Ops:        %0d (= fire * %0d PEs)", total_mac_ops, NUM_COL * NUM_PE);
-            $display("Theoretical Max MACs: %0d (= cycles * %0d PEs)",
+            $display("Active PE / fire:     %0d (= min(Cin,%0d) × min(Cout,%0d))",
+                     active_pe_per_fire, NUM_PE, NUM_COL);
+            $display("Total MAC Ops:        %0d (= fire × active_PE)", total_mac_ops);
+            $display("Theoretical Max MACs: %0d (= cycles × %0d physical PEs)",
                      core_cycles * NUM_COL * NUM_PE, NUM_COL * NUM_PE);
             $display("MAC Utilization:      %.2f %%",
                      (real'(total_mac_ops) / (real'(core_cycles) * real'(NUM_COL * NUM_PE))) * 100.0);
@@ -422,6 +464,20 @@ module tb_core_dma;
                      u_core.u_ofb_writer.hs_acc_fire,
                      u_core.u_ofb_writer.hs_acc_stall,
                      u_core.u_ofb_writer.hs_acc_idle);
+            $display("--- SRAM Access (layer_busy 窗口内) ---");
+            $display("IFB SRAM Writes:      %0d", ifb_we_cnt);
+            $display("IFB SRAM Reads :      %0d", ifb_re_cnt);
+            $display("WB  SRAM Writes:      %0d", wb_we_cnt);
+            $display("WB  SRAM Reads :      %0d", wb_re_cnt);
+            $display("OFB SRAM Writes:      %0d", ofb_we_cnt);
+            $display("OFB SRAM Reads :      %0d", ofb_re_cnt);
+            $display("--- ARF (act_buf) Access ---");
+            $display("ARF  Writes:          %0d", u_core.u_line_buffer.arf_write_cnt);
+            $display("ARF  Reads :          %0d", u_core.u_line_buffer.arf_read_cnt);
+            $display("ARF  Pad Skip:        %0d", u_core.u_line_buffer.pad_skip_cnt);
+            $display("--- PARF (psum) Access ---");
+            $display("PARF Fill  :          %0d", u_core.u_parf_accum.fill_fire_cnt);
+            $display("PARF Drain :          %0d", u_core.u_parf_accum.drain_fire_cnt);
             $display("========================================");
         end
         $stop;

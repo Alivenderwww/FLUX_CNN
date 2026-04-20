@@ -36,12 +36,14 @@
 // =============================================================================
 
 module wgt_buffer #(
-    parameter int NUM_COL    = 16,
-    parameter int NUM_PE     = 16,
-    parameter int DATA_WIDTH = 8,
-    parameter int WRF_DEPTH  = 32,
-    parameter int SRAM_DEPTH = 8192,
-    parameter int ADDR_W     = 20
+    parameter int NUM_COL         = 16,
+    parameter int NUM_PE          = 16,
+    parameter int DATA_WIDTH      = 8,
+    parameter int PSUM_WIDTH      = 32,
+    parameter int WRF_DEPTH       = 32,
+    parameter int MAX_COUT_SLICES = 16,    // BRF 深度，支持到 cout=256
+    parameter int SRAM_DEPTH      = 8192,
+    parameter int ADDR_W          = 20
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
@@ -77,7 +79,10 @@ module wgt_buffer #(
     // ---- mac_array COMPUTE ----
     output logic                                 wgt_valid,
     output logic [$clog2(WRF_DEPTH)-1:0]         wrf_raddr,
-    input  logic                                 wgt_ready
+    input  logic                                 wgt_ready,
+
+    // ---- F-1b: bias 输出给 mac_array (当前 cs 的 16 × int32) ----
+    output logic signed [NUM_COL*PSUM_WIDTH-1:0] bias_vec
 );
 
     localparam int AW  = $clog2(SRAM_DEPTH);
@@ -86,11 +91,12 @@ module wgt_buffer #(
     // =========================================================================
     // 状态机
     // =========================================================================
-    typedef enum logic [1:0] {
-        S_IDLE    = 2'd0,
-        S_LOAD    = 2'd1,   // packed: 常规 LOAD；chunked: cold_load (仅整层首次)
-        S_COMPUTE = 2'd2,   // packed: 常规 COMPUTE；chunked: compute+load 并行
-        S_DONE    = 2'd3
+    typedef enum logic [2:0] {
+        S_IDLE      = 3'd0,
+        S_BIAS_LOAD = 3'd1,   // F-1b: 从 WB[0..cout_slices-1] 拉 bias 到 BRF
+        S_LOAD      = 3'd2,   // packed: 常规 LOAD；chunked: cold_load (仅整层首次)
+        S_COMPUTE   = 3'd3,   // packed: 常规 COMPUTE；chunked: compute+load 并行
+        S_DONE      = 3'd4
     } state_t;
     state_t state, state_next;
 
@@ -138,6 +144,18 @@ module wgt_buffer #(
     logic [ADDR_W-1:0] cur_wb_rd_base;   // packed cold-load 的 WB 起点
     logic [ADDR_W-1:0] l_wb_base;        // chunked load 的当前 round 起点
     logic [ADDR_W-1:0] l_wb_base_cs;     // chunked load 侧 cs base
+
+    // --- F-1b: BRF + bias load 阶段 ---
+    //   WB SRAM 前缀布局：[0..cout_slices-1] 放 bias (每 word 低 NUM_COL×32bit 放 16 个 int32)
+    //   S_BIAS_LOAD 扫 cout_slices 次 wb_re，1 拍延后把 wb_rdata 低 512bit 写入 BRF[bias_wr_idx_d1]
+    //   COMPUTE 阶段 bias_vec 输出 = BRF[cs_cnt] 组合读（NUM_COL 个 int32 打包）
+    localparam int BIAS_IDX_W = $clog2(MAX_COUT_SLICES);
+    logic [BIAS_IDX_W-1:0]           bias_load_cnt;
+    logic [BIAS_IDX_W-1:0]           bias_wr_idx_d1;
+    logic                            bias_re_gate;
+    logic                            bias_re_d1;
+    logic                            bias_load_done;
+    logic signed [PSUM_WIDTH-1:0]    bias_rf [0:MAX_COUT_SLICES-1][0:NUM_COL-1];
 
     // =========================================================================
     // 派生量
@@ -216,6 +234,10 @@ module wgt_buffer #(
     logic sload_wb_re_gate;
     assign sload_wb_re_gate = (state == S_LOAD) && (wb_rd_cnt < cur_load_len);
 
+    // S_BIAS_LOAD 阶段的 WB 读 gate：bias_load_cnt 扫 0..cfg_cout_slices-1
+    assign bias_re_gate   = (state == S_BIAS_LOAD) && ({1'b0, bias_load_cnt} < cfg_cout_slices);
+    assign bias_load_done = (state == S_BIAS_LOAD) && ({1'b0, bias_load_cnt} == cfg_cout_slices);
+
     // Chunked run 阶段 hazard 判定
     logic chunked_hazard_ok;
     assign chunked_hazard_ok = (l_pos >= c_cur_round_len)
@@ -287,8 +309,10 @@ module wgt_buffer #(
     assign wb_raddr_sload = cur_wb_rd_base + {{(ADDR_W-10){1'b0}}, wb_rd_cnt};
     assign wb_raddr_srun  = l_wb_base      + {{(ADDR_W-6) {1'b0}}, l_pos};
 
-    assign wb_re    = sload_wb_re_gate | chunked_load_active;
-    assign wb_raddr = chunked_load_active ? wb_raddr_srun[AW-1:0] : wb_raddr_sload[AW-1:0];
+    assign wb_re    = sload_wb_re_gate | chunked_load_active | bias_re_gate;
+    assign wb_raddr = bias_re_gate        ? {{(AW-BIAS_IDX_W){1'b0}}, bias_load_cnt}
+                    : chunked_load_active ? wb_raddr_srun[AW-1:0]
+                                          : wb_raddr_sload[AW-1:0];
 
     assign wrf_we    = {(NUM_COL*NUM_PE){wb_re_d1 | l_wb_re_d1}};
     assign wrf_waddr = l_wb_re_d1 ? l_wrf_waddr_d1 : wrf_wr_cnt[WAW-1:0];
@@ -305,22 +329,65 @@ module wgt_buffer #(
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE    : if (start)          state_next = S_LOAD;
-            S_LOAD    : if (sload_done)     state_next = S_COMPUTE;
-            S_COMPUTE : if (wgt_fire && cs_compute_last) begin
+            S_IDLE      : if (start)          state_next = S_BIAS_LOAD;
+            S_BIAS_LOAD : if (bias_load_done) state_next = S_LOAD;
+            S_LOAD      : if (sload_done)     state_next = S_COMPUTE;
+            S_COMPUTE   : if (wgt_fire && cs_compute_last) begin
                 // 方式 1：每 (yout, cs) 扫完；packed 都要重 LOAD 下一 (yout, cs)
                 // chunked 由内部 load ptr 并行覆盖 WRF
                 state_next = (yout_is_last && cs_is_last) ? S_DONE
                            : (cfg_wrf_packed ? S_LOAD : S_COMPUTE);
             end
-            S_DONE    : ;
-            default   :                      state_next = S_IDLE;
+            S_DONE      : ;
+            default     :                     state_next = S_IDLE;
         endcase
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) state <= S_IDLE;
         else        state <= state_next;
+    end
+
+    // =========================================================================
+    // F-1b: BIAS_LOAD counter + BRF 写
+    //   reset on evt_start，每 bias_re_gate +1；读完 cout_slices 个 → bias_load_done=1
+    //   wb_rdata 低 NUM_COL×PSUM_WIDTH 位是 16 个 int32 bias（上位 pad 0），1 拍延后写 BRF
+    // =========================================================================
+    always_ff @(posedge clk) begin
+        if      (!rst_n)        bias_load_cnt <= '0;
+        else if (evt_start)     bias_load_cnt <= '0;
+        else if (bias_re_gate)  bias_load_cnt <= bias_load_cnt + 1'd1;
+    end
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            bias_re_d1     <= 1'b0;
+            bias_wr_idx_d1 <= '0;
+        end else begin
+            bias_re_d1     <= bias_re_gate;
+            bias_wr_idx_d1 <= bias_load_cnt;
+        end
+    end
+
+    // BRF 数据：数据路径，reset 清 0（避免 bias_en=0 场景下残留 X，给 mac_array acc_seed 注入 0）
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            for (int s = 0; s < MAX_COUT_SLICES; s++)
+                for (int c = 0; c < NUM_COL; c++)
+                    bias_rf[s][c] <= '0;
+        end else if (bias_re_d1) begin
+            for (int c = 0; c < NUM_COL; c++) begin
+                bias_rf[bias_wr_idx_d1][c] <=
+                    $signed(wb_rdata[c*PSUM_WIDTH +: PSUM_WIDTH]);
+            end
+        end
+    end
+
+    // bias_vec 组合读：当前 cs_cnt 对应的 16 个 int32
+    always_comb begin
+        for (int c = 0; c < NUM_COL; c++) begin
+            bias_vec[c*PSUM_WIDTH +: PSUM_WIDTH] = bias_rf[cs_cnt[BIAS_IDX_W-1:0]][c];
+        end
     end
 
     // =========================================================================

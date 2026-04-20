@@ -55,6 +55,7 @@
 //   0x1AC  IFB_ISS_STEP      [19:0]            (stride × cin_slices, IFB 跨像素 word 步长)
 //   0x1B0  IFB_KY_STEP       [19:0]            (W_IN × cin_slices, IFB 跨 ky 行 word 步长)
 //   0x1B4  TILE_PIX_STEP     [15:0]            (TILE_W × stride, 像素域 tile 步长 for pad 判定)
+//   0x1B8  ARF_REUSE_EN      [0]               (1: kx sliding-window reuse；仅 stride==1 && K>1)
 //   0x200  IDMA_SRC_BASE     [31:0]
 //   0x204  IDMA_BYTE_LEN     [23:0]             (保留，WDMA 用；IDMA 实际 len 由 descriptor 覆盖)
 //   0x210  WDMA_SRC_BASE     [31:0]
@@ -155,7 +156,8 @@ module cfg_regs #(
     output logic [CORE_ADDR_W-1:0]   ofb_ring_words,
     output logic [CORE_ADDR_W-1:0]   ifb_iss_step,
     output logic [CORE_ADDR_W-1:0]   ifb_ky_step,
-    output logic [15:0]              tile_pix_step
+    output logic [15:0]              tile_pix_step,
+    output logic                     arf_reuse_en
 );
 
     // =========================================================================
@@ -208,6 +210,7 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_IFB_ISS_STEP     = 12'h1AC;
     localparam [ADDR_W-1:0] ADDR_IFB_KY_STEP      = 12'h1B0;
     localparam [ADDR_W-1:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
+    localparam [ADDR_W-1:0] ADDR_ARF_REUSE_EN     = 12'h1B8;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -261,6 +264,7 @@ module cfg_regs #(
     logic [CORE_ADDR_W-1:0]  r_ifb_iss_step;
     logic [CORE_ADDR_W-1:0]  r_ifb_ky_step;
     logic [15:0]             r_tile_pix_step;
+    logic                    r_arf_reuse_en;
     logic [5:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
     logic [15:0]             r_h_in_total;
@@ -314,6 +318,7 @@ module cfg_regs #(
                 ADDR_IFB_ISS_STEP    : r_ifb_iss_step    <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_IFB_KY_STEP     : r_ifb_ky_step     <= reg_w_data[CORE_ADDR_W-1:0];
                 ADDR_TILE_PIX_STEP   : r_tile_pix_step   <= reg_w_data[15:0];
+                ADDR_ARF_REUSE_EN    : r_arf_reuse_en    <= reg_w_data[0];
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= reg_w_data[5:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= reg_w_data[0];
                 ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
@@ -369,6 +374,7 @@ module cfg_regs #(
     assign ifb_iss_step    = r_ifb_iss_step;
     assign ifb_ky_step     = r_ifb_ky_step;
     assign tile_pix_step   = r_tile_pix_step;
+    assign arf_reuse_en    = r_arf_reuse_en;
     assign sdp_shift       = r_sdp_shift;
     assign sdp_relu_en     = r_sdp_relu_en;
     assign h_in_total         = r_h_in_total;
@@ -433,6 +439,7 @@ module cfg_regs #(
             ADDR_IFB_ISS_STEP    : reg_r_data = {12'd0, r_ifb_iss_step};
             ADDR_IFB_KY_STEP     : reg_r_data = {12'd0, r_ifb_ky_step};
             ADDR_TILE_PIX_STEP   : reg_r_data = {16'd0, r_tile_pix_step};
+            ADDR_ARF_REUSE_EN    : reg_r_data = {31'd0, r_arf_reuse_en};
             ADDR_SDP_SHIFT       : reg_r_data = {26'd0, r_sdp_shift};
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
             ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};

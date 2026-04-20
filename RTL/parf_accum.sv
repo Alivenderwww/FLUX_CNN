@@ -50,7 +50,13 @@ module parf_accum #(
     // ---- downstream: sdp / ofb_writer ----
     output logic                                 acc_out_valid,
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] acc_out_vec,
-    input  logic                                 acc_out_ready
+    input  logic                                 acc_out_ready,
+
+    // ---- seed feedback to mac_array (F-1b bias) ----
+    //   mac_array 用 first_round_fill_out mux 选 bias 或 old_psum 作 acc_seed
+    //   old_psum_at_wr = parf_data[wr_addr]（组合读，对应当前 wr_addr 的旧值）
+    output logic                                 is_first_round_fill_out,
+    output logic signed [NUM_COL*PSUM_WIDTH-1:0] old_psum_at_wr
 );
 
     localparam int PAW = $clog2(PARF_DEPTH);
@@ -128,19 +134,12 @@ module parf_accum #(
     end
 
     // =========================================================================
-    // 累加新值 (comb)
+    // 种子 / 旧值输出（给 mac_array 做 acc_seed 融合；parf 本身不再做加法）
+    //   mac_array 在 T 拍看到 old_psum_at_wr = parf_data[wr_addr @ T]，
+    //   psum_in_vec 已 = Σ(products) + (first_round ? bias : old_psum)，直接写回 parf
     // =========================================================================
-    logic signed [NUM_COL*PSUM_WIDTH-1:0] old_val, new_val;
-    assign old_val = parf_data[wr_addr];
-
-    always_comb begin
-        for (int c = 0; c < NUM_COL; c++) begin
-            logic signed [PSUM_WIDTH-1:0] lhs, rhs;
-            lhs = is_first_round_fill ? '0 : old_val[c*PSUM_WIDTH +: PSUM_WIDTH];
-            rhs = psum_in_vec[c*PSUM_WIDTH +: PSUM_WIDTH];
-            new_val[c*PSUM_WIDTH +: PSUM_WIDTH] = lhs + rhs;
-        end
-    end
+    assign old_psum_at_wr          = parf_data[wr_addr];
+    assign is_first_round_fill_out = is_first_round_fill;
 
     // =========================================================================
     // FILL 侧寄存器（控制路径：决定写地址和 psum_in_ready，复位必须）
@@ -203,12 +202,29 @@ module parf_accum #(
 
     // =========================================================================
     // PARF 存储阵列（数据路径，无复位）
-    //   每 tile 开头 is_first_round_fill=1 写 seed 覆盖，无需初始化。
+    //   mac_array 已经在 psum_in_vec 里融合了 bias/old_psum，parf 直写即可。
     //   下游 acc_out_vec 被 drain_active 遮蔽，drain_active 的复位保证 X 不外泄。
     // =========================================================================
     always_ff @(posedge clk) begin
-        if (fill_fire) parf_data[wr_addr] <= new_val;
+        if (fill_fire) parf_data[wr_addr] <= psum_in_vec;
         else           parf_data[wr_addr] <= parf_data[wr_addr];
     end
+
+    // =========================================================================
+    // 仿真性能 counters (E-3)
+    // =========================================================================
+    // synthesis translate_off
+    int fill_fire_cnt  = 0;
+    int drain_fire_cnt = 0;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            fill_fire_cnt  <= 0;
+            drain_fire_cnt <= 0;
+        end else begin
+            if (fill_fire)  fill_fire_cnt  <= fill_fire_cnt  + 1;
+            if (drain_fire) drain_fire_cnt <= drain_fire_cnt + 1;
+        end
+    end
+    // synthesis translate_on
 
 endmodule

@@ -60,7 +60,13 @@ module mac_array #(
     // ---- psum 输出到 parf_accum ----
     output logic                                 psum_out_valid,
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
-    input  logic                                 psum_in_ready
+    input  logic                                 psum_in_ready,
+
+    // ---- F-1b: acc seed (bias 或 old_psum) 从 parf/wgt_buffer 回传 ----
+    //   psum_out_vec[c] = Σ(products) + (is_first_round_fill ? bias_vec[c] : old_psum_vec[c])
+    input  logic                                 is_first_round_fill,
+    input  logic signed [NUM_COL*PSUM_WIDTH-1:0] bias_vec,       // from wgt_buffer BRF
+    input  logic signed [NUM_COL*PSUM_WIDTH-1:0] old_psum_vec    // from parf_accum[wr_addr]
 );
 
     // =========================================================================
@@ -118,7 +124,13 @@ module mac_array #(
                 col_wrf_wdata = wrf_wdata[c*NUM_PE*DATA_WIDTH +: NUM_PE*DATA_WIDTH];
             end
 
-            assign psum_out_vec[c*PSUM_WIDTH +: PSUM_WIDTH] = col_psum_out;
+            // F-1b: 17-input 加法（逻辑等价，物理落地 = 16-tree + 1 add）
+            // acc_seed = is_first_round_fill ? bias[c] : old_psum[c]
+            logic signed [PSUM_WIDTH-1:0] acc_seed;
+            assign acc_seed = is_first_round_fill
+                            ? bias_vec    [c*PSUM_WIDTH +: PSUM_WIDTH]
+                            : old_psum_vec[c*PSUM_WIDTH +: PSUM_WIDTH];
+            assign psum_out_vec[c*PSUM_WIDTH +: PSUM_WIDTH] = col_psum_out + acc_seed;
 
             mac_col #(
                 .NUM_PE    (NUM_PE),

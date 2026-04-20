@@ -1,6 +1,6 @@
 # Streaming Row-Ring 架构设计规范
 
-**状态**：设计阶段（未实现）；v1 DMA 子系统已 commit 于 `658a869`，本文档描述下一个里程碑的架构改造。
+**状态**：**已实现并回归通过**（Phase A→D，含 480×640 VGA 端到端验证，`sim/tb_core_dma/run_regression_stream.py` 11/11 PASS）。以下按 (目标) → (架构) → (实现结果) 的顺序组织。
 
 **动机**：让单核能处理远超内部 SRAM 容量的图像（如 480×640 / 224×224 / 1024×1024），且：
 
@@ -331,3 +331,54 @@ IFB+WB+  │          │
 - `core_top` 简化：去掉 `axi_m_mux`，内部只留 `odma` + AXI-S 解码逻辑
 
 v3 时再做；v2 阶段先把 streaming 功能在当前 all-master 拓扑上跑通，证明概念可行。
+
+---
+
+## 14. 实现结果（Phase A→D）
+
+### 14.1 分阶段实施
+
+| Phase | 内容 | 关键改动 |
+|---|---|---|
+| A-1 | cfg_regs 加 streaming 字段（H_IN_TOTAL / strip_rows / DDR row stride / DMA_MODE） | `r_dma_mode_ctrl` 独立 always_ff 加同步复位（避免 X 传播到 IDMA） |
+| A-2 | `line_buffer` 加 ring wrap + `rows_consumed` 输出 | `wrap_addr()` 函数按 `cfg_ifb_cin_step` 取模 |
+| B | `idma.sv` 加 streaming：S_WAIT 状态、`row_beats_remaining`、`rows_written`、ring wrap | 关键 fix：`M_ARVALID = (state==S_AR) && !ring_full`（否则 slave 接受无效 AR 导致死锁） |
+| C-1 | `ofb_writer.sv` 加 `row_done_pulse` + `rows_written` 输出、ring wrap、`ring_full` 反压 | `r_rows_written` 控制路径加同步复位 |
+| C-2 | `odma.sv` 加 streaming：S_AW_WAIT 状态、`row_beats_left` / `rows_produced` / `rows_drained`、按 `ddr_ofm_row_stride` 跨行 | `row_base_addr` 跟踪当前行 DDR base |
+| C-3 | `core_top.sv` 串起 row-credit 环：`ofb_writer.row_done_pulse → odma`；`odma.rows_drained → ofb_writer` | `cfg_ddr_ofm_row_stride` 20-bit → 32-bit 零扩展绑定 |
+| D-1 | `gen_isa_test.py --streaming`：emit H_IN_TOTAL / strip_rows / DDR stride / DMA_MODE；overwrite `IFB_CIN_STEP` / `OFB_COUT_STEP` 为 ring wrap 模数 | 同时修 `WB_WORDS` plusarg（之前写死 9 导致 K=7 挂） |
+| D-2 | `tb_core_dma.sv` 双路流程：`DMA_MODE=0` 走 batch 三段；`=3` 走 streaming 单次 `CTRL=0xB` | 读 local `config.txt` / `sim_params.f`（不再 `../tb_core_isa/`） |
+| D-3 | Streaming 回归（8 case 小图）验证 | 发现 line_buffer **forward-pressure** 缺失：未写入的 IFB 行被读出 X → 引入 `rows_available` 输入 + `rows_needed = yout*stride + K` 门控 |
+| D-4 | 大图测试：128×128 / 240×320 / 480×640 VGA | DDR 扩到 16 MB；`gen_isa_test.py` PYTHON_SRAM_LIMIT 扩到 512K；streaming 下 `hw_sram_depth` 固定 8192 |
+
+### 14.2 关键修复：两条反压链
+
+设计文档只提到 `rows_consumed`（线路 consumer → producer，防 over-fill）。实测发现必须加 `rows_available`（线路 producer → consumer，防 read-ahead）：
+
+```
+IDMA  ──rows_written──▶ rows_available ──▶  line_buffer   (forward-pressure)
+IDMA ◀──rows_consumed ◀──                     line_buffer   (back-pressure)
+
+ofb_writer ──row_done_pulse──▶ rows_produced ──▶  odma     (forward-pressure)
+ofb_writer ◀──rows_drained ◀──                     odma     (back-pressure)
+```
+
+否则 line_buffer 会在 IDMA 首 8 行未完成前就读出 `X`（SRAM uninitialized），传到 MAC 做 `X × w` 产出 `X`，最终 DDR OFM 里都是 `X`。
+
+### 14.3 回归验证
+
+**小图 8 case**（`tb_core_dma` 中复用 `tb_core_isa` cfg 参数，筛 `cin_slices=1 && cout_slices=1`）：
+- K=3 C4C4 / C4C8 / C8C4 / C8C8 / C16C16 66×118
+- K=5 C16C16 30×58 s=2
+- K=7 C8C8 / C16C16 62×114（chunked kk=49）
+
+**大图 3 case**：128×128 C3C8 / 240×320 C3C16 / **480×640 C3C16**
+
+全部 PASS，MAC 利用率 98.56% – 99.93%。代表性能见 `README.md` 性能表。
+
+### 14.4 已知限制（留给 v3）
+
+- **v2 硬限**：`cin_slices == 1 && cout_slices == 1`（Cin/Cout ≤ 16）。cs 外层循环需要把 OFM 行多次产出，打破 row-producer 单调性 → v3 重构 parf_accum / ofb_writer 的 cs 循环位置
+- IFB / OFB strip_rows 需满足 `strip_rows ≥ K + margin`（避免下溢）；当前默认 8，K=7 时留 1 行 slack 够用
+- 多 burst / 行：W_IN > 256 时 IDMA/ODMA 自动切多 AR/AW burst（代码支持，回归覆盖 W_IN=640）
+

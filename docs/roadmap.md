@@ -5,23 +5,30 @@
 - ✅ **握手驱动去中心化流水** (v1 → v3 迭代，MAC 利用率到 99.95%)
 - ✅ cross-round pipeline + parf_accum FILL/DRAIN overlap
 - ✅ 20-bit 内部地址，支持 224×224 单切片
-- ✅ 10/10 packed 回归用例全通
+- ✅ **chunked 权重调度**（K=7 kk=49 + rolling WRF pipeline 全通）
+- ✅ **DMA 子系统**（IDMA / WDMA / ODMA + axi_m_mux + axi_lite_csr）+ tb_core_dma batch 回归
+- ✅ **Streaming row-ring 架构**（v2 单次 start，480×640 VGA 端到端 11/11 PASS，MAC 99.93%）
+- ✅ RTL 风格规范 (`RTL代码编写原则.md`)，全模块重构到合规
 
 ---
 
-## Phase 2 — 架构特性补齐（v1 未做）
+## Phase 2 — 架构特性补齐
 
-### Chunked 权重调度（K≥7 / Cin>32 支持）
+### ✅ Chunked 权重调度（K≥7 / Cin>32）
 
-v1 `wgt_buffer` 假设 packed `K²·cin_slices ≤ 32`，chunked 用例跑不通（K=3 C64+ 和所有 K=7 用例）。补齐方向：
+已实现。`wgt_buffer` rolling pipelined LOAD（3 种 hazard 规避 + `l_start_pos_next` 跨 tile 处理），packed + chunked 全通。K=7 C16C16 streaming 回归 99.75% MAC 利用率。
 
-- `wgt_buffer` 内加 `round_cnt` 和 `cur_round_len` 计数
-- 每 `(cins, round)` 触发一次 LOAD（chunked 无轮次：每 cins 一次；多轮次：每 round 一次）
-- `wrf_raddr = pos_in_round`（不用 running base 算 `cins*kk+ky*K+kx`）
-- state machine 扩展：COMPUTE 阶段 `pos_in_round == round_len-1 && !round_is_last` 时切回 LOAD
-- `total_wrf` / `wrf_packed` / `rounds_per_cins` / `round_len_last` cfg 字段已经在 `cfg_regs` 里，直接用
+### Cout > 16 切片（打破 v2 streaming 的 `cout_slices=1` 限制）
 
-预计改动量：~100 行 wgt_buffer，回归用例打开 K=7 和 C64 后验证。
+v2 streaming 当前要求 Cout ≤ 16，因为 cs 在 ofb_writer 最外层：cs=0 先产出所有 OFM 行，cs=1 再产出 → 同一行在 DDR 的写入被拆到不同时间段，ODMA 单调 `rows_drained` 计数假设打破。
+
+v3 方向：把 cs 循环移到 OFM 行内部（per row × per tile × per x 先做完 cs，再推进 x）。
+- `ofb_writer` 循环重排 + `parf_accum` 循环重排
+- 每 cs 切片做完，输出一个 OFM 行的 Cout 16 个通道 → 下一 cs 切片输出另外 16 通道 → 拼接成完整 Cout 行
+- DDR 输出通道按 Cout-major 布局：row N 的 Cout[0..15] + Cout[16..31] + ... 按 cs 顺序写到 DDR 的同一行不同偏移
+- 注意：本修改需要更新 `gen_isa_test.py` 的 DDR 布局规则 + 金标准生成
+
+预计改动量：~200 行（ofb_writer/parf_accum 循环重构 + cfg 加 `ofb_cs_stride`）。
 
 ### stride=1 滑窗复用
 

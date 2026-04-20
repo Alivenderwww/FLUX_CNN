@@ -161,6 +161,7 @@ module core_top #(
     logic [ADDR_W-1:0] cfg_iss_step;
     logic [ADDR_W-1:0] cfg_ifb_ky_step;
     logic [15:0]       cfg_tile_pix_step;
+    logic              cfg_arf_reuse_en;
     logic [5:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
@@ -249,6 +250,7 @@ module core_top #(
         .ifb_iss_step(cfg_iss_step),
         .ifb_ky_step(cfg_ifb_ky_step),
         .tile_pix_step(cfg_tile_pix_step),
+        .arf_reuse_en(cfg_arf_reuse_en),
         .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
         .h_in_total(cfg_h_in_total),
         .ifb_strip_rows(cfg_ifb_strip_rows),
@@ -441,6 +443,7 @@ module core_top #(
         .cfg_iss_step     (cfg_iss_step),
         .cfg_ifb_ky_step  (cfg_ifb_ky_step),
         .cfg_tile_pix_step(cfg_tile_pix_step),
+        .cfg_arf_reuse_en (cfg_arf_reuse_en),
         .cfg_pad_top      (seq_pad_top),
         .cfg_pad_left     (seq_pad_left),
         .cfg_h_in         (cfg_h_in_total),
@@ -460,13 +463,20 @@ module core_top #(
     // =========================================================================
     logic wb_done;
 
+    // F-1b: bias/psum 连线
+    logic signed [NUM_COL*PSUM_WIDTH-1:0] bias_vec_wire;
+    logic signed [NUM_COL*PSUM_WIDTH-1:0] old_psum_wire;
+    logic                                 is_first_round_fill_wire;
+
     wgt_buffer #(
-        .NUM_COL   (NUM_COL),
-        .NUM_PE    (NUM_PE),
-        .DATA_WIDTH(DATA_WIDTH),
-        .WRF_DEPTH (WRF_DEPTH),
-        .SRAM_DEPTH(SRAM_DEPTH),
-        .ADDR_W    (ADDR_W)
+        .NUM_COL        (NUM_COL),
+        .NUM_PE         (NUM_PE),
+        .DATA_WIDTH     (DATA_WIDTH),
+        .PSUM_WIDTH     (PSUM_WIDTH),
+        .WRF_DEPTH      (WRF_DEPTH),
+        .MAX_COUT_SLICES(16),
+        .SRAM_DEPTH     (SRAM_DEPTH),
+        .ADDR_W         (ADDR_W)
     ) u_wgt_buffer (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -494,7 +504,8 @@ module core_top #(
         .wrf_wdata        (wrf_wdata),
         .wgt_valid        (wgt_valid),
         .wrf_raddr        (wrf_raddr),
-        .wgt_ready        (wgt_ready)
+        .wgt_ready        (wgt_ready),
+        .bias_vec         (bias_vec_wire)
     );
 
     // =========================================================================
@@ -520,7 +531,10 @@ module core_top #(
         .wgt_ready      (wgt_ready),
         .psum_out_valid (psum_out_valid),
         .psum_out_vec   (psum_out_vec),
-        .psum_in_ready  (psum_in_ready)
+        .psum_in_ready  (psum_in_ready),
+        .is_first_round_fill(is_first_round_fill_wire),
+        .bias_vec           (bias_vec_wire),
+        .old_psum_vec       (old_psum_wire)
     );
 
     // =========================================================================
@@ -543,7 +557,9 @@ module core_top #(
         .psum_in_ready    (psum_in_ready),
         .acc_out_valid    (acc_out_valid),
         .acc_out_vec      (acc_out_vec),
-        .acc_out_ready    (acc_out_ready)
+        .acc_out_ready    (acc_out_ready),
+        .is_first_round_fill_out(is_first_round_fill_wire),
+        .old_psum_at_wr         (old_psum_wire)
     );
 
     // =========================================================================
@@ -575,6 +591,11 @@ module core_top #(
         .cfg_ofb_base     (cfg_ofb_base),
         .cfg_sdp_shift    (cfg_sdp_shift),
         .cfg_sdp_relu_en  (cfg_sdp_relu_en),
+        .cfg_sdp_mult     (cfg_sdp_mult),
+        .cfg_sdp_zp_out   (cfg_sdp_zp_out),
+        .cfg_sdp_clip_min (cfg_sdp_clip_min),
+        .cfg_sdp_clip_max (cfg_sdp_clip_max),
+        .cfg_sdp_round_en (cfg_sdp_round_en),
         .cfg_odma_streaming(cfg_odma_streaming),
         .cfg_ofb_ring_words(cfg_ofb_ring_words),
         .cfg_ofb_strip_rows(cfg_ofb_strip_rows),

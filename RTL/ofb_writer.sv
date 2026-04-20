@@ -50,6 +50,11 @@ module ofb_writer #(
     input  logic [ADDR_W-1:0]                    cfg_ofb_base,
     input  logic [5:0]                           cfg_sdp_shift,
     input  logic                                 cfg_sdp_relu_en,
+    input  logic signed [31:0]                   cfg_sdp_mult,
+    input  logic signed [8:0]                    cfg_sdp_zp_out,
+    input  logic signed [8:0]                    cfg_sdp_clip_min,
+    input  logic signed [8:0]                    cfg_sdp_clip_max,
+    input  logic                                 cfg_sdp_round_en,
 
     // ---- Streaming 配置（v2） ----
     // cfg_odma_streaming=1 时 OFB 变 ring；ofb_ptr 按 cfg_ofb_ring_words wrap；
@@ -150,9 +155,14 @@ module ofb_writer #(
         .PSUM_WIDTH(PSUM_WIDTH)
     ) u_sdp (
         .shift_amt (cfg_sdp_shift),
+        .mult      (cfg_sdp_mult),
+        .zp_out    (cfg_sdp_zp_out),
+        .clip_min  (cfg_sdp_clip_min),
+        .clip_max  (cfg_sdp_clip_max),
+        .round_en  (cfg_sdp_round_en),
+        .relu_en   (cfg_sdp_relu_en),
         .psum_in   (acc_out_vec),
         .valid_in  (acc_fire),
-        .relu_en   (cfg_sdp_relu_en),
         .ofm_data  (sdp_out),
         .valid_out ()
     );

@@ -63,6 +63,7 @@ module line_buffer #(
     input  logic [ADDR_W-1:0]                    cfg_iss_step,    // stride × cin_slices (iss_pos 步长 word)
     input  logic [ADDR_W-1:0]                    cfg_ifb_ky_step, // W_IN × cin_slices (ky 步长 word)
     input  logic [15:0]                          cfg_tile_pix_step, // TILE_W × stride (像素步长，用于 pad 判定)
+    input  logic                                 cfg_arf_reuse_en,  // 1: kx sliding-window reuse（仅 stride=1 && K>1）
 
     // ---- Padding (Phase C-2) ----
     input  logic [3:0]                           cfg_pad_top,
@@ -130,6 +131,15 @@ module line_buffer #(
     logic        issues_all_done;
     logic        issue_advance_d1;   // 原 ifb_re_d1 语义重命名：每个 issue 动作延迟 1 拍 (含 pad)
 
+    // ARF reuse (Phase E-2) —— FILL 和 CONSUME 完全并行（同原 v3 pipeline 模型）
+    //   FILL 是"生产者": fill_pos 推进，发 ifb_re，每 arrival 写 ARF 线性地址 wr_idx_fill
+    //   CONSUME 是"消费者": kx × iss_pos 推进（act_fire 驱动），组合读 ARF[kx+iss_pos]
+    //   背压: act_valid = (rd_idx_cons < wr_idx_fill)  —— 读的位置已经被 arrival 填完
+    //   每 ky 切换: evt_iss_kx_wrap 拍 CONSUME 完成最后一读，下一拍 FILL 归 0 重新开始
+    logic [5:0]        fill_pos;       // 0..cur_fill_len-1 (+ terminal = cur_fill_len)
+    logic [ADDR_W-1:0] fill_offset;    // = fill_pos × cin_slices (word 累加器)
+    logic [BUF_AW:0]   wr_idx_fill;    // reuse_en=1 FILL 线性写指针（每 ky 归 0，上限 cur_fill_len ≤ ARF_DEPTH）
+
     // Padding 累加器 (Phase C-2)
     logic signed [16:0] y_row_base;   // yout=0 时 = -pad_top；每 yout wrap += stride
     logic signed [16:0] x_tile_base;  // tile=0 时 = -pad_left；每 tile wrap += tile_in_step
@@ -146,6 +156,14 @@ module line_buffer #(
     // =========================================================================
     logic [5:0] cur_valid_w;
     assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+
+    // FILL 长度：仅 reuse_en=1 下有意义；= cur_valid_w + K - 1（滑动窗口覆盖 kx 全范围）
+    // 编译器必须保证 cur_fill_len ≤ ARF_DEPTH（tile_w ≤ 33-K）
+    logic [5:0] cur_fill_len;
+    assign cur_fill_len = cur_valid_w + {2'd0, cfg_k} - 6'd1;
+
+    logic fill_pos_is_terminal;   // fill_pos 已跑满（= cur_fill_len），不再发 fill_issue
+    assign fill_pos_is_terminal = (fill_pos == cur_fill_len);
 
     logic kx_is_last, ky_is_last, cins_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign kx_is_last   = (kx_cnt   == cfg_k             - 4'd1);
@@ -193,31 +211,75 @@ module line_buffer #(
     // 握手 + IFB 读地址
     // =========================================================================
     // Streaming forward-pressure: yout=Y 需要的最大行号 < rows_available 才可 issue。
-    //   新公式（考虑 pad_top）：rows_needed = max(y_row_base + K, 0)
-    //   y_row_base + K 在负数时表示"本 yout 完全在 pad_top 区，无需 IDMA 提供"
+    //   公式（考虑 pad_top / pad_bot）：
+    //     rows_needed = clamp(y_row_base + K, 0, cfg_h_in)
+    //   - 下界 0：本 yout 完全在 pad_top 区，无需 IDMA 提供
+    //   - 上界 cfg_h_in：kernel 底边超出图像（落在 pad_bot 区），pad_bot 行是虚拟的，
+    //     不会由 IDMA 提供；rows_needed 不能超过 cfg_h_in，否则永远 stall
     logic signed [16:0] rows_needed_signed;
     logic [15:0] rows_needed;
     assign rows_needed_signed = y_row_base + $signed({13'd0, cfg_k});
-    assign rows_needed        = (rows_needed_signed < 0) ? 16'd0 : rows_needed_signed[15:0];
+    assign rows_needed        = (rows_needed_signed < 0)                        ? 16'd0
+                              : (rows_needed_signed > $signed({1'b0, cfg_h_in})) ? cfg_h_in
+                              : rows_needed_signed[15:0];
 
     logic streaming_rows_ready;
     assign streaming_rows_ready = !cfg_idma_streaming || (rows_available >= rows_needed);
 
-    logic issue_ok;
-    assign issue_ok = (state == S_RUN) && !issues_all_done &&
-                      ({1'b0, fifo_count} + {6'b0, issue_advance_d1} < (CNT_W+1)'(ARF_DEPTH)) &&
-                      streaming_rows_ready;
+    // =========================================================================
+    // Issue 信号（两种模式）
+    //   reuse_en=0 (原 v3 行为)：iss_pos × kx × ky × ... 直接扫 IFB，每 issue_ok 发一次 ifb_re
+    //   reuse_en=1 (E-2 sliding window)：每 (tile,cins,ky) 开头 FILL cur_fill_len 个像素到
+    //     ARF[0..cur_fill_len-1]；CONSUME 阶段 kx+iss_pos 只读 ARF，不发 ifb_re。
+    // =========================================================================
+    logic issue_ok_std;  // reuse_en=0 路径
+    assign issue_ok_std = (state == S_RUN) && !issues_all_done &&
+                          ({1'b0, fifo_count} + {6'b0, issue_advance_d1} < (CNT_W+1)'(ARF_DEPTH)) &&
+                          streaming_rows_ready;
 
-    // 物理 IFB 读地址：iss_offset 累加器 = iss_pos × cfg_iss_step = iss_pos × stride × cin_slices
-    //   NHWC 下同一 y 相邻 x 的 word 间距 = cin_slices；跨 iss_pos 需要乘 stride × cin_slices
-    //   累加器避免组合乘法，每 issue_ok += cfg_iss_step，iss_pos_wrap 归零
+    logic fill_issue;    // reuse_en=1 每拍发 IFB 读直到 fill_pos 达 cur_fill_len；与 CONSUME 并行
+    assign fill_issue = cfg_arf_reuse_en && (state == S_RUN) && !issues_all_done &&
+                        !fill_pos_is_terminal && streaming_rows_ready;
+
+    // "任何 issue" —— 用于 arrival / is_pad_d1 latch / issue_advance_d1
+    logic issue_any;
+    assign issue_any = cfg_arf_reuse_en ? fill_issue : issue_ok_std;
+
+    // 物理 IFB 读地址：
+    //   reuse_en=0: iss_offset 累加器 = iss_pos × cfg_iss_step（原）
+    //   reuse_en=1: fill_offset 累加器 = fill_pos × cin_slices（FILL 阶段线性填一整行）
+    //     base 用 ptr_ky_base（当前 ky 行起点，稳定整个 FILL+CONSUME 周期）
+    //     不能用 ptr_kx_base —— CONSUME 并行运行会让它随 kx wrap 漂移
     logic [ADDR_W-1:0] iss_offset;
 
-    assign ifb_re    = issue_ok && !is_pad;     // pad 位置不读 SRAM
-    assign ifb_raddr = ptr_kx_base + iss_offset;
+    // FILL 阶段专用 pad 判定：x = x_tile_base + fill_pos（stride=1 only）
+    logic signed [16:0] current_src_x_fill;
+    assign current_src_x_fill = x_tile_base + $signed({11'd0, fill_pos});
+    logic is_pad_fill;
+    assign is_pad_fill = (current_src_y < 0) || ($signed({1'b0, cfg_h_in}) <= current_src_y) ||
+                         (current_src_x_fill < 0) || ($signed({1'b0, cfg_w_in}) <= current_src_x_fill);
 
-    assign act_valid = (fifo_count > 0);
-    assign act_vec   = act_buf[rd_idx];
+    logic is_pad_now;    // 给 ifb_re gate 和 is_pad_d1 latch
+    assign is_pad_now = cfg_arf_reuse_en ? is_pad_fill : is_pad;
+
+    assign ifb_re    = issue_any && !is_pad_now;
+    assign ifb_raddr = cfg_arf_reuse_en ? (ptr_ky_base + fill_offset)
+                                        : (ptr_kx_base + iss_offset);
+
+    // act_valid / act_vec
+    //   reuse_en=0: fifo_count > 0 （原）
+    //   reuse_en=1: sub_phase=CONS 时 ARF 已填好，直接组合读 kx+iss_pos
+    logic [BUF_AW:0]    rd_idx_cons_wide;
+    logic [BUF_AW-1:0]  rd_idx_cons;
+    assign rd_idx_cons_wide = {1'b0, kx_cnt} + {{(BUF_AW+1-6){1'b0}}, iss_pos};
+    assign rd_idx_cons      = rd_idx_cons_wide[BUF_AW-1:0];
+
+    // reuse_en=1 act_valid：rd_idx_cons 位置已 filled（wr_idx_fill 严格大于 rd_idx_cons）
+    logic reuse_act_valid;
+    assign reuse_act_valid = (state == S_RUN) && !issues_all_done &&
+                             ({1'b0, rd_idx_cons} < wr_idx_fill);
+    assign act_valid = cfg_arf_reuse_en ? reuse_act_valid : (fifo_count > 0);
+    assign act_vec   = act_buf[cfg_arf_reuse_en ? rd_idx_cons : rd_idx];
 
     logic act_fire, arrival;
     assign act_fire = act_valid & act_ready;
@@ -243,9 +305,13 @@ module line_buffer #(
     logic evt_iss_cs_wrap;
     logic evt_iss_yout_wrap;
 
+    // 统一推进信号：reuse_en=0 由 issue_ok_std 驱动（原行为）；reuse_en=1 由 CONSUME 的 act_fire 驱动
+    logic evt_advance_any;
+    assign evt_advance_any = cfg_arf_reuse_en ? act_fire : issue_ok_std;
+
     always_comb begin
         evt_start         = ((state == S_IDLE) || (state == S_DONE)) && start;
-        evt_iss_pos_wrap  = issue_ok           && iss_pos_is_last;
+        evt_iss_pos_wrap  = evt_advance_any    && iss_pos_is_last;
         evt_iss_kx_wrap   = evt_iss_pos_wrap   && kx_is_last;
         evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
         evt_iss_cins_wrap = evt_iss_ky_wrap    && cins_is_last;
@@ -254,16 +320,23 @@ module line_buffer #(
         evt_iss_yout_wrap = evt_iss_cs_wrap    && yout_is_last;
     end
 
+
     // =========================================================================
     // 三段式 FSM
     // =========================================================================
+    // reuse_en=0: 等 fifo 被 mac 排空 + 最后一 arrival 落地
+    // reuse_en=1: issues_all_done 由 CONSUME 的 act_fire 设置，设置时 FILL 已完成 + CONSUME 全部产出
+    logic run_drained;
+    assign run_drained = cfg_arf_reuse_en ? (issues_all_done && !issue_advance_d1)
+                                          : (issues_all_done && fifo_count == 0 && !issue_advance_d1);
+
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE : if (start)                                              state_next = S_RUN;
-            S_RUN  : if (issues_all_done && fifo_count == 0 && !issue_advance_d1) state_next = S_DONE;
-            S_DONE : if (start)                                              state_next = S_RUN;   // 多 strip 重启
-            default:                                                          state_next = S_IDLE;
+            S_IDLE : if (start)          state_next = S_RUN;
+            S_RUN  : if (run_drained)    state_next = S_DONE;
+            S_DONE : if (start)          state_next = S_RUN;   // 多 strip 重启
+            default:                     state_next = S_IDLE;
         endcase
     end
 
@@ -282,7 +355,7 @@ module line_buffer #(
     always_ff @(posedge clk) begin
         if      (evt_start)          iss_pos <= '0;
         else if (evt_iss_pos_wrap)   iss_pos <= '0;
-        else if (issue_ok)           iss_pos <= iss_pos + 6'd1;
+        else if (evt_advance_any)    iss_pos <= iss_pos + 6'd1;
         else                         iss_pos <= iss_pos;
     end
 
@@ -337,12 +410,32 @@ module line_buffer #(
         else                                       issues_all_done <= issues_all_done;
     end
 
-    // iss_offset 累加器（数据路径）
+    // iss_offset 累加器（reuse_en=0 专用；reuse_en=1 时保持 0 不用）
     always_ff @(posedge clk) begin
         if      (evt_start)          iss_offset <= '0;
         else if (evt_iss_pos_wrap)   iss_offset <= '0;
-        else if (issue_ok)           iss_offset <= iss_offset + cfg_iss_step;
+        else if (issue_ok_std)       iss_offset <= iss_offset + cfg_iss_step;
         else                         iss_offset <= iss_offset;
+    end
+
+    // fill_pos / fill_offset / wr_idx_fill (reuse_en=1 FILL; 每 ky 归 0，与 CONSUME 并行)
+    //   归零时机: evt_start（首次）或 evt_iss_kx_wrap（CONSUME 走完当前 ky，下一拍开始新 ky 的 FILL）
+    //   fill_pos: 每 fill_issue +1，达 cur_fill_len 后停
+    //   wr_idx_fill: 每 arrival +1（cum 与 fill_pos 差 1 拍延迟）
+    logic fill_reset;
+    assign fill_reset = evt_start || evt_iss_kx_wrap;
+
+    always_ff @(posedge clk) begin
+        if      (!rst_n)        fill_pos <= '0;
+        else if (fill_reset)    fill_pos <= '0;
+        else if (fill_issue)    fill_pos <= fill_pos + 6'd1;
+        else                    fill_pos <= fill_pos;
+    end
+
+    always_ff @(posedge clk) begin
+        if      (fill_reset)    fill_offset <= '0;
+        else if (fill_issue)    fill_offset <= fill_offset + {{(ADDR_W-6){1'b0}}, cfg_cin_slices};
+        else                    fill_offset <= fill_offset;
     end
 
     // =========================================================================
@@ -423,17 +516,23 @@ module line_buffer #(
     end
 
     // =========================================================================
-    // rows_consumed: 已彻底用完的输入行数，yout 每推进 1 就 +cfg_stride
-    //   evt_iss_cs_wrap && !yout_is_last 表示当前拍之后 yout 要进位。
-    //   cs 切换时归零（下一 cs 从头开始用 IFB 行）。
-    //   数据路径，evt_start 初始化即可（§6）。
+    // rows_consumed: 已彻底用完的输入行数（对 IDMA streaming ring_full 判定用）
+    //   raw 累加器 = yout 已完成次数 × stride；输出 = max(raw - pad_top, 0)
+    //   pad_top 行是虚拟的（未进入 ring），前 pad_top/stride+1 个 yout 重用 row 0，
+    //   不能过早释放。rows_consumed 不减掉 pad_top 会导致 IDMA 覆盖尚在使用的行。
     // =========================================================================
+    logic [15:0] rows_consumed_raw;
     always_ff @(posedge clk) begin
-        if      (evt_start)                              rows_consumed <= 16'd0;
-        else if (evt_iss_yout_wrap)       rows_consumed <= 16'd0;
-        else if (evt_iss_cs_wrap && !yout_is_last)     rows_consumed <= rows_consumed + {13'd0, cfg_stride};
-        else                                             rows_consumed <= rows_consumed;
+        if      (evt_start)                           rows_consumed_raw <= 16'd0;
+        else if (evt_iss_yout_wrap)                   rows_consumed_raw <= 16'd0;
+        else if (evt_iss_cs_wrap && !yout_is_last)    rows_consumed_raw <= rows_consumed_raw + {13'd0, cfg_stride};
+        else                                          rows_consumed_raw <= rows_consumed_raw;
     end
+
+    logic [15:0] pad_top_ext;
+    assign pad_top_ext   = {12'd0, cfg_pad_top};
+    assign rows_consumed = (rows_consumed_raw > pad_top_ext) ?
+                           (rows_consumed_raw - pad_top_ext) : 16'd0;
 
     // =========================================================================
     // Padding 累加器 (Phase C-2)
@@ -466,53 +565,87 @@ module line_buffer #(
 
     // =========================================================================
     // issue_advance 延迟 1 拍：控制路径（gate act_buf 写入），复位必须。
-    //   注意：原 ifb_re_d1 == issue_ok 延迟，现在 ifb_re = issue_ok & !is_pad，
-    //   但 issue_advance_d1 仍然 = issue_ok 延迟（pad 拍也要 arrival 把 0 入队）。
+    //   reuse_en=0: issue_ok_std 延 1 拍；reuse_en=1: fill_issue 延 1 拍
     // =========================================================================
     always_ff @(posedge clk) begin
         if (!rst_n) issue_advance_d1 <= 1'b0;
-        else        issue_advance_d1 <= issue_ok;
+        else        issue_advance_d1 <= issue_any;
     end
 
     // is_pad 延迟 1 拍，供 arrival 时选 0 / ifb_rdata
     always_ff @(posedge clk) begin
-        if (issue_ok) is_pad_d1 <= is_pad;
+        if (issue_any) is_pad_d1 <= is_pad_now;
     end
 
     // =========================================================================
-    // Ring buffer 指针与占用计数
-    //   wr_idx / rd_idx：由 arrival / act_fire 驱动（gated by ifb_re_d1 和
-    //   fifo_count，两者都有复位），按 §6 不加复位；evt_start 初始化。
-    //   fifo_count：驱动 act_valid → 必须复位。
+    // Ring buffer 指针与占用计数（reuse_en=0 原 ring；reuse_en=1 FILL 线性写）
+    //   reuse_en=0: wr_idx/rd_idx/fifo_count 维持原 ring 行为
+    //   reuse_en=1: wr_idx_fill 每 FILL 归 0，每 arrival +1；rd_idx_cons 组合算；fifo_count 不用
     // =========================================================================
     always_ff @(posedge clk) begin
-        if      (evt_start)  wr_idx <= '0;
-        else if (arrival)    wr_idx <= wr_idx + 1'b1;
-        else                 wr_idx <= wr_idx;
+        if      (evt_start)                        wr_idx <= '0;
+        else if (arrival && !cfg_arf_reuse_en)     wr_idx <= wr_idx + 1'b1;
+        else                                       wr_idx <= wr_idx;
     end
 
     always_ff @(posedge clk) begin
-        if      (evt_start)  rd_idx <= '0;
-        else if (act_fire)   rd_idx <= rd_idx + 1'b1;
-        else                 rd_idx <= rd_idx;
+        if      (evt_start)                        rd_idx <= '0;
+        else if (act_fire && !cfg_arf_reuse_en)    rd_idx <= rd_idx + 1'b1;
+        else                                       rd_idx <= rd_idx;
     end
 
     always_ff @(posedge clk) begin
-        if      (!rst_n)                 fifo_count <= '0;
-        else if (evt_start)              fifo_count <= '0;
-        else if ( arrival && !act_fire)  fifo_count <= fifo_count + 1'b1;
-        else if (!arrival &&  act_fire)  fifo_count <= fifo_count - 1'b1;
-        else                             fifo_count <= fifo_count;
+        if      (!rst_n)                           fifo_count <= '0;
+        else if (evt_start)                        fifo_count <= '0;
+        else if (cfg_arf_reuse_en)                 fifo_count <= '0;  // reuse 模式不用
+        else if ( arrival && !act_fire)            fifo_count <= fifo_count + 1'b1;
+        else if (!arrival &&  act_fire)            fifo_count <= fifo_count - 1'b1;
+        else                                       fifo_count <= fifo_count;
+    end
+
+    // reuse_en=1 FILL 线性写指针（每 ky 归 0）
+    always_ff @(posedge clk) begin
+        if      (fill_reset)  wr_idx_fill <= '0;
+        else if (arrival)     wr_idx_fill <= wr_idx_fill + 1'b1;
+        else                  wr_idx_fill <= wr_idx_fill;
     end
 
     // =========================================================================
     // act_buf 存储阵列（数据路径，无复位）
-    //   arrival=issue_advance_d1 门控写；pad 位置 (is_pad_d1) 写 0，正常位置写
-    //   ifb_rdata。下游 act_valid=fifo_count>0 遮蔽未初始化值。
+    //   reuse_en=0: 写 wr_idx（ring）
+    //   reuse_en=1: 写 wr_idx_fill（linear 0..cur_fill_len-1）
     // =========================================================================
+    logic [BUF_AW-1:0] wr_idx_sel;
+    assign wr_idx_sel = cfg_arf_reuse_en ? wr_idx_fill[BUF_AW-1:0] : wr_idx;
+
     always_ff @(posedge clk) begin
-        if (arrival) act_buf[wr_idx] <= is_pad_d1 ? '0 : ifb_rdata;
-        else         act_buf[wr_idx] <= act_buf[wr_idx];
+        if (arrival) act_buf[wr_idx_sel] <= is_pad_d1 ? '0 : ifb_rdata;
+        else         act_buf[wr_idx_sel] <= act_buf[wr_idx_sel];
     end
+
+    // =========================================================================
+    // 仿真性能 counters (E-3)
+    //   arrival = ARF 写；act_fire = ARF 读；ifb_re = IFB SRAM 读；
+    //   pad_skip = 因 pad 被 line_buffer 吞掉（未发 IFB 读）的 issue 拍数。
+    // =========================================================================
+    // synthesis translate_off
+    int arf_write_cnt = 0;
+    int arf_read_cnt  = 0;
+    int ifb_read_cnt  = 0;
+    int pad_skip_cnt  = 0;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            arf_write_cnt <= 0;
+            arf_read_cnt  <= 0;
+            ifb_read_cnt  <= 0;
+            pad_skip_cnt  <= 0;
+        end else begin
+            if (arrival)           arf_write_cnt <= arf_write_cnt + 1;
+            if (act_fire)          arf_read_cnt  <= arf_read_cnt  + 1;
+            if (ifb_re)            ifb_read_cnt  <= ifb_read_cnt  + 1;
+            if (issue_any && is_pad_now) pad_skip_cnt <= pad_skip_cnt + 1;
+        end
+    end
+    // synthesis translate_on
 
 endmodule

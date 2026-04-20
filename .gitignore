@@ -31,3 +31,10 @@ Syn/syn_run*.log
 Syn/reports
 
 *.drawio.bkp
+
+# toolchain (Python scripts folder)
+toolchain/.venv/
+toolchain/__pycache__/
+toolchain/**/__pycache__/
+toolchain/models/*.pt
+toolchain/models/*.pth

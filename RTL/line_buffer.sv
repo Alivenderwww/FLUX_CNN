@@ -313,8 +313,7 @@ module line_buffer #(
     assign evt_advance_any = cfg_arf_reuse_en ? act_fire : issue_ok_std;
 
     always_comb begin
-        // F-2: start 无条件 evt_start
-        evt_start         = start;
+        evt_start         = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_iss_pos_wrap  = evt_advance_any    && iss_pos_is_last;
         evt_iss_kx_wrap   = evt_iss_pos_wrap   && kx_is_last;
         evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
@@ -336,13 +335,11 @@ module line_buffer #(
 
     always_comb begin
         state_next = state;
-        // F-2: start 从任何状态强制进 S_RUN (软复位 for 多 case)
-        if (start) state_next = S_RUN;
-        else case (state)
-            S_IDLE : ;   // wait for start
+        case (state)
+            S_IDLE : if (start)          state_next = S_RUN;
             S_RUN  : if (run_drained)    state_next = S_DONE;
-            S_DONE : ;
-            default:    state_next = S_IDLE;
+            S_DONE : if (start)          state_next = S_RUN;   // 多 strip / 多 case 重启
+            default:                     state_next = S_IDLE;
         endcase
     end
 

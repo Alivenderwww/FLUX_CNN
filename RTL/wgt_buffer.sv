@@ -273,8 +273,7 @@ module wgt_buffer #(
     logic evt_ld_round_wrap, evt_ld_cins_wrap, evt_ld_tile_wrap, evt_ld_yout_wrap;
 
     always_comb begin
-        // F-2: start 脉冲从任何状态触发 evt_start（软复位所有计数器）
-        evt_start          = start;
+        evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_cold_load_done = (state == S_LOAD) && sload_done;
 
         evt_pk_fire       =  cfg_wrf_packed && (state == S_COMPUTE) && wgt_fire;
@@ -330,19 +329,17 @@ module wgt_buffer #(
     // =========================================================================
     always_comb begin
         state_next = state;
-        // F-2 多 case：start 脉冲从任何状态都强制进 S_BIAS_LOAD（软复位语义）
-        // 这样即使上一 case 未干净收敛到 S_DONE，也能被下一 case 的 start 重启
-        if (start) state_next = S_BIAS_LOAD;
-        else case (state)
-            S_IDLE      : ;   // wait for start
+        case (state)
+            S_IDLE      : if (start)          state_next = S_BIAS_LOAD;
             S_BIAS_LOAD : if (bias_load_done) state_next = S_LOAD;
             S_LOAD      : if (sload_done)     state_next = S_COMPUTE;
             S_COMPUTE   : if (wgt_fire && cs_compute_last) begin
+                // 方式 1：每 (yout, cs) 扫完；packed 都要重 LOAD 下一 (yout, cs)
                 state_next = (yout_is_last && cs_is_last) ? S_DONE
                            : (cfg_wrf_packed ? S_LOAD : S_COMPUTE);
             end
-            S_DONE      : ;
-            default     : state_next = S_IDLE;
+            S_DONE      : if (start)          state_next = S_BIAS_LOAD;  // 多 case 重入
+            default     :                     state_next = S_IDLE;
         endcase
     end
 
@@ -449,9 +446,13 @@ module wgt_buffer #(
         else if (evt_pk_cins_wrap || evt_ck_cins_wrap)   tile_cnt <= tile_cnt + 8'd1;
     end
 
+    // yout_cnt 是外层 loop，只能在 evt_start / yout_wrap 重置；
+    // 原代码把 evt_cold_load_done 也纳入重置条件 —— 这在 chunked 冷启动时只触发一次没问题，
+    // 但 packed 模式每 (yout, cs) 都重 LOAD 一次 → S_LOAD→S_COMPUTE 每次都 fire，
+    // 会把 yout_cnt 不停清 0，yout 永远卡在 0。只有 start（跨 case）和 yout wrap 才清零。
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                 yout_cnt <= '0;
-        else if (evt_start || evt_cold_load_done)        yout_cnt <= '0;
+        else if (evt_start)                              yout_cnt <= '0;
         else if (evt_pk_yout_wrap || evt_ck_yout_wrap)   yout_cnt <= '0;
         else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)     yout_cnt <= yout_cnt + 16'd1;
     end

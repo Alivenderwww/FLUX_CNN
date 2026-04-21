@@ -34,7 +34,6 @@ module parf_accum #(
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
-    input  logic                                 start,    // F-2: 多 case 软复位（清 wr_addr/kk/cins/drain_active 等）
 
     // ---- cfg ----
     input  logic [5:0]                           cfg_tile_w,
@@ -146,28 +145,28 @@ module parf_accum #(
     // FILL 侧寄存器（控制路径：决定写地址和 psum_in_ready，复位必须）
     // =========================================================================
     always_ff @(posedge clk) begin
-        if      (!rst_n || start)  wr_addr <= '0;
+        if      (!rst_n)           wr_addr <= '0;
         else if (ev_fill_wr_wrap)  wr_addr <= '0;
         else if (fill_fire)        wr_addr <= wr_addr + {{(PAW-1){1'b0}}, 1'b1};
         else                       wr_addr <= wr_addr;
     end
 
     always_ff @(posedge clk) begin
-        if      (!rst_n || start)  kk_cnt <= '0;
+        if      (!rst_n)           kk_cnt <= '0;
         else if (ev_fill_kk_wrap)  kk_cnt <= '0;
         else if (ev_fill_wr_wrap)  kk_cnt <= kk_cnt + 10'd1;
         else                       kk_cnt <= kk_cnt;
     end
 
     always_ff @(posedge clk) begin
-        if      (!rst_n || start)  cins_cnt <= '0;
+        if      (!rst_n)           cins_cnt <= '0;
         else if (fill_tile_done)   cins_cnt <= '0;
         else if (ev_fill_kk_wrap)  cins_cnt <= cins_cnt + 6'd1;
         else                       cins_cnt <= cins_cnt;
     end
 
     always_ff @(posedge clk) begin
-        if      (!rst_n || start)                       fill_tile_cnt <= '0;
+        if      (!rst_n)                                fill_tile_cnt <= '0;
         else if (fill_tile_done &&  fill_tile_is_last)  fill_tile_cnt <= '0;
         else if (fill_tile_done && !fill_tile_is_last)  fill_tile_cnt <= fill_tile_cnt + 8'd1;
         else                                            fill_tile_cnt <= fill_tile_cnt;
@@ -180,14 +179,14 @@ module parf_accum #(
     //   下游不观察，按 §6 不加复位。
     // =========================================================================
     always_ff @(posedge clk) begin
-        if      (!rst_n || start)  drain_active <= 1'b0;
+        if      (!rst_n)           drain_active <= 1'b0;
         else if (fill_tile_done)   drain_active <= 1'b1;
         else if (drain_tile_done)  drain_active <= 1'b0;
         else                       drain_active <= drain_active;
     end
 
     always_ff @(posedge clk) begin
-        if      (start || fill_tile_done)   rd_addr <= '0;
+        if      (fill_tile_done)   rd_addr <= '0;
         else if (drain_tile_done)  rd_addr <= '0;
         else if (drain_fire)       rd_addr <= rd_addr + {{(PAW-1){1'b0}}, 1'b1};
         else                       rd_addr <= rd_addr;
@@ -195,8 +194,7 @@ module parf_accum #(
 
     // fill_tile_done 时 drain_tile_cnt 锁存当时的 fill_tile_cnt（同步拍）
     always_ff @(posedge clk) begin
-        if      (start)                                    drain_tile_cnt <= '0;
-        else if (fill_tile_done)                           drain_tile_cnt <= fill_tile_cnt;
+        if      (fill_tile_done)                           drain_tile_cnt <= fill_tile_cnt;
         else if (drain_tile_done &&  drain_tile_is_last)   drain_tile_cnt <= '0;
         else if (drain_tile_done && !drain_tile_is_last)   drain_tile_cnt <= drain_tile_cnt + 8'd1;
         else                                               drain_tile_cnt <= drain_tile_cnt;

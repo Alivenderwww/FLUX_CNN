@@ -138,8 +138,7 @@ module ofb_writer #(
     logic evt_fire_yout_wrap;
 
     always_comb begin
-        // F-2: start 无条件 evt_start
-        evt_start          = start;
+        evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_fire_x_wrap    = acc_fire && x_is_last;
         evt_fire_tile_wrap = evt_fire_x_wrap    && tile_is_last;
         evt_fire_cs_wrap   = evt_fire_tile_wrap && cs_is_last;
@@ -181,13 +180,11 @@ module ofb_writer #(
     // Seg 1: state_next 组合
     always_comb begin
         state_next = state;
-        // F-2: start 从任何状态强制进 S_RUN
-        if (start) state_next = S_RUN;
-        else case (state)
-            S_IDLE : ;   // wait for start
+        case (state)
+            S_IDLE : if (start)                  state_next = S_RUN;
             S_RUN  : if (acc_fire && all_done)   state_next = S_DONE;
-            S_DONE : ;
-            default: state_next = S_IDLE;
+            S_DONE : if (start)                  state_next = S_RUN;   // 多 strip / 多 case 重启
+            default:                              state_next = S_IDLE;
         endcase
     end
 

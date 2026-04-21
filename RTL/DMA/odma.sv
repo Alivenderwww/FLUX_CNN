@@ -249,7 +249,8 @@ module odma #(
     assign ofb_re    = (state == S_PREFETCH) || (state == S_W);
     assign ofb_raddr = (state == S_W && w_fire) ? rd_ptr_next : rd_ptr;
 
-    assign done = r_done;
+    // F-2 多 case：start 同拍 done 立即掉 0
+    assign done = r_done && !start;
     assign busy = (state != S_IDLE) && (state != S_DONE);
 
     // =========================================================================

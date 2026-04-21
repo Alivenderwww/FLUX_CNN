@@ -184,7 +184,7 @@ def compute_expected_ofm(
 # Config
 # ---------------------------------------------------------------------------
 def write_config(out_dir, cfg_dict):
-    """k = v 每行，k 按 dict 插入顺序"""
+    """k = v 每行，k 按 dict 插入顺序。_META_ 前缀的字段给 TB 用，不写 cfg_regs。"""
     with open(_out_path(out_dir, 'config.txt'), 'w') as f:
         for k, v in cfg_dict.items():
             f.write(f"{k} = {v}\n")
@@ -290,15 +290,8 @@ def write_descriptors(
 # ---------------------------------------------------------------------------
 def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
                      desc_count, sram_depth, num_cin, num_cout):
+    """只留 SRAM_DEPTH 作编译期 -g 参数；其它 meta 走 config.txt 供 TB 运行期读"""
     with open(_out_path(out_dir, 'sim_params.f'), 'w') as f:
-        f.write(f"+H_OUT={H_OUT}\n")
-        f.write(f"+W_OUT={W_OUT}\n")
-        f.write(f"+COUT_SLICES={cout_slices}\n")
-        f.write(f"+IFB_WORDS={ifb_words}\n")
-        f.write(f"+WB_WORDS={wb_words}\n")
-        f.write(f"+DESC_COUNT={desc_count}\n")
-        f.write(f"+NUM_CIN={num_cin}\n")
-        f.write(f"+NUM_COUT={num_cout}\n")
         f.write(f"-gSRAM_DEPTH={sram_depth}\n")
 
 
@@ -372,9 +365,8 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     else:
         ifb_strip = H_IN
         ofb_strip = H_OUT
-        import math
-        hw = max(ifb_words, ofb_words, wb_words, 1024)
-        sram_depth = 1 << math.ceil(math.log2(hw))
+        # 统一 8192 (与 streaming 一致；F-2 多 case 共享 -gSRAM_DEPTH，避免 case 间尺寸冲突)
+        sram_depth = 8192
 
     # NHWC streaming 预算值
     if streaming:
@@ -414,12 +406,23 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
 
 
 def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
-                sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1):
+                sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1,
+                case_name=""):
     """
     把 derive_layer_cfg 的结果转成 config.txt 用的有序 dict。
     包含 SDP 量化参数（F-1a/F-1b 补齐）。
     """
     return {
+        # --- META (TB 读取，不写 cfg_regs) ---
+        # TB 从 config.txt 解析这些字段做仿真控制（OFB 对比循环 / 打印等）
+        '_META_CASE_NAME'   : case_name,
+        '_META_IFB_WORDS'   : cfg['ifb_words'],
+        '_META_WB_WORDS'    : cfg['wb_words'],
+        '_META_OFB_WORDS'   : cfg['ofb_words'],
+        '_META_SRAM_DEPTH'  : cfg['sram_depth'],
+        '_META_NUM_CIN'     : cfg['NUM_CIN'],
+        '_META_NUM_COUT'    : cfg['NUM_COUT'],
+        # --- cfg_regs 字段 ---
         'H_OUT'          : cfg['H_OUT'],
         'W_OUT'          : cfg['W_OUT'],
         'W_IN'           : cfg['W_IN'],

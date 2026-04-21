@@ -138,7 +138,8 @@ module ofb_writer #(
     logic evt_fire_yout_wrap;
 
     always_comb begin
-        evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
+        // F-2: start 无条件 evt_start
+        evt_start          = start;
         evt_fire_x_wrap    = acc_fire && x_is_last;
         evt_fire_tile_wrap = evt_fire_x_wrap    && tile_is_last;
         evt_fire_cs_wrap   = evt_fire_tile_wrap && cs_is_last;
@@ -180,11 +181,13 @@ module ofb_writer #(
     // Seg 1: state_next 组合
     always_comb begin
         state_next = state;
-        case (state)
-            S_IDLE : if (start)                  state_next = S_RUN;
+        // F-2: start 从任何状态强制进 S_RUN
+        if (start) state_next = S_RUN;
+        else case (state)
+            S_IDLE : ;   // wait for start
             S_RUN  : if (acc_fire && all_done)   state_next = S_DONE;
-            S_DONE : if (start)                  state_next = S_RUN;   // 多 strip 重启
-            default:                              state_next = S_IDLE;
+            S_DONE : ;
+            default: state_next = S_IDLE;
         endcase
     end
 
@@ -195,7 +198,8 @@ module ofb_writer #(
     end
 
     // Seg 3: Moore 输出（assign done）
-    assign done = (state == S_DONE);
+    // F-2 多 case：start 同拍 done 立即掉 0（避免 Sequencer 把上一 case 的残留 done 当真）
+    assign done = (state == S_DONE) && !start;
 
     // =========================================================================
     // 计数器 & 指针

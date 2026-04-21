@@ -178,7 +178,8 @@ module idma #(
     assign ifb_waddr = wr_ptr;
     assign ifb_wdata = M_RDATA;
 
-    assign done = r_done;
+    // F-2 多 case：start 同拍 done 立即掉 0
+    assign done = r_done && !start;
     assign busy = (state != S_IDLE) && (state != S_DONE);
 
     // =========================================================================

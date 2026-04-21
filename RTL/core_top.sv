@@ -554,6 +554,7 @@ module core_top #(
     ) u_parf_accum (
         .clk              (clk),
         .rst_n            (rst_n),
+        .start            (seq_start_core_pulse),   // F-2: 多 case 软复位
         .cfg_tile_w       (cfg_tile_w),
         .cfg_last_valid_w (cfg_last_valid_w),
         .cfg_num_tiles    (cfg_num_tiles),

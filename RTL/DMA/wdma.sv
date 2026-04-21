@@ -167,7 +167,8 @@ module wdma #(
     assign wb_waddr = wb_wr_ptr;
     assign wb_wdata = wdata_assembled;
 
-    assign done = r_done;
+    // F-2 多 case：start 同拍 done 立即掉 0，避免 Sequencer 看到上一 case 残留 done
+    assign done = r_done && !start;
     assign busy = (state != S_IDLE) && (state != S_DONE);
 
     // =========================================================================

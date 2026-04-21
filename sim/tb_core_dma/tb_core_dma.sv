@@ -182,14 +182,15 @@ module tb_core_dma;
     logic [OFB_WIDTH-1:0]  exp_arr  [0:524287];
     logic [BUS_DATA_W-1:0] desc_arr [0:4095];     // 2 beats/desc × up to 2048 desc
 
-    task automatic preload_ddr(input int ifb_words, input int wb_words,
-                                input int desc_beats);
+    task automatic preload_ddr(input string case_dir,
+                                input int ifb_words, input int wb_words,
+                                input int desc_beats, input int ofb_words_to_clear);
         int ifb_base_w  = DDR_IFB_BASE  / 16;
         int wb_base_w   = DDR_WB_BASE   / 16;
         int desc_base_w = DDR_DESC_BASE / 16;
-        $readmemh("./ifb.txt",       ifb_arr);
-        $readmemh("./wb.txt",        wb_arr);
-        $readmemh("./desc_list.hex", desc_arr);
+        $readmemh($sformatf("%s/ifb.txt",       case_dir), ifb_arr);
+        $readmemh($sformatf("%s/wb.txt",        case_dir), wb_arr);
+        $readmemh($sformatf("%s/desc_list.hex", case_dir), desc_arr);
 
         // IFB: 128-bit lines 直接填 DDR
         for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
@@ -201,6 +202,9 @@ module tb_core_dma;
 
         // Descriptor list: 每 descriptor 2 × 128-bit beat (little-endian)
         for (int i = 0; i < desc_beats; i++) u_ddr.mem[desc_base_w + i] = desc_arr[i];
+
+        // 清零 OFB 区（防止上一 case 残留干扰下一 case 的 OFB 比对）
+        for (int i = 0; i < ofb_words_to_clear; i++) u_ddr.mem[(DDR_OFB_BASE/16) + i] = '0;
     endtask
 
     // ================== AXI-Lite 驱动 ==================
@@ -222,14 +226,24 @@ module tb_core_dma;
 
     // TB 侧记录的 DMA_MODE（load_config 里更新）——用于主流程分流 batch / streaming
     logic [1:0] dma_mode_cfg = 2'b00;
+    // 从 config.txt 读的 META 字段（TB 运行期用，不写 cfg_regs）
+    string case_name_cfg;
+    int    ifb_words_cfg, wb_words_cfg, ofb_words_cfg;
+    int    num_cin_cfg, num_cout_cfg;
 
-    task automatic load_config();
+    task automatic load_config(input string case_dir);
         int      fd;
         string   line;
         string   key;
         int      val;
         int      count;
-        fd = $fopen("./config.txt", "r");
+        string   path;
+        path = $sformatf("%s/config.txt", case_dir);
+        fd = $fopen(path, "r");
+        if (fd == 0) begin
+            $display("FATAL: cannot open %s", path);
+            $stop;
+        end
         while (!$feof(fd)) begin
             void'($fgets(line, fd));
             if (line.len() == 0) continue;
@@ -281,8 +295,21 @@ module tb_core_dma;
                                       dma_mode_cfg = val[1:0];
                                    end
                 "DESC_COUNT"     : axi_lite_write(ADDR_DESC_COUNT,      val);
+                // META fields (不写 cfg_regs，TB 自用)
+                "_META_IFB_WORDS" : ifb_words_cfg = val;
+                "_META_WB_WORDS"  : wb_words_cfg  = val;
+                "_META_OFB_WORDS" : ofb_words_cfg = val;
+                "_META_NUM_CIN"   : num_cin_cfg   = val;
+                "_META_NUM_COUT"  : num_cout_cfg  = val;
                 default          : ;
             endcase
+        end
+        $fclose(fd);
+        // CASE_NAME 单独解析（再开一次，sscanf %d 主循环拿不到字符串）
+        fd = $fopen(path, "r");
+        while (!$feof(fd)) begin
+            void'($fgets(line, fd));
+            if ($sscanf(line, "_META_CASE_NAME = %s", case_name_cfg) == 1) break;
         end
         $fclose(fd);
     endtask
@@ -331,18 +358,149 @@ module tb_core_dma;
 
     // ================== Watchdog + main ==================
     initial begin
-        #500_000_000;
+        #2_000_000_000;
         $display("FATAL: timeout");
         $stop;
     end
 
-    initial begin
-        int h_out_val, w_out_val, cout_slices_val;
-        int ifb_words, wb_words, ofb_words;
-        int desc_count_val, desc_beats;
+    // ---- 每 case 跑一层：preload → cfg → DFE → start_layer → wait done → 比对 OFB → perf ----
+    //   核之间不复位 rst_n；Sequencer 的 start_layer_pulse 会把 r_layer_done 清 0
+    //   perf 计数器是 monotonic cumulative，每 case 打快照算 delta
+    task automatic run_one_case(input int c);
         int ifb_bytes, wb_bytes, ofb_bytes;
+        int desc_beats;
         int mismatch_cnt;
         logic [OFB_WIDTH-1:0] expected, got;
+        string case_dir;
+        // 每 case 开始前的 perf 快照
+        longint snap_core_cycles;
+        longint snap_mac_fire;
+        int snap_act_fire, snap_act_stall, snap_act_idle;
+        int snap_wgt_fire, snap_wgt_stall, snap_wgt_idle;
+        int snap_psum_fire, snap_psum_stall, snap_psum_idle;
+        int snap_acc_fire, snap_acc_stall, snap_acc_idle;
+        longint snap_ifb_we, snap_ifb_re, snap_wb_we, snap_wb_re, snap_ofb_we, snap_ofb_re;
+        int snap_arf_w, snap_arf_r, snap_arf_pad;
+        int snap_parf_f, snap_parf_d;
+        int snap_wrf_writes;
+        longint delta_cycles, delta_mac_fire, delta_wrf_writes;
+        int active_pe_per_fire;
+
+        case_dir = (c < 10) ? $sformatf("cases/case0%0d", c)
+                            : $sformatf("cases/case%0d",  c);
+
+        // 快照 perf
+        snap_core_cycles = core_cycles;
+        snap_mac_fire    = u_core.u_mac_array.mac_fire_cnt;
+        snap_act_fire   = u_core.u_mac_array.hs_act_fire;
+        snap_act_stall  = u_core.u_mac_array.hs_act_stall;
+        snap_act_idle   = u_core.u_mac_array.hs_act_idle;
+        snap_wgt_fire   = u_core.u_mac_array.hs_wgt_fire;
+        snap_wgt_stall  = u_core.u_mac_array.hs_wgt_stall;
+        snap_wgt_idle   = u_core.u_mac_array.hs_wgt_idle;
+        snap_psum_fire  = u_core.u_mac_array.hs_psum_fire;
+        snap_psum_stall = u_core.u_mac_array.hs_psum_stall;
+        snap_psum_idle  = u_core.u_mac_array.hs_psum_idle;
+        snap_acc_fire   = u_core.u_ofb_writer.hs_acc_fire;
+        snap_acc_stall  = u_core.u_ofb_writer.hs_acc_stall;
+        snap_acc_idle   = u_core.u_ofb_writer.hs_acc_idle;
+        snap_ifb_we = ifb_we_cnt; snap_ifb_re = ifb_re_cnt;
+        snap_wb_we  = wb_we_cnt;  snap_wb_re  = wb_re_cnt;
+        snap_ofb_we = ofb_we_cnt; snap_ofb_re = ofb_re_cnt;
+        snap_arf_w   = u_core.u_line_buffer.arf_write_cnt;
+        snap_arf_r   = u_core.u_line_buffer.arf_read_cnt;
+        snap_arf_pad = u_core.u_line_buffer.pad_skip_cnt;
+        snap_parf_f  = u_core.u_parf_accum.fill_fire_cnt;
+        snap_parf_d  = u_core.u_parf_accum.drain_fire_cnt;
+        snap_wrf_writes = 0;
+        for (int cc = 0; cc < NUM_COL; cc++)
+            for (int pp = 0; pp < NUM_PE; pp++)
+                snap_wrf_writes += pe_wrf_write_arr[cc][pp];
+
+        // ---- 加载 cfg (会解析 meta + 写 cfg_regs AXI-Lite) ----
+        load_config(case_dir);
+
+        desc_beats = 0;   // 先估算；实际 descriptor 数从 config.txt 已经 axi_lite_write 到 cfg_regs
+        // 从 cfg_regs 读回 DESC_COUNT 粗略不便；简化：按最大 2048 desc 预填 DDR 足够
+        // 精确计算：DESC_COUNT 也在 config.txt 里读，load_config 时已写 cfg_regs；TB 这里我们直接从 config 解析需再多加
+        // 简单起见 preload 按配置算：从 ifb_words_cfg 等推出
+        ifb_bytes = ifb_words_cfg * (BUS_DATA_W/8);
+        wb_bytes  = wb_words_cfg  * (WB_WIDTH/8);
+        ofb_bytes = ofb_words_cfg * (BUS_DATA_W/8);
+        // desc_beats: preload 必须给个数；按 2048 max 足够
+        desc_beats = 4096;   // 2048 desc × 2 beat; 实际使用按 DESC_COUNT
+
+        // 载入 IFB/WB/DESC 到 DDR + 清 OFB 区
+        preload_ddr(case_dir, ifb_words_cfg, wb_words_cfg, desc_beats, ofb_words_cfg);
+        $readmemh($sformatf("%s/expected_ofm.txt", case_dir), exp_arr);
+
+        // DMA base (layer-level)
+        axi_lite_write(ADDR_IDMA_SRC_BASE, DDR_IFB_BASE);
+        axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);
+        axi_lite_write(ADDR_WDMA_SRC_BASE, DDR_WB_BASE);
+        axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
+        axi_lite_write(ADDR_ODMA_DST_BASE, DDR_OFB_BASE);
+        axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
+        axi_lite_write(ADDR_DESC_LIST_BASE, DDR_DESC_BASE);
+        // DESC_COUNT 已由 load_config 写入
+
+        $display("=== CASE %0d: %s === t=%0t", c, case_name_cfg, $time);
+
+        // DFE 拉 descriptor
+        axi_lite_write(ADDR_CTRL, 32'h0000_0010);
+        wait (u_core.dfe_busy == 1'b1);
+        wait (u_core.dfe_busy == 1'b0);
+
+        // Start layer
+        axi_lite_write(ADDR_CTRL, 32'h0000_0020);
+        wait (u_core.layer_busy == 1'b1);
+        wait (u_core.layer_done == 1'b1);
+        @(posedge clk);
+
+        // 比对 DDR OFB vs expected
+        mismatch_cnt = 0;
+        for (int i = 0; i < ofb_words_cfg; i++) begin
+            expected = exp_arr[i];
+            got      = u_ddr.mem[(DDR_OFB_BASE / 16) + i];
+            if (got !== expected) begin
+                if (mismatch_cnt < 3)
+                    $display("  CASE %0d FAIL OFB[%0d]: expect=%h got=%h", c, i, expected, got);
+                mismatch_cnt++;
+            end
+        end
+
+        // Perf delta
+        delta_cycles      = core_cycles - snap_core_cycles;
+        delta_mac_fire    = u_core.u_mac_array.mac_fire_cnt - snap_mac_fire;
+        delta_wrf_writes  = 0;
+        for (int cc = 0; cc < NUM_COL; cc++)
+            for (int pp = 0; pp < NUM_PE; pp++)
+                delta_wrf_writes += pe_wrf_write_arr[cc][pp];
+        delta_wrf_writes -= snap_wrf_writes;
+        active_pe_per_fire = ((num_cin_cfg  > NUM_PE)  ? NUM_PE  : num_cin_cfg) *
+                             ((num_cout_cfg > NUM_COL) ? NUM_COL : num_cout_cfg);
+
+        // 单 case 结果（一行精简）+ 若干关键指标给 run_regression parser 用
+        if (mismatch_cnt == 0)
+            $display("CASE_RESULT %0d PASS  cycles=%0d  mac_fire=%0d  mac_util=%.2f%%  arf_w=%0d  arf_r=%0d  parf_f=%0d  parf_d=%0d  ifb_r=%0d  wb_r=%0d  ofb_w=%0d  name=%s",
+                     c, delta_cycles, delta_mac_fire,
+                     (real'(delta_mac_fire * active_pe_per_fire) / (real'(delta_cycles) * real'(NUM_COL * NUM_PE))) * 100.0,
+                     u_core.u_line_buffer.arf_write_cnt - snap_arf_w,
+                     u_core.u_line_buffer.arf_read_cnt  - snap_arf_r,
+                     u_core.u_parf_accum.fill_fire_cnt  - snap_parf_f,
+                     u_core.u_parf_accum.drain_fire_cnt - snap_parf_d,
+                     ifb_re_cnt - snap_ifb_re,
+                     wb_re_cnt  - snap_wb_re,
+                     ofb_we_cnt - snap_ofb_we,
+                     case_name_cfg);
+        else
+            $display("CASE_RESULT %0d FAIL  cycles=%0d  mismatches=%0d  name=%s",
+                     c, delta_cycles, mismatch_cnt, case_name_cfg);
+    endtask
+
+    initial begin
+        int n_cases;
+        int pass_cnt = 0, fail_cnt = 0;
 
         csr_awaddr  = 0; csr_awvalid = 0;
         csr_wdata   = 0; csr_wstrb   = 0; csr_wvalid = 0;
@@ -351,135 +509,14 @@ module tb_core_dma;
         #20 rst_n = 1;
         #10;
 
-        if (!$value$plusargs("H_OUT=%d",        h_out_val))       h_out_val = 66;
-        if (!$value$plusargs("W_OUT=%d",        w_out_val))       w_out_val = 118;
-        if (!$value$plusargs("COUT_SLICES=%d",  cout_slices_val)) cout_slices_val = 1;
-        if (!$value$plusargs("IFB_WORDS=%d",    ifb_words))       ifb_words = 8160;
-        if (!$value$plusargs("WB_WORDS=%d",     wb_words))        wb_words  = 9;
-        if (!$value$plusargs("DESC_COUNT=%d",   desc_count_val))  desc_count_val = 2;
-        ofb_words  = h_out_val * w_out_val * cout_slices_val;
-        desc_beats = desc_count_val * 2;                 // 每 desc 2 beat
+        if (!$value$plusargs("N_CASES=%d", n_cases)) n_cases = 1;
+        $display("== tb_core_dma multi-case run: N_CASES=%0d ==", n_cases);
 
-        ifb_bytes = ifb_words * (BUS_DATA_W/8);
-        wb_bytes  = wb_words  * (WB_WIDTH/8);
-        ofb_bytes = ofb_words * (BUS_DATA_W/8);
-
-        $display("== tb_core_dma ==  ifb=%0d words  wb=%0d words  ofb=%0d words  desc=%0d",
-                 ifb_words, wb_words, ofb_words, desc_count_val);
-
-        preload_ddr(ifb_words, wb_words, desc_beats);
-        $readmemh("./expected_ofm.txt", exp_arr);
-
-        // ---- Layer-level cfg (K / stride / SDP / strip_rows / ...) ----
-        load_config();
-
-        // ---- DMA layer-level base (每 strip 的 offset/len 由 descriptor 叠加) ----
-        axi_lite_write(ADDR_IDMA_SRC_BASE, DDR_IFB_BASE);
-        axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);   // 保留兼容 (IDMA byte_len 实际由 Sequencer 覆盖)
-        axi_lite_write(ADDR_WDMA_SRC_BASE, DDR_WB_BASE);
-        axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
-        axi_lite_write(ADDR_ODMA_DST_BASE, DDR_OFB_BASE);
-        axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
-
-        // ---- Descriptor list pointer ----
-        axi_lite_write(ADDR_DESC_LIST_BASE, DDR_DESC_BASE);
-        // DESC_COUNT 已由 load_config() 从 config.txt 写入
-
-        // ---- 启动 DFE 拉 descriptor 到片内 FIFO ----
-        $display("== Start DFE ==");
-        axi_lite_write(ADDR_CTRL, 32'h0000_0010);   // CTRL[4]=start_dfe
-        wait (u_core.dfe_busy == 1'b1);
-        wait (u_core.dfe_busy == 1'b0);
-        $display("   DFE done at t=%0t", $time);
-
-        // ---- 启动 Sequencer 消费 descriptor ----
-        $display("== Start Layer ==");
-        axi_lite_write(ADDR_CTRL, 32'h0000_0020);   // CTRL[5]=start_layer
-        wait (u_core.layer_busy == 1'b1);
-        wait (u_core.layer_done == 1'b1);
-        @(posedge clk);
-        $display("   Layer done at t=%0t", $time);
-
-        // 对比 DDR 的 OFB 区 vs expected
-        mismatch_cnt = 0;
-        for (int i = 0; i < ofb_words; i++) begin
-            expected = exp_arr[i];
-            got      = u_ddr.mem[(DDR_OFB_BASE / 16) + i];
-            if (got !== expected) begin
-                if (mismatch_cnt < 5)
-                    $display("  FAIL OFB[%0d]: expect=%h got=%h", i, expected, got);
-                mismatch_cnt++;
-            end
+        for (int c = 0; c < n_cases; c++) begin
+            run_one_case(c);
         end
 
-        if (mismatch_cnt == 0) $display("TB_CORE_DMA PASSED. %0d OFB words checked.", ofb_words);
-        else                   $display("TB_CORE_DMA FAILED. %0d mismatches.", mismatch_cnt);
-
-        // ================== Perf stats (仅核运行窗口) ==================
-        begin
-            longint mac_fire_cycles;
-            longint total_mac_ops;
-            longint total_wrf_writes;
-            int num_cin_val, num_cout_val;
-            int active_pe_per_fire;
-            mac_fire_cycles  = u_core.u_mac_array.mac_fire_cnt;
-            if (!$value$plusargs("NUM_CIN=%d",  num_cin_val))  num_cin_val  = 16;
-            if (!$value$plusargs("NUM_COUT=%d", num_cout_val)) num_cout_val = 16;
-            // 硬件利用率 (定义 A)：每 fire 实际激活 PE 数 = min(Cin,16) × min(Cout,16)
-            active_pe_per_fire = ((num_cin_val  > NUM_PE)  ? NUM_PE  : num_cin_val) *
-                                 ((num_cout_val > NUM_COL) ? NUM_COL : num_cout_val);
-            total_mac_ops    = mac_fire_cycles * active_pe_per_fire;
-            total_wrf_writes = 0;
-            for (int c = 0; c < NUM_COL; c++)
-                for (int p = 0; p < NUM_PE; p++)
-                    total_wrf_writes += pe_wrf_write_arr[c][p];
-
-            $display("========================================");
-            $display(" CORE PERFORMANCE (start_core → done)");
-            $display("========================================");
-            $display("Core Active Cycles:   %0d", core_cycles);
-            $display("MAC Fire Cycles:      %0d", mac_fire_cycles);
-            $display("Active PE / fire:     %0d (= min(Cin,%0d) × min(Cout,%0d))",
-                     active_pe_per_fire, NUM_PE, NUM_COL);
-            $display("Total MAC Ops:        %0d (= fire × active_PE)", total_mac_ops);
-            $display("Theoretical Max MACs: %0d (= cycles × %0d physical PEs)",
-                     core_cycles * NUM_COL * NUM_PE, NUM_COL * NUM_PE);
-            $display("MAC Utilization:      %.2f %%",
-                     (real'(total_mac_ops) / (real'(core_cycles) * real'(NUM_COL * NUM_PE))) * 100.0);
-            $display("WRF Writes:           %0d", total_wrf_writes);
-            $display("--- Handshake Stats (fire / stall / idle) ---");
-            $display("ACT  (lb  -> mac): fire=%0d stall=%0d idle=%0d",
-                     u_core.u_mac_array.hs_act_fire,
-                     u_core.u_mac_array.hs_act_stall,
-                     u_core.u_mac_array.hs_act_idle);
-            $display("WGT  (wb  -> mac): fire=%0d stall=%0d idle=%0d",
-                     u_core.u_mac_array.hs_wgt_fire,
-                     u_core.u_mac_array.hs_wgt_stall,
-                     u_core.u_mac_array.hs_wgt_idle);
-            $display("PSUM (mac -> prf): fire=%0d stall=%0d idle=%0d",
-                     u_core.u_mac_array.hs_psum_fire,
-                     u_core.u_mac_array.hs_psum_stall,
-                     u_core.u_mac_array.hs_psum_idle);
-            $display("ACC  (prf -> ofb): fire=%0d stall=%0d idle=%0d",
-                     u_core.u_ofb_writer.hs_acc_fire,
-                     u_core.u_ofb_writer.hs_acc_stall,
-                     u_core.u_ofb_writer.hs_acc_idle);
-            $display("--- SRAM Access (layer_busy 窗口内) ---");
-            $display("IFB SRAM Writes:      %0d", ifb_we_cnt);
-            $display("IFB SRAM Reads :      %0d", ifb_re_cnt);
-            $display("WB  SRAM Writes:      %0d", wb_we_cnt);
-            $display("WB  SRAM Reads :      %0d", wb_re_cnt);
-            $display("OFB SRAM Writes:      %0d", ofb_we_cnt);
-            $display("OFB SRAM Reads :      %0d", ofb_re_cnt);
-            $display("--- ARF (act_buf) Access ---");
-            $display("ARF  Writes:          %0d", u_core.u_line_buffer.arf_write_cnt);
-            $display("ARF  Reads :          %0d", u_core.u_line_buffer.arf_read_cnt);
-            $display("ARF  Pad Skip:        %0d", u_core.u_line_buffer.pad_skip_cnt);
-            $display("--- PARF (psum) Access ---");
-            $display("PARF Fill  :          %0d", u_core.u_parf_accum.fill_fire_cnt);
-            $display("PARF Drain :          %0d", u_core.u_parf_accum.drain_fire_cnt);
-            $display("========================================");
-        end
+        $display("== ALL %0d CASES DONE ==", n_cases);
         $stop;
     end
 

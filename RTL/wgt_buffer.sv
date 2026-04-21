@@ -273,7 +273,8 @@ module wgt_buffer #(
     logic evt_ld_round_wrap, evt_ld_cins_wrap, evt_ld_tile_wrap, evt_ld_yout_wrap;
 
     always_comb begin
-        evt_start          = (state == S_IDLE) && start;
+        // F-2: start 脉冲从任何状态触发 evt_start（软复位所有计数器）
+        evt_start          = start;
         evt_cold_load_done = (state == S_LOAD) && sload_done;
 
         evt_pk_fire       =  cfg_wrf_packed && (state == S_COMPUTE) && wgt_fire;
@@ -321,25 +322,27 @@ module wgt_buffer #(
     assign wgt_valid = (state == S_COMPUTE);
     assign wrf_raddr = cfg_wrf_packed ? wrf_base_kx[WAW-1:0] : pos_cnt[WAW-1:0];
 
-    assign done = (state == S_DONE);
+    // F-2 多 case：start 同拍 done 立即掉 0
+    assign done = (state == S_DONE) && !start;
 
     // =========================================================================
     // 三段式 FSM
     // =========================================================================
     always_comb begin
         state_next = state;
-        case (state)
-            S_IDLE      : if (start)          state_next = S_BIAS_LOAD;
+        // F-2 多 case：start 脉冲从任何状态都强制进 S_BIAS_LOAD（软复位语义）
+        // 这样即使上一 case 未干净收敛到 S_DONE，也能被下一 case 的 start 重启
+        if (start) state_next = S_BIAS_LOAD;
+        else case (state)
+            S_IDLE      : ;   // wait for start
             S_BIAS_LOAD : if (bias_load_done) state_next = S_LOAD;
             S_LOAD      : if (sload_done)     state_next = S_COMPUTE;
             S_COMPUTE   : if (wgt_fire && cs_compute_last) begin
-                // 方式 1：每 (yout, cs) 扫完；packed 都要重 LOAD 下一 (yout, cs)
-                // chunked 由内部 load ptr 并行覆盖 WRF
                 state_next = (yout_is_last && cs_is_last) ? S_DONE
                            : (cfg_wrf_packed ? S_LOAD : S_COMPUTE);
             end
             S_DONE      : ;
-            default     :                     state_next = S_IDLE;
+            default     : state_next = S_IDLE;
         endcase
     end
 

@@ -109,7 +109,7 @@ module dfe #(
             S_IDLE : if (start)                                     state_next = S_AR;
             S_AR   : if (M_ARREADY)                                 state_next = S_R;
             S_R    : if (r_fire && M_RLAST)                         state_next = S_DONE;
-            S_DONE : ;
+            S_DONE : if (start)                                     state_next = S_AR;  // 多 case 重入
             default:                                                state_next = S_IDLE;
         endcase
     end
@@ -120,7 +120,8 @@ module dfe #(
     end
 
     assign busy = (state == S_AR) || (state == S_R);
-    assign done = r_done;
+    // F-2 多 case：start 同拍 done 立即掉 0，避免 TB wait (dfe_busy==0) 看到残留 done
+    assign done = r_done && !start;
 
     // =========================================================================
     // 数据路径寄存器（start 时初始化，§6 无复位）

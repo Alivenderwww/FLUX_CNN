@@ -43,6 +43,8 @@ def parse_args():
                    help='0 = single strip (default); >0 = multi-strip')
     p.add_argument('--out-dir',  default=DEFAULT_OUT_DIR,
                    help='output directory (default: ../sim/tb_core_dma/)')
+    p.add_argument('--case-name', default="",
+                   help='case name to embed in config.txt (F-2 multi-case)')
     return p.parse_args()
 
 
@@ -50,7 +52,7 @@ def generate_random(
     H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
     shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
     streaming=False, pad_top=0, pad_left=0, strip_rows=0,
-    out_dir=DEFAULT_OUT_DIR,
+    out_dir=DEFAULT_OUT_DIR, case_name="",
 ):
     """随机 ifm + weight + 兼容旧 SDP (mult=1, shift=N, clip[0,255], ReLU) 的测试生成。"""
     os.makedirs(out_dir, exist_ok=True)
@@ -136,7 +138,8 @@ def generate_random(
     cfg_dict = hw_files.cfg_to_dict(cfg, shift_amt=shift_amt,
                                      sdp_mult=sdp_mult, sdp_zp_out=sdp_zp_out,
                                      sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
-                                     sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en)
+                                     sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
+                                     case_name=case_name)
     hw_files.write_config(out_dir, cfg_dict)
 
     n_desc, n_strips, strip_rows_eff = hw_files.write_descriptors(
@@ -168,4 +171,4 @@ if __name__ == '__main__':
         streaming=args.streaming,
         pad_top=pad_t, pad_left=pad_l,
         strip_rows=args.strip_rows,
-        out_dir=args.out_dir)
+        out_dir=args.out_dir, case_name=args.case_name)

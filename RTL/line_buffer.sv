@@ -313,7 +313,8 @@ module line_buffer #(
     assign evt_advance_any = cfg_arf_reuse_en ? act_fire : issue_ok_std;
 
     always_comb begin
-        evt_start         = ((state == S_IDLE) || (state == S_DONE)) && start;
+        // F-2: start 无条件 evt_start
+        evt_start         = start;
         evt_iss_pos_wrap  = evt_advance_any    && iss_pos_is_last;
         evt_iss_kx_wrap   = evt_iss_pos_wrap   && kx_is_last;
         evt_iss_ky_wrap   = evt_iss_kx_wrap    && ky_is_last;
@@ -335,11 +336,13 @@ module line_buffer #(
 
     always_comb begin
         state_next = state;
-        case (state)
-            S_IDLE : if (start)          state_next = S_RUN;
+        // F-2: start 从任何状态强制进 S_RUN (软复位 for 多 case)
+        if (start) state_next = S_RUN;
+        else case (state)
+            S_IDLE : ;   // wait for start
             S_RUN  : if (run_drained)    state_next = S_DONE;
-            S_DONE : if (start)          state_next = S_RUN;   // 多 strip 重启
-            default:                     state_next = S_IDLE;
+            S_DONE : ;
+            default:    state_next = S_IDLE;
         endcase
     end
 
@@ -348,7 +351,8 @@ module line_buffer #(
         else        state <= state_next;
     end
 
-    assign done = (state == S_DONE);
+    // F-2 多 case：start 同拍 done 立即掉 0
+    assign done = (state == S_DONE) && !start;
 
     // =========================================================================
     // 外层 6 级 counter

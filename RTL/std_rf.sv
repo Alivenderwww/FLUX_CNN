@@ -48,7 +48,7 @@ module std_rf #(
         if (!rst_n) begin
             first_write_logged <= 1'b0;
         end else if (we && !first_write_logged) begin
-            $display("Time=%0t, %m written! waddr=%0d, wdata=%x", $time, waddr, wdata);
+            // $display("Time=%0t, %m written! waddr=%0d, wdata=%x", $time, waddr, wdata);
             first_write_logged <= 1'b1;
         end else begin
             first_write_logged <= first_write_logged;

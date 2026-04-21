@@ -13,7 +13,7 @@ train_mnist.py — 训练 all-conv MNIST 模型（无 Pool，用 stride=2 下采
   .venv/Scripts/python.exe train_mnist.py --epochs 12 --lr 5e-4
 
 输出：
-  toolchain/models/mnist_allconv.pt    state_dict + calib_image + label
+  toolchain/models/ckpts/mnist_allconv.pt   state_dict + calib_image + label
   测试准确率打印到 stdout
 """
 
@@ -27,9 +27,9 @@ from torchvision import datasets, transforms
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR   = os.path.join(_SCRIPT_DIR, "models")
+CKPT_DIR    = os.path.join(_SCRIPT_DIR, "ckpts")
 DATA_DIR    = os.path.join(_SCRIPT_DIR, "data")
-CKPT_PATH   = os.path.join(MODEL_DIR, "mnist_allconv.pt")
+CKPT_PATH   = os.path.join(CKPT_DIR, "mnist_allconv.pt")
 
 
 def build_allconv():
@@ -55,7 +55,7 @@ class AllConvMNIST(nn.Module):
 
 def train(epochs=8, lr=1e-3, batch_size=128, seed=0):
     torch.manual_seed(seed)
-    os.makedirs(MODEL_DIR, exist_ok=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
     os.makedirs(DATA_DIR,  exist_ok=True)
 
     # MNIST 标准 normalize: mean=0.1307, std=0.3081

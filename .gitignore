@@ -36,9 +36,11 @@ Syn/reports
 toolchain/.venv/
 toolchain/__pycache__/
 toolchain/**/__pycache__/
-toolchain/models/*.pt
-toolchain/models/*.pth
-toolchain/data/
+toolchain/models/ckpts/*.pt
+toolchain/models/ckpts/*.pth
+toolchain/models/data/
+toolchain/models/model_report.txt
+toolchain/models/images/mnist_test/*.png
 
 # F-2 多 case 生成物
 sim/tb_core_dma/cases/

@@ -87,42 +87,6 @@ CASES = [
 
 
 # ---------------------------------------------------------------------------
-# Phase G 多层模型回归：("<model_name>", "model", <n_layers>)
-# 模型定义在 compile_model.py 的 MODELS dict；这里只声明名称+层数供 case 展开
-# ---------------------------------------------------------------------------
-MODEL_CASES = [
-    ("mnist2",         "model", 2),
-    ("mnist_allconv",  "model", 5),
-]
-CASES += MODEL_CASES
-
-
-def flatten_cases(cases):
-    """把 model case 展成 per-layer sub-entries，返回 flat list of dict。"""
-    flat = []
-    for c in cases:
-        if len(c) == 3 and c[1] == "model":
-            model_name, _, n_layers = c
-            for k in range(n_layers):
-                flat.append({
-                    'kind'      : 'model_layer',
-                    'model_name': model_name,
-                    'n_layers'  : n_layers,
-                    'layer_idx' : k,
-                    'name'      : f"{model_name}/L{k}",
-                    'mode'      : 'model',
-                })
-        else:
-            flat.append({
-                'kind': 'single',
-                'args': c,
-                'name': c[0],
-                'mode': c[1],
-            })
-    return flat
-
-
-# ---------------------------------------------------------------------------
 # 生成单个 case 数据到 cases/caseNN/
 # ---------------------------------------------------------------------------
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad):
@@ -146,30 +110,6 @@ def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shi
             h_out, w_out = int(m.group(1)), int(m.group(2))
     return {"name": name, "mode": mode, "h_out": h_out, "w_out": w_out,
             "case_dir": case_dir}, None
-
-
-def gen_model_cases(start_idx, model_name, n_layers):
-    """subprocess 调 compile_model（用 venv python，主进程无需 torch）。
-    解析 plan_dir/model_plan.json 返回每层 meta."""
-    plan_dir = os.path.join(SIM_DIR, "cases", f"{model_name}_plan")
-    os.makedirs(plan_dir, exist_ok=True)
-    cmd = (f'"{PY}" "{os.path.join(_SCRIPT_DIR, "compile_model.py")}" '
-           f'--model {model_name} --sim-dir "{SIM_DIR}" '
-           f'--start-idx {start_idx} --out-dir "{plan_dir}"')
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr.strip() or r.stdout.strip())
-    import json
-    with open(os.path.join(plan_dir, 'model_plan.json')) as f:
-        plan = json.load(f)
-    if plan['n_layers'] != n_layers:
-        raise ValueError(f"model {model_name} plan has {plan['n_layers']} layers ≠ {n_layers}")
-    return [
-        {"name": f"{model_name}/L{layer['idx']}", "mode": "model",
-         "h_out": layer['H_OUT'], "w_out": layer['W_OUT'],
-         "case_dir": os.path.join(SIM_DIR, "cases", f"case{start_idx + layer['idx']:02d}")}
-        for layer in plan['layers']
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +223,8 @@ def main():
     parser.add_argument("--label", default="", help="Report label")
     parser.add_argument("--out",   default=OUTPUT_FILE, help="Output file")
     parser.add_argument("--only",  default="all",
-                        choices=["batch", "stream", "model", "all"],
-                        help="Filter cases: batch/stream/model/all (default: all)")
+                        choices=["batch", "stream", "all"],
+                        help="Filter cases: batch/stream/all (default: all)")
     parser.add_argument("--case",  default=None,
                         help="只跑 name 包含此子串的 case（大小写敏感）。例: --case C16C10")
     args = parser.parse_args()
@@ -296,39 +236,21 @@ def main():
         if not cases:
             print(f"  no case name contains '{args.case}'; aborted.")
             sys.exit(1)
-    flat = flatten_cases(cases)
-    n_cases = len(flat)
+    n_cases = len(cases)
 
     print("=" * 60)
-    print(f"  FLUX CNN Regression  {args.label}")
-    print(f"  Mode filter: {args.only}  ({n_cases} cases, including model sub-layers)")
+    print(f"  FLUX CNN Case Regression  {args.label}")
+    print(f"  Mode filter: {args.only}  ({n_cases} cases)")
     print("=" * 60)
 
-    # Step 1: 按 flat 列表生成 case 数据到 cases/caseNN/
-    #   single case: 一个 gen_case_files 调用
-    #   model case : 展开为多个 sub-case，compile_model 一次性产出全部层
+    # Step 1: 生成每 case 数据到 cases/caseNN/
     print(f"\n[Step 1] 生成 {n_cases} 个 case 数据 ...")
-    i = 0
-    while i < n_cases:
-        item = flat[i]
-        if item['kind'] == 'single':
-            gen_info, err = gen_case_files(i, *item['args'])
-            if err:
-                print(f"  case {i} ({item['name']}) gen ERROR: {err}")
-                sys.exit(1)
-            print(f"  [{i+1}/{n_cases}] {item['name']}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']}")
-            i += 1
-        else:  # model_layer
-            assert item['layer_idx'] == 0, "flatten 保证 model 第一子层 layer_idx=0"
-            L = item['n_layers']
-            try:
-                infos = gen_model_cases(i, item['model_name'], L)
-            except Exception as e:
-                print(f"  model {item['model_name']} gen ERROR: {e}")
-                sys.exit(1)
-            for k, info in enumerate(infos):
-                print(f"  [{i+k+1}/{n_cases}] {info['name']}  → H_OUT={info['h_out']} W_OUT={info['w_out']}")
-            i += L
+    for i, case in enumerate(cases):
+        gen_info, err = gen_case_files(i, *case)
+        if err:
+            print(f"  case {i} ({case[0]}) gen ERROR: {err}")
+            sys.exit(1)
+        print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']}")
 
     # 把 case0 的 sim_params.f 复制到 SIM_DIR/ 给 vsim 启动参数用（-gSRAM_DEPTH，-sva 等）
     # 再 append +N_CASES 给 TB plusarg 用

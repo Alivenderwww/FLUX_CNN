@@ -1,23 +1,27 @@
 """
-model_zoo.py — PyTorch 模型定义集合（Phase G+）
+zoo.py — PyTorch 模型定义集合
 
-单独维护：新增模型只在这里改；compile_model.py 从这里 import。
+单独维护：新增模型只在这里改；compile_model 从这里 import。
 
 每个 _build_* 返回 (nn.Module, calibration_tensor, n_layers)：
-  model            — 待编译的模块，暂支持 Conv2d + ReLU 串联
+  model              — 待编译的模块，暂支持 Conv2d + ReLU 串联
   calibration_tensor — 一个 batch 的输入样本，用于 per-tensor max-abs scale 估算
                        (compile_model 也用它决定每层 H_IN/W_IN)
-  n_layers         — Conv2d 个数（run_regression 展开 sub-case 用）
+  n_layers           — Conv2d 个数
 
-添加新模型见 docs/multi-layer-compilation.md "新增 model 怎么加"。
+calib 可被 run_model.py 替换成真实测试图像 (保持 scale calibration 不变, 只换 data path)。
 """
 
 import os
-import compile_layer
-
+import sys
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR  = os.path.join(_SCRIPT_DIR, "models")
+_TOOLCHAIN_DIR = os.path.dirname(_SCRIPT_DIR)
+if _TOOLCHAIN_DIR not in sys.path:
+    sys.path.insert(0, _TOOLCHAIN_DIR)
+import compile_layer     # noqa: E402
+
+CKPTS_DIR = os.path.join(_SCRIPT_DIR, "ckpts")
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +45,7 @@ def _build_mnist2():
 # ---------------------------------------------------------------------------
 def _build_mnist_allconv():
     torch = compile_layer._require_torch()
-    ckpt_path = os.path.join(MODELS_DIR, "mnist_allconv.pt")
+    ckpt_path = os.path.join(CKPTS_DIR, "mnist_allconv.pt")
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(
             f"checkpoint not found: {ckpt_path}\n"

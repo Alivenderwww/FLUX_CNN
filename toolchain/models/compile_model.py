@@ -21,17 +21,23 @@ DDR layout：
 """
 
 import os
+import sys
 import json
 import argparse
 
-import hw_files
-import compile_layer
-from model_zoo import MODELS, build_model
-
-
+# 上级 toolchain/ 包含共享 compile_layer 和 hw_files
 _SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
+_TOOLCHAIN_DIR  = os.path.dirname(_SCRIPT_DIR)
+if _TOOLCHAIN_DIR not in sys.path:
+    sys.path.insert(0, _TOOLCHAIN_DIR)
+
+import hw_files          # noqa: E402
+import compile_layer     # noqa: E402
+from zoo import MODELS, build_model   # noqa: E402
+
+
 DEFAULT_OUT_DIR = os.path.normpath(
-    os.path.join(_SCRIPT_DIR, "..", "sim", "tb_core_dma", "cases", "model"))
+    os.path.join(_SCRIPT_DIR, "..", "..", "sim", "tb_core_dma", "cases", "model"))
 
 # DDR layout 起点（byte 地址，需落在 TB DDR_DEPTH=16MB 内）
 # 三段：FM [0, 8MB) / WB [8MB, 15MB) / DESC [15MB, 16MB)

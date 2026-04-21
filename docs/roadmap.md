@@ -9,6 +9,9 @@
 - ✅ **DMA 子系统**（IDMA / WDMA / ODMA + axi_m_mux + axi_lite_csr）+ tb_core_dma batch 回归
 - ✅ **Streaming row-ring 架构**（v2 单次 start，480×640 VGA 端到端 11/11 PASS，MAC 99.93%）
 - ✅ RTL 风格规范 (`RTL代码编写原则.md`)，全模块重构到合规
+- ✅ **单 vsim 多 case 回归**（F-2）+ wgt_buffer.yout_cnt 重置 bug 修复（F-2-fix）
+- ✅ **Phase F-1c / G：PyTorch 多层编译器**（`compile_model.py` → `nn.Sequential`
+  Conv2d+ReLU 链端到端 bit-exact；见 `docs/multi-layer-compilation.md`）
 
 ---
 

@@ -182,18 +182,22 @@ module tb_core_dma;
     logic [OFB_WIDTH-1:0]  exp_arr  [0:524287];
     logic [BUS_DATA_W-1:0] desc_arr [0:4095];     // 2 beats/desc × up to 2048 desc
 
+    // Phase G: 支持 per-layer DDR base + 可选跳过 IFB preload / OFB clear（多层场景）
     task automatic preload_ddr(input string case_dir,
                                 input int ifb_words, input int wb_words,
-                                input int desc_beats, input int ofb_words_to_clear);
-        int ifb_base_w  = DDR_IFB_BASE  / 16;
-        int wb_base_w   = DDR_WB_BASE   / 16;
-        int desc_base_w = DDR_DESC_BASE / 16;
-        $readmemh($sformatf("%s/ifb.txt",       case_dir), ifb_arr);
+                                input int desc_beats, input int ofb_words_to_clear,
+                                input [31:0] ifb_base_byte, input [31:0] wb_base_byte,
+                                input [31:0] desc_base_byte, input [31:0] ofb_base_byte,
+                                input bit    skip_ifb_preload, input bit skip_ofb_clear);
+        int ifb_base_w  = ifb_base_byte  / 16;
+        int wb_base_w   = wb_base_byte   / 16;
+        int desc_base_w = desc_base_byte / 16;
+        if (!skip_ifb_preload) begin
+            $readmemh($sformatf("%s/ifb.txt", case_dir), ifb_arr);
+            for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
+        end
         $readmemh($sformatf("%s/wb.txt",        case_dir), wb_arr);
         $readmemh($sformatf("%s/desc_list.hex", case_dir), desc_arr);
-
-        // IFB: 128-bit lines 直接填 DDR
-        for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
 
         // WB: 2048-bit lines 拆 16 个 128-bit 填 DDR（LSB 先）
         for (int i = 0; i < wb_words; i++)
@@ -203,8 +207,10 @@ module tb_core_dma;
         // Descriptor list: 每 descriptor 2 × 128-bit beat (little-endian)
         for (int i = 0; i < desc_beats; i++) u_ddr.mem[desc_base_w + i] = desc_arr[i];
 
-        // 清零 OFB 区（防止上一 case 残留干扰下一 case 的 OFB 比对）
-        for (int i = 0; i < ofb_words_to_clear; i++) u_ddr.mem[(DDR_OFB_BASE/16) + i] = '0;
+        // 清零 OFB 区（防止上一 case 残留）；多层中间层跳过以保留下层 IFB
+        if (!skip_ofb_clear) begin
+            for (int i = 0; i < ofb_words_to_clear; i++) u_ddr.mem[(ofb_base_byte/16) + i] = '0;
+        end
     endtask
 
     // ================== AXI-Lite 驱动 ==================
@@ -230,6 +236,9 @@ module tb_core_dma;
     string case_name_cfg;
     int    ifb_words_cfg, wb_words_cfg, ofb_words_cfg;
     int    num_cin_cfg, num_cout_cfg;
+    // Phase G: 多层支持。缺失 → 用 TB hard-coded 默认
+    logic [31:0] ddr_ifb_base_cfg, ddr_wb_base_cfg, ddr_ofb_base_cfg, ddr_desc_base_cfg;
+    bit          skip_ifb_preload_cfg, skip_ofb_clear_cfg;
 
     task automatic load_config(input string case_dir);
         int      fd;
@@ -238,6 +247,13 @@ module tb_core_dma;
         int      val;
         int      count;
         string   path;
+        // Phase G: META DDR base 默认值 = TB hard-coded localparam（单层回归兼容）
+        ddr_ifb_base_cfg     = DDR_IFB_BASE;
+        ddr_wb_base_cfg      = DDR_WB_BASE;
+        ddr_ofb_base_cfg     = DDR_OFB_BASE;
+        ddr_desc_base_cfg    = DDR_DESC_BASE;
+        skip_ifb_preload_cfg = 1'b0;
+        skip_ofb_clear_cfg   = 1'b0;
         path = $sformatf("%s/config.txt", case_dir);
         fd = $fopen(path, "r");
         if (fd == 0) begin
@@ -301,6 +317,13 @@ module tb_core_dma;
                 "_META_OFB_WORDS" : ofb_words_cfg = val;
                 "_META_NUM_CIN"   : num_cin_cfg   = val;
                 "_META_NUM_COUT"  : num_cout_cfg  = val;
+                // Phase G 多层：META DDR base + skip flags
+                "_META_DDR_IFB_BASE"    : ddr_ifb_base_cfg     = val;
+                "_META_DDR_WB_BASE"     : ddr_wb_base_cfg      = val;
+                "_META_DDR_OFB_BASE"    : ddr_ofb_base_cfg     = val;
+                "_META_DDR_DESC_BASE"   : ddr_desc_base_cfg    = val;
+                "_META_SKIP_IFB_PRELOAD": skip_ifb_preload_cfg = (val != 0);
+                "_META_SKIP_OFB_CLEAR"  : skip_ofb_clear_cfg   = (val != 0);
                 default          : ;
             endcase
         end
@@ -431,17 +454,22 @@ module tb_core_dma;
         desc_beats = 4096;   // 2048 desc × 2 beat; 实际使用按 DESC_COUNT
 
         // 载入 IFB/WB/DESC 到 DDR + 清 OFB 区
-        preload_ddr(case_dir, ifb_words_cfg, wb_words_cfg, desc_beats, ofb_words_cfg);
-        $readmemh($sformatf("%s/expected_ofm.txt", case_dir), exp_arr);
+        preload_ddr(case_dir, ifb_words_cfg, wb_words_cfg, desc_beats, ofb_words_cfg,
+                    ddr_ifb_base_cfg, ddr_wb_base_cfg,
+                    ddr_desc_base_cfg, ddr_ofb_base_cfg,
+                    skip_ifb_preload_cfg, skip_ofb_clear_cfg);
+        // 中间层（skip_ofb_clear=1，OFB 是下层 IFB）没有 expected_ofm.txt，跳过读
+        if (!skip_ofb_clear_cfg)
+            $readmemh($sformatf("%s/expected_ofm.txt", case_dir), exp_arr);
 
         // DMA base (layer-level)
-        axi_lite_write(ADDR_IDMA_SRC_BASE, DDR_IFB_BASE);
+        axi_lite_write(ADDR_IDMA_SRC_BASE, ddr_ifb_base_cfg);
         axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);
-        axi_lite_write(ADDR_WDMA_SRC_BASE, DDR_WB_BASE);
+        axi_lite_write(ADDR_WDMA_SRC_BASE, ddr_wb_base_cfg);
         axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
-        axi_lite_write(ADDR_ODMA_DST_BASE, DDR_OFB_BASE);
+        axi_lite_write(ADDR_ODMA_DST_BASE, ddr_ofb_base_cfg);
         axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
-        axi_lite_write(ADDR_DESC_LIST_BASE, DDR_DESC_BASE);
+        axi_lite_write(ADDR_DESC_LIST_BASE, ddr_desc_base_cfg);
         // DESC_COUNT 已由 load_config 写入
 
         $display("=== CASE %0d: %s === t=%0t", c, case_name_cfg, $time);
@@ -457,15 +485,17 @@ module tb_core_dma;
         wait (u_core.layer_done == 1'b1);
         @(posedge clk);
 
-        // 比对 DDR OFB vs expected
+        // 比对 DDR OFB vs expected；中间层无 expected_ofm → 不比对
         mismatch_cnt = 0;
-        for (int i = 0; i < ofb_words_cfg; i++) begin
-            expected = exp_arr[i];
-            got      = u_ddr.mem[(DDR_OFB_BASE / 16) + i];
-            if (got !== expected) begin
-                if (mismatch_cnt < 3)
-                    $display("  CASE %0d FAIL OFB[%0d]: expect=%h got=%h", c, i, expected, got);
-                mismatch_cnt++;
+        if (!skip_ofb_clear_cfg) begin
+            for (int i = 0; i < ofb_words_cfg; i++) begin
+                expected = exp_arr[i];
+                got      = u_ddr.mem[(ddr_ofb_base_cfg / 16) + i];
+                if (got !== expected) begin
+                    if (mismatch_cnt < 3)
+                        $display("  CASE %0d FAIL OFB[%0d]: expect=%h got=%h", c, i, expected, got);
+                    mismatch_cnt++;
+                end
             end
         end
 

@@ -407,12 +407,20 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
 
 def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
                 sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1,
-                case_name=""):
+                case_name="",
+                ddr_ifb_base=None, ddr_wb_base=None,
+                ddr_ofb_base=None, ddr_desc_base=None,
+                skip_ifb_preload=0, skip_ofb_clear=0):
     """
     把 derive_layer_cfg 的结果转成 config.txt 用的有序 dict。
     包含 SDP 量化参数（F-1a/F-1b 补齐）。
+
+    多层场景（Phase G）用的 DDR base 参数：
+      ddr_*_base : 该层 DDR 的 byte 基址。None = 保持 TB 默认 localparam。
+      skip_ifb_preload : 非首层时=1，TB 跳过 $readmemh ifb.txt（数据已由上层 OFB 写入）。
+      skip_ofb_clear   : 非终层时=1，TB 不清 OFB 区（它是下层 IFB）。
     """
-    return {
+    out = {
         # --- META (TB 读取，不写 cfg_regs) ---
         # TB 从 config.txt 解析这些字段做仿真控制（OFB 对比循环 / 打印等）
         '_META_CASE_NAME'   : case_name,
@@ -467,3 +475,11 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg['stride'],
         'ARF_REUSE_EN'   : 1 if cfg['arf_reuse_en'] else 0,
     }
+    # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
+    if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base
+    if ddr_wb_base   is not None: out['_META_DDR_WB_BASE']   = ddr_wb_base
+    if ddr_ofb_base  is not None: out['_META_DDR_OFB_BASE']  = ddr_ofb_base
+    if ddr_desc_base is not None: out['_META_DDR_DESC_BASE'] = ddr_desc_base
+    out['_META_SKIP_IFB_PRELOAD'] = 1 if skip_ifb_preload else 0
+    out['_META_SKIP_OFB_CLEAR']   = 1 if skip_ofb_clear   else 0
+    return out

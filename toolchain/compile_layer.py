@@ -114,7 +114,17 @@ def compile_and_emit_conv2d(
     conv, x_float, s_x, s_y,
     out_dir=DEFAULT_OUT_DIR, streaming=False,
     seed_label="conv",
+    ddr_ifb_base=None, ddr_wb_base=None,
+    ddr_ofb_base=None, ddr_desc_base=None,
+    skip_ifb_preload=False, skip_ofb_clear=False,
+    emit_expected_ofm=True,
+    ifm_int_override=None,
 ):
+    """
+    ifm_int_override: [H_IN][W_IN][Cin] Python list of int. 非 None 时跳过对
+        x_float 的 quantize，直接用这个整数输入算 expected_ofm 和写 ifb.txt。
+        Phase G 多层：把上一层硬件 bit-exact 输出作为本层整数输入，避免层间 off-by-1。
+    """
     """
     单层 Conv2d 编译：量化 weight/bias/input，派生 mult/shift，写硬件文件。
     返回 dict 含量化参数 + 硬件期望输出 (供调用方核对)。
@@ -142,12 +152,14 @@ def compile_and_emit_conv2d(
     scale_ratio = s_bias / s_y
     sdp_mult, sdp_shift = derive_mult_shift(scale_ratio)
 
-    x_q = quantize_symmetric(x_float, s_x)
+    x_q = None
+    if ifm_int_override is None:
+        x_q = quantize_symmetric(x_float, s_x)
     w_q = quantize_symmetric(w_float, s_w)
     b_q = torch.round(b_float / s_bias).to(torch.int32)   # int32 in acc 域
 
     # --- 转 Python list 给 hw_files ---
-    ifm_arr  = _tensor_to_list3(x_q)
+    ifm_arr  = ifm_int_override if ifm_int_override is not None else _tensor_to_list3(x_q)
     w_arr    = _tensor_to_list4_weight(w_q)
     bias_arr = _tensor_to_list_bias(b_q)
 
@@ -179,13 +191,18 @@ def compile_and_emit_conv2d(
     hw_files.write_ifb(out_dir, ifm_arr, H_IN, W_IN, Cin, HW_PE=16)
     hw_files.write_wb(out_dir, w_arr, bias_arr=bias_arr,
                       K=K, NUM_CIN=Cin, NUM_COUT=Cout, HW_PE=16, HW_COL=16)
-    hw_files.write_expected_ofm(out_dir, ofm_arr, H_OUT, W_OUT, Cout, HW_COL=16)
+    if emit_expected_ofm:
+        hw_files.write_expected_ofm(out_dir, ofm_arr, H_OUT, W_OUT, Cout, HW_COL=16)
 
     cfg_dict = hw_files.cfg_to_dict(
         cfg, shift_amt=sdp_shift,        # legacy SDP_SHIFT 字段用新的 shift
         sdp_mult=sdp_mult, sdp_zp_out=sdp_zp_out,
         sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
-        sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en)
+        sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
+        case_name=seed_label,
+        ddr_ifb_base=ddr_ifb_base, ddr_wb_base=ddr_wb_base,
+        ddr_ofb_base=ddr_ofb_base, ddr_desc_base=ddr_desc_base,
+        skip_ifb_preload=skip_ifb_preload, skip_ofb_clear=skip_ofb_clear)
     hw_files.write_config(out_dir, cfg_dict)
 
     n_desc, n_strips, strip_rows_eff = hw_files.write_descriptors(
@@ -204,9 +221,13 @@ def compile_and_emit_conv2d(
           f"{H_IN}x{W_IN} → {H_OUT}x{W_OUT}")
     print(f"  scales:  s_x={s_x:.5g}  s_w={s_w:.5g}  s_y={s_y:.5g}")
     print(f"  mult/shift: {sdp_mult} / {sdp_shift}  (M≈{sdp_mult/(1<<sdp_shift):.5g}, target={scale_ratio:.5g})")
-    print(f"  ranges:  x_q [{x_q.min().item()},{x_q.max().item()}]  "
-          f"w_q [{w_q.min().item()},{w_q.max().item()}]  "
-          f"b_q [{b_q.min().item()},{b_q.max().item()}]")
+    if x_q is not None:
+        print(f"  ranges:  x_q [{x_q.min().item()},{x_q.max().item()}]  "
+              f"w_q [{w_q.min().item()},{w_q.max().item()}]  "
+              f"b_q [{b_q.min().item()},{b_q.max().item()}]")
+    else:
+        print(f"  ranges:  x_int (override)  w_q [{w_q.min().item()},{w_q.max().item()}]  "
+              f"b_q [{b_q.min().item()},{b_q.max().item()}]")
 
     return {
         'K': K, 'stride': stride, 'pad': pad,

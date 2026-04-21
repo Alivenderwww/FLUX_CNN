@@ -112,7 +112,7 @@ def _tensor_to_list_bias(b_tensor):
 # ---------------------------------------------------------------------------
 def compile_and_emit_conv2d(
     conv, x_float, s_x, s_y,
-    out_dir=DEFAULT_OUT_DIR, streaming=False,
+    out_dir=DEFAULT_OUT_DIR, streaming=True,   # J-1: 硬件单一 streaming 路径
     seed_label="conv",
     ddr_ifb_base=None, ddr_wb_base=None,
     ddr_ofb_base=None, ddr_desc_base=None,

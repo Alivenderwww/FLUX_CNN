@@ -56,10 +56,10 @@ module ofb_writer #(
     input  logic signed [8:0]                    cfg_sdp_clip_max,
     input  logic                                 cfg_sdp_round_en,
 
-    // ---- Streaming 配置（v2） ----
-    // cfg_odma_streaming=1 时 OFB 变 ring；ofb_ptr 按 cfg_ofb_ring_words wrap；
-    // (rows_written - rows_drained >= cfg_ofb_strip_rows) 时反压 acc_out_ready=0
-    input  logic                                 cfg_odma_streaming,
+    // ---- Streaming 配置 (J-2 起恒启用) ----
+    // OFB 永远是 ring; ofb_ptr 按 cfg_ofb_ring_words wrap;
+    // (rows_written - rows_drained >= cfg_ofb_strip_rows) 时反压 acc_out_ready=0。
+    // 整图装得下时 strip=H_OUT ring_words 覆盖整图, wrap 不触发 (退化 batch)。
     input  logic [ADDR_W-1:0]                    cfg_ofb_ring_words,  // 环大小 in words
     input  logic [5:0]                           cfg_ofb_strip_rows,
     input  logic [15:0]                          rows_drained,       // 来自 ODMA
@@ -106,10 +106,9 @@ module ofb_writer #(
     // =========================================================================
     // 握手 + 边界
     // =========================================================================
-    // Streaming ring 反压：写满 strip_rows 行未被 ODMA 消费则停
+    // Ring 反压 (永启): 写满 strip_rows 行未被 ODMA 消费则停
     logic ring_full;
-    assign ring_full = cfg_odma_streaming &&
-                       ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
+    assign ring_full = ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
 
     logic acc_fire;
     assign acc_out_ready = (state == S_RUN) && !ring_full;
@@ -239,10 +238,8 @@ module ofb_writer #(
     always_ff @(posedge clk) begin
         if      (evt_start) ofb_ptr <= cfg_ofb_base;
         else if (acc_fire) begin
-            if (cfg_odma_streaming && (ofb_ptr == ofb_ptr_wrap_limit_m1))
-                ofb_ptr <= cfg_ofb_base;
-            else
-                ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
+            if (ofb_ptr == ofb_ptr_wrap_limit_m1) ofb_ptr <= cfg_ofb_base;
+            else                                  ofb_ptr <= ofb_ptr + {{(ADDR_W-1){1'b0}}, 1'b1};
         end
         else                ofb_ptr <= ofb_ptr;
     end

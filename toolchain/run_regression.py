@@ -40,49 +40,32 @@ OUTPUT_FILE = os.path.join(SIM_DIR, "regression_report.txt")
 #   pad : symmetric pad (top=bot=left=right)；0 = no pad
 # ---------------------------------------------------------------------------
 CASES = [
-    # --- Batch 模式 (基础 48x48) ---------------------------------------
-    ("K=3 C4C4   48x48 s=1",    "batch",  4,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C4C8   48x48 s=1",    "batch",  4,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C4   48x48 s=1",    "batch",  8,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C8   48x48 s=1",    "batch",  8,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C32  48x48 s=1",    "batch",  8, 32, 3, 48, 48, 1, 0, 0),
-    ("K=3 C16C16 48x48 s=1",    "batch", 16, 16, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C8  48x48 s=1",    "batch", 32,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C16 48x48 s=1",    "batch", 32, 16, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C32 48x48 s=1",    "batch", 32, 32, 3, 48, 48, 1, 0, 0),
-    # ("K=3 C64C16 48x48 s=1",    "batch", 64, 16, 3, 48, 48, 1, 0, 0),   # IFB 9216 > SRAM 8192，只能 stream
-    ("K=7 C8C8   48x48 s=1",    "batch",  8,  8, 7, 48, 48, 1, 2, 0),
-    ("K=7 C16C16 48x48 s=1",    "batch", 16, 16, 7, 48, 48, 1, 2, 0),
-    ("K=5 C16C16 48x48 s=2",    "batch", 16, 16, 5, 48, 48, 2, 1, 0),
-    ("K=5 C32C16 48x48 s=2",    "batch", 32, 16, 5, 48, 48, 2, 1, 0),
-    # --- Batch 模式 (padding: same-conv 保持尺寸) ----------------------
-    ("K=3 C8C8   48x48 s=1 p1", "batch",  8,  8, 3, 48, 48, 1, 0, 1),
-    ("K=3 C16C16 48x48 s=1 p1", "batch", 16, 16, 3, 48, 48, 1, 0, 1),
-    ("K=5 C16C16 48x48 s=1 p2", "batch", 16, 16, 5, 48, 48, 1, 1, 2),
-    ("K=7 C16C16 48x48 s=1 p3", "batch", 16, 16, 7, 48, 48, 1, 2, 3),
-
-    # --- Streaming 模式（基础 48x48） -----------------------------------
-    ("K=3 C4C4   48x48 s=1",    "stream",  4,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C4C8   48x48 s=1",    "stream",  4,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C4   48x48 s=1",    "stream",  8,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C8   48x48 s=1",    "stream",  8,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C16C16 48x48 s=1",    "stream", 16, 16, 3, 48, 48, 1, 0, 0),
-    ("K=7 C8C8   48x48 s=1",    "stream",  8,  8, 7, 48, 48, 1, 2, 0),
-    ("K=7 C16C16 48x48 s=1",    "stream", 16, 16, 7, 48, 48, 1, 2, 0),
-    ("K=5 C16C16 48x48 s=2",    "stream", 16, 16, 5, 48, 48, 2, 1, 0),
-    # --- Streaming 模式 (padding) ---------------------------------------
-    ("K=3 C8C8   48x48 s=1 p1", "stream",  8,  8, 3, 48, 48, 1, 0, 1),
-    ("K=3 C16C16 48x48 s=1 p1", "stream", 16, 16, 3, 48, 48, 1, 0, 1),
-    ("K=5 C16C16 48x48 s=1 p2", "stream", 16, 16, 5, 48, 48, 1, 1, 2),
-    ("K=7 C16C16 48x48 s=1 p3", "stream", 16, 16, 7, 48, 48, 1, 2, 3),
-    # --- Streaming 模式 (多 slice) --------------------------------------
-    ("K=3 C32C8  48x48 s=1",    "stream", 32,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C32  48x48 s=1",    "stream",  8, 32, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C32 48x48 s=1",    "stream", 32, 32, 3, 48, 48, 1, 0, 0),
-    ("K=3 C64C16 48x48 s=1",    "stream", 64, 16, 3, 48, 48, 1, 0, 0),
-    ("K=5 C32C16 48x48 s=2",    "stream", 32, 16, 5, 48, 48, 2, 1, 0),
-    # --- Streaming 模式 (大图 VGA，确认流式可扩展) -----------------------
-    ("K=3 C3C16  478x638 s=1",  "stream",  3, 16, 3, 480, 640, 1, 2, 0),
+    # J-1 起 batch/stream 数据路径统一（硬件单一 streaming engine），mode='conv'。
+    # 整图装得下 SRAM → strip_rows=H_IN（ring 不 wrap，等价原 batch 串行 latency）；
+    # 装不下 → strip 切小（ring-buffer 流式，IDMA/core/ODMA 并发，如 VGA）。
+    #
+    # --- 基础 48x48 -----------------------------------------------------
+    ("K=3 C4C4   48x48 s=1",    "conv",  4,  4, 3, 48, 48, 1, 0, 0),
+    ("K=3 C4C8   48x48 s=1",    "conv",  4,  8, 3, 48, 48, 1, 0, 0),
+    ("K=3 C8C4   48x48 s=1",    "conv",  8,  4, 3, 48, 48, 1, 0, 0),
+    ("K=3 C8C8   48x48 s=1",    "conv",  8,  8, 3, 48, 48, 1, 0, 0),
+    ("K=3 C8C32  48x48 s=1",    "conv",  8, 32, 3, 48, 48, 1, 0, 0),
+    ("K=3 C16C16 48x48 s=1",    "conv", 16, 16, 3, 48, 48, 1, 0, 0),
+    ("K=3 C32C8  48x48 s=1",    "conv", 32,  8, 3, 48, 48, 1, 0, 0),
+    ("K=3 C32C16 48x48 s=1",    "conv", 32, 16, 3, 48, 48, 1, 0, 0),
+    ("K=3 C32C32 48x48 s=1",    "conv", 32, 32, 3, 48, 48, 1, 0, 0),
+    ("K=3 C64C16 48x48 s=1",    "conv", 64, 16, 3, 48, 48, 1, 0, 0),
+    ("K=7 C8C8   48x48 s=1",    "conv",  8,  8, 7, 48, 48, 1, 2, 0),
+    ("K=7 C16C16 48x48 s=1",    "conv", 16, 16, 7, 48, 48, 1, 2, 0),
+    ("K=5 C16C16 48x48 s=2",    "conv", 16, 16, 5, 48, 48, 2, 1, 0),
+    ("K=5 C32C16 48x48 s=2",    "conv", 32, 16, 5, 48, 48, 2, 1, 0),
+    # --- Padding (same-conv 保持尺寸) ----------------------------------
+    ("K=3 C8C8   48x48 s=1 p1", "conv",  8,  8, 3, 48, 48, 1, 0, 1),
+    ("K=3 C16C16 48x48 s=1 p1", "conv", 16, 16, 3, 48, 48, 1, 0, 1),
+    ("K=5 C16C16 48x48 s=1 p2", "conv", 16, 16, 5, 48, 48, 1, 1, 2),
+    ("K=7 C16C16 48x48 s=1 p3", "conv", 16, 16, 7, 48, 48, 1, 2, 3),
+    # --- 大图 VGA (整图装不下 → strip 切小) ------------------------------
+    ("K=3 C3C16  478x638 s=1",  "conv",  3, 16, 3, 480, 640, 1, 2, 0),
 ]
 
 
@@ -92,8 +75,8 @@ CASES = [
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
-    streaming_flag = "--streaming" if mode == "stream" else ""
-    gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" {streaming_flag} "
+    # J-1: gen_isa_test.py 的 --streaming 默认 True，无需显式传
+    gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" "
                f"--num_cin {c_in} --num_cout {c_out} --k {k} "
                f"--h_in {h_in} --w_in {w_in} --stride {stride} "
                f"--shift {shift} --pad {pad} "
@@ -223,8 +206,8 @@ def main():
     parser.add_argument("--label", default="", help="Report label")
     parser.add_argument("--out",   default=OUTPUT_FILE, help="Output file")
     parser.add_argument("--only",  default="all",
-                        choices=["batch", "stream", "all"],
-                        help="Filter cases: batch/stream/all (default: all)")
+                        choices=["all"],
+                        help="(legacy option, J-1 起只有 conv 一种) default: all")
     parser.add_argument("--case",  default=None,
                         help="只跑 name 包含此子串的 case（大小写敏感）。例: --case C16C10")
     args = parser.parse_args()

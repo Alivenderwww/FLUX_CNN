@@ -172,14 +172,12 @@ module core_top #(
     logic signed [8:0]  cfg_sdp_zp_out, cfg_sdp_clip_min, cfg_sdp_clip_max;
     logic              cfg_sdp_round_en;
 
-    // Streaming / ring cfg 输出（v2 用；v1 默认 0 等价 batch）
+    // Streaming / ring cfg (J-2 起恒 streaming)
     logic [15:0]       cfg_h_in_total;
     logic [7:0]        cfg_ifb_strip_rows;
     logic [5:0]        cfg_ofb_strip_rows;
     logic [ADDR_W-1:0] cfg_ddr_ifm_row_stride;
     logic [ADDR_W-1:0] cfg_ddr_ofm_row_stride;
-    logic              cfg_idma_streaming;
-    logic              cfg_odma_streaming;
 
     // CTRL / STATUS
     logic              cfg_start_dfe_pulse, cfg_start_layer_pulse;
@@ -193,24 +191,19 @@ module core_top #(
     logic              seq_start_idma_pulse, seq_start_odma_pulse, seq_start_wdma_pulse;
     logic [15:0]       seq_strip_n_yout;
     logic [3:0]        seq_pad_top, seq_pad_bot, seq_pad_left, seq_pad_right;
-    logic              seq_streaming_en;
     logic [15:0]       seq_strip_y_start;
     logic [19:0]       seq_strip_ifb_ddr_offset, seq_strip_ofb_ddr_offset;
     logic [23:0]       seq_strip_ifb_byte_len, seq_strip_ofb_byte_len;
 
-    // IFB base 预扣 pad offset: cfg_ifb_base - pad_top × ky_step - pad_left × cin_slices
-    //   - Batch 模式: 直接减；越界由 SRAM 地址位宽截断 + is_pad 门控保证不乱读
-    //   - Streaming 模式: ring 容量有限 (cfg_ifb_ring_words)，必须 ring-aware 减法：
-    //       eff = cfg_ifb_base + ring_words - pad_offset  （保证落在 [0, 2×ring) 内，
-    //       wrap_addr 可单次 mod 到正确 ring 位置）
+    // IFB base 预扣 pad offset: ring-aware 减法
+    //   eff = cfg_ifb_base + ring_words - pad_offset (保证落在 [0, 2×ring) 内,
+    //   wrap_addr 可单次 mod 到正确 ring 位置)
     logic [ADDR_W-1:0] pad_offset;
     assign pad_offset = ({{(ADDR_W-20){1'b0}}, {12'd0, seq_pad_top} * cfg_ifb_ky_step[15:0]})
                       + ({{(ADDR_W-10){1'b0}}, seq_pad_left * cfg_cin_slices});
 
     logic [ADDR_W-1:0] eff_ifb_base;
-    assign eff_ifb_base = cfg_idma_streaming
-                        ? (cfg_ifb_base + cfg_ifb_ring_words - pad_offset)
-                        : (cfg_ifb_base - pad_offset);
+    assign eff_ifb_base = cfg_ifb_base + cfg_ifb_ring_words - pad_offset;
 
     // Per-strip DMA src_base / byte_len = 全局 base + descriptor offset
     logic [31:0]       eff_idma_src_base, eff_odma_dst_base;
@@ -264,8 +257,6 @@ module core_top #(
         .ofb_strip_rows(cfg_ofb_strip_rows),
         .ddr_ifm_row_stride(cfg_ddr_ifm_row_stride),
         .ddr_ofm_row_stride(cfg_ddr_ofm_row_stride),
-        .idma_streaming(cfg_idma_streaming),
-        .odma_streaming(cfg_odma_streaming),
         .idma_src_base(dma_idma_src_base), .idma_byte_len(dma_idma_byte_len),
         .wdma_src_base(dma_wdma_src_base), .wdma_byte_len(dma_wdma_byte_len),
         .odma_dst_base(dma_odma_dst_base), .odma_byte_len(dma_odma_byte_len),
@@ -303,7 +294,6 @@ module core_top #(
         .strip_pad_bot         (seq_pad_bot),
         .strip_pad_left        (seq_pad_left),
         .strip_pad_right       (seq_pad_right),
-        .strip_streaming_en    (seq_streaming_en),
         .strip_y_start         (seq_strip_y_start),
         .strip_ifb_ddr_offset  (seq_strip_ifb_ddr_offset),
         .strip_ifb_byte_len    (seq_strip_ifb_byte_len),
@@ -454,7 +444,6 @@ module core_top #(
         .cfg_pad_top      (seq_pad_top),
         .cfg_pad_left     (seq_pad_left),
         .cfg_h_in         (cfg_h_in_total),
-        .cfg_idma_streaming(cfg_idma_streaming),
         .ifb_re           (ifb_re),
         .ifb_raddr        (ifb_raddr),
         .ifb_rdata        (ifb_rdata),
@@ -603,7 +592,6 @@ module core_top #(
         .cfg_sdp_clip_min (cfg_sdp_clip_min),
         .cfg_sdp_clip_max (cfg_sdp_clip_max),
         .cfg_sdp_round_en (cfg_sdp_round_en),
-        .cfg_odma_streaming(cfg_odma_streaming),
         .cfg_ofb_ring_words(cfg_ofb_ring_words),
         .cfg_ofb_strip_rows(cfg_ofb_strip_rows),
         .rows_drained      (rows_drained),
@@ -694,7 +682,6 @@ module core_top #(
         .clk(clk), .rst_n(rst_n),
         .start(seq_start_idma_pulse), .done(idma_done), .busy(idma_busy),
         .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
-        .cfg_idma_streaming(cfg_idma_streaming),
         .cfg_h_in_total    (cfg_h_in_total),
         .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
         .cfg_ifb_ring_words(cfg_ifb_ring_words),
@@ -741,7 +728,6 @@ module core_top #(
         .clk(clk), .rst_n(rst_n),
         .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy),
         .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
-        .cfg_odma_streaming    (cfg_odma_streaming),
         .cfg_h_out_total       (cfg_h_out),
         .cfg_w_out             (cfg_w_out),
         .cfg_cout_slices       (cfg_cout_slices),

@@ -70,11 +70,10 @@ module line_buffer #(
     input  logic [3:0]                           cfg_pad_left,
     input  logic [15:0]                          cfg_h_in,     // 虚拟图像高度 (pad 前的有效输入行数)
 
-    // ---- Streaming 配置（v2） ----
-    // cfg_idma_streaming=1 时启用 ring wrap：每个 cin_slice 在 IFB 占
-    // cfg_ifb_ring_words = ifb_strip_rows × W_IN × cin_slices；pointer 推进时 mod 这个值
-    // 实现回卷。batch 模式下 (=0) 不 wrap，行为与 v1 完全一致。
-    input  logic                                 cfg_idma_streaming,
+    // ---- Streaming 配置（J-2 起统一 streaming）----
+    // cfg_ifb_ring_words = ifb_strip_rows × W_IN × cin_slices; pointer 推进时 mod
+    // 这个值实现回卷。整图装得下 SRAM 时 strip=H_IN, ring_words 覆盖整图, wrap
+    // 实际不触发 (退化成原 batch 行为)。
 
     // ---- IFB 读端口 ----
     output logic                                 ifb_re,
@@ -223,8 +222,9 @@ module line_buffer #(
                               : (rows_needed_signed > $signed({1'b0, cfg_h_in})) ? cfg_h_in
                               : rows_needed_signed[15:0];
 
+    // 永远 streaming: 等 IDMA 写满足 K 行后才 issue
     logic streaming_rows_ready;
-    assign streaming_rows_ready = !cfg_idma_streaming || (rows_available >= rows_needed);
+    assign streaming_rows_ready = (rows_available >= rows_needed);
 
     // =========================================================================
     // Issue 信号（两种模式）
@@ -446,15 +446,14 @@ module line_buffer #(
     // 5 层 running base（数据路径，无复位；evt_start 初始化）
     //   层级继承：外层进位时，内层 base 跟随外层新值重置；否则按自身步长推进。
     //
-    //   Streaming ring wrap（cfg_idma_streaming=1）：
+    //   Ring wrap (J-2 起恒启用)：
     //     NHWC 布局：每行含所有 cin_slice 的 word 相邻，跨 cin_slice 步长 = 1 word。
     //     ring wrap 模数 = cfg_ifb_ring_words = ifb_strip_rows × W_IN × cin_slices。
-    //   Batch 模式 (cfg_idma_streaming=0): wrap 函数 no-op，行为与 v1 完全一致。
+    //     整图装得下 SRAM 时 ring_words 覆盖整图, val 永远不跨边界 wrap 不触发。
     // =========================================================================
 
-    // 组合 wrap 函数：若启用 streaming 且 val 跨过 cin_step 边界，减去一份 cin_step
     function automatic logic [ADDR_W-1:0] wrap_addr(input logic [ADDR_W-1:0] val);
-        if (cfg_idma_streaming && val >= cfg_ifb_ring_words)
+        if (val >= cfg_ifb_ring_words)
             wrap_addr = val - cfg_ifb_ring_words;
         else
             wrap_addr = val;

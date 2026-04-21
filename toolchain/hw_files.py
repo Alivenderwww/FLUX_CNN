@@ -229,11 +229,14 @@ def _pack_desc(type_, flags, pad_t, pad_b, pad_l, pad_r,
 def write_descriptors(
     out_dir, H_IN, W_IN, H_OUT, W_OUT, cin_slices, cout_slices,
     pad_top, pad_bot, pad_left, pad_right,
-    strip_rows=0, streaming=False,
+    strip_rows=0, streaming=True,
 ):
     """
     写 desc_list.hex + append DESC_COUNT/DESC_LIST_BASE 到 config.txt。
     返回 n_desc（含 END）。
+
+    J-1 起单一数据路径 = streaming；streaming 参数保留为兼容参数，始终写
+    FLAG_STREAMING_EN (硬件也恒按 streaming 处理)。
     """
     strip_rows_eff = strip_rows if (strip_rows > 0 and strip_rows < H_OUT) else H_OUT
     n_strips = (H_OUT + strip_rows_eff - 1) // strip_rows_eff
@@ -263,10 +266,9 @@ def write_descriptors(
             ofb_off = strip_y_start * ofb_bytes_per_row
             ofb_len = n_yout * ofb_bytes_per_row * cout_slices
 
-        flags = 0
+        flags = FLAG_STREAMING_EN   # J-1: 恒 streaming
         if is_first:  flags |= FLAG_IS_FIRST
         if is_last:   flags |= FLAG_IS_LAST
-        if streaming: flags |= FLAG_STREAMING_EN
 
         descs.append(_pack_desc(
             TYPE_CONV, flags,
@@ -300,12 +302,15 @@ def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
 # ---------------------------------------------------------------------------
 def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
                      pad_top, pad_left, TILE_W=32, HW_PE=16, HW_COL=16,
-                     WRF_DEPTH=32, ARF_DEPTH=32, streaming=False,
-                     IFB_SRAM_WORDS=8192, OFB_SRAM_WORDS=8192):
+                     WRF_DEPTH=32, ARF_DEPTH=32,
+                     IFB_SRAM_WORDS=8192, OFB_SRAM_WORDS=8192,
+                     streaming=None):
     """
-    派生 conv layer 的所有硬件 cfg 字段。返回 dict，含：
-      派生 H/W/kk/slices/tile_w/num_tiles/last_valid_w/strip/pix_step/...
-    调用方添加 bases/SDP/DMA_MODE 等后写 config.txt。
+    派生 conv layer 的所有硬件 cfg 字段。返回 dict。
+
+    J-1 起，单一数据路径 = streaming。原 batch 模式是 "strip_rows=H_IN/H_OUT"
+    的退化情形（ring 容量覆盖整图 → 实际不 wrap）。`streaming` 参数保留仅为
+    向后兼容，当前 always treat as streaming。
     """
     pad_bot, pad_right = pad_top, pad_left
 
@@ -342,41 +347,37 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     wb_words  = kk * cout_slices * cin_slices + cout_slices   # +bias prefix
     ofb_words = H_OUT * W_OUT * cout_slices
 
-    # Streaming strip 计算
-    if streaming:
-        ifb_row_words = W_IN * cin_slices
-        ifb_strip_rows_max = IFB_SRAM_WORDS // ifb_row_words
-        ifb_strip_rows_min = K + 1
-        if ifb_strip_rows_max < ifb_strip_rows_min:
-            raise ValueError(
-                f"IFB SRAM 容量不足: W_IN*cin_slices={ifb_row_words}, "
-                f"max rows={ifb_strip_rows_max} < K+1={ifb_strip_rows_min}")
-        ifb_strip = min(ifb_strip_rows_min + 2, ifb_strip_rows_max, H_IN)
-
-        ofb_row_words_calc = W_OUT * cout_slices
-        ofb_strip_rows_max = OFB_SRAM_WORDS // ofb_row_words_calc
-        ofb_strip_rows_min = 2
-        if ofb_strip_rows_max < ofb_strip_rows_min:
-            raise ValueError(
-                f"OFB SRAM 容量不足: W_OUT*cout_slices={ofb_row_words_calc}, "
-                f"max rows={ofb_strip_rows_max} < 2")
-        ofb_strip = min(8, ofb_strip_rows_max, H_OUT)
-        sram_depth = 8192
-    else:
+    # Strip 计算（整图装得下 SRAM 就 strip=H_IN/H_OUT，退化为原 batch 行为；
+    # 装不下就按 SRAM 容量切小 strip，ring-buffer 流式跑）。
+    ifb_row_words = W_IN * cin_slices
+    ifb_strip_rows_max = IFB_SRAM_WORDS // ifb_row_words
+    ifb_strip_rows_min = K + 1
+    if ifb_strip_rows_max < ifb_strip_rows_min:
+        raise ValueError(
+            f"IFB SRAM 容量不足: W_IN*cin_slices={ifb_row_words}, "
+            f"max rows={ifb_strip_rows_max} < K+1={ifb_strip_rows_min}")
+    if H_IN <= ifb_strip_rows_max:
+        # 整图装得下：strip = 全图（ring 不 wrap，相当于原 batch 语义）
         ifb_strip = H_IN
-        ofb_strip = H_OUT
-        # 统一 8192 (与 streaming 一致；F-2 多 case 共享 -gSRAM_DEPTH，避免 case 间尺寸冲突)
-        sram_depth = 8192
-
-    # NHWC streaming 预算值
-    if streaming:
-        ifb_ring_words = ifb_strip * W_IN  * cin_slices
-        ofb_ring_words = ofb_strip * W_OUT * cout_slices
     else:
-        ifb_ring_words = H_IN  * W_IN  * cin_slices
-        ofb_ring_words = H_OUT * W_OUT * cout_slices
-    ofb_row_words = W_OUT * cout_slices
-    dma_mode     = 0x3 if streaming else 0x0
+        ifb_strip = min(ifb_strip_rows_min + 2, ifb_strip_rows_max)
+
+    ofb_row_words_calc = W_OUT * cout_slices
+    ofb_strip_rows_max = OFB_SRAM_WORDS // ofb_row_words_calc
+    if ofb_strip_rows_max < 2:
+        raise ValueError(
+            f"OFB SRAM 容量不足: W_OUT*cout_slices={ofb_row_words_calc}, "
+            f"max rows={ofb_strip_rows_max} < 2")
+    if H_OUT <= ofb_strip_rows_max:
+        ofb_strip = H_OUT
+    else:
+        ofb_strip = min(8, ofb_strip_rows_max)
+
+    sram_depth = 8192
+
+    ifb_ring_words = ifb_strip * W_IN  * cin_slices
+    ofb_ring_words = ofb_strip * W_OUT * cout_slices
+    ofb_row_words  = W_OUT * cout_slices
 
     return {
         # 尺寸 / slicing
@@ -397,8 +398,7 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         # 大小
         'ifb_words': ifb_words, 'wb_words': wb_words, 'ofb_words': ofb_words,
         'sram_depth': sram_depth,
-        # Streaming
-        'streaming': streaming, 'dma_mode': dma_mode,
+        # Ring / strip
         'ifb_strip': ifb_strip, 'ofb_strip': ofb_strip,
         'ifb_ring_words': ifb_ring_words, 'ofb_row_words': ofb_row_words,
         'ofb_ring_words': ofb_ring_words,
@@ -462,11 +462,11 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'PAD_TOP'        : cfg['pad_top'],
         'PAD_LEFT'       : cfg['pad_left'],
         'H_IN_TOTAL'     : cfg['H_IN'],
-        'IFB_STRIP_ROWS' : cfg['ifb_strip'] if cfg['streaming'] else 0,
-        'OFB_STRIP_ROWS' : cfg['ofb_strip'] if cfg['streaming'] else 0,
-        'DDR_IFM_ROW_STRIDE' : cfg['W_IN']  * cfg['cin_slices']  * 16 if cfg['streaming'] else 0,
-        'DDR_OFM_ROW_STRIDE' : cfg['W_OUT'] * cfg['cout_slices'] * 16 if cfg['streaming'] else 0,
-        'DMA_MODE'       : cfg['dma_mode'],
+        'IFB_STRIP_ROWS' : cfg['ifb_strip'],
+        'OFB_STRIP_ROWS' : cfg['ofb_strip'],
+        'DDR_IFM_ROW_STRIDE' : cfg['W_IN']  * cfg['cin_slices']  * 16,
+        'DDR_OFM_ROW_STRIDE' : cfg['W_OUT'] * cfg['cout_slices'] * 16,
+        'DMA_MODE'       : 3,   # 统一 streaming (J-1)
         'IFB_RING_WORDS' : cfg['ifb_ring_words'],
         'OFB_ROW_WORDS'  : cfg['ofb_row_words'],
         'OFB_RING_WORDS' : cfg['ofb_ring_words'],

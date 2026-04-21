@@ -52,7 +52,6 @@ module sequencer (
     output logic [3:0]          strip_pad_bot,
     output logic [3:0]          strip_pad_left,
     output logic [3:0]          strip_pad_right,
-    output logic                strip_streaming_en,
     output logic [15:0]         strip_y_start,
 
     // ---- Per-strip DMA 参数输出（给 core_top 组合成 IDMA/ODMA src_base/len） ----
@@ -84,23 +83,19 @@ module sequencer (
     localparam logic [3:0] TYPE_END     = 4'hF;
 
     // =========================================================================
-    // FSM
+    // FSM (J-2 起单一 streaming 数据路径)
     // =========================================================================
-    // Batch 模式三阶段顺序：PRELOAD (idma + wdma if is_first) → DISPATCH (core)
-    // → DISPATCH_ODMA。三阶段严格串行保证 IFB/WB SRAM 就位 / OFB SRAM 就位。
-    // Streaming 模式两阶段：PRELOAD (wdma if is_first) → DISPATCH (core+idma+odma 并发)。
-    //   IDMA 与 core 用 rows_available / rows_consumed 行级反压；
-    //   ODMA 与 core 用 row_done_pulse / rows_drained 行级反压。
+    // 两阶段: PRELOAD (wdma if is_first) → DISPATCH (core+wgt(is_first)+idma+odma 并发)
+    //   IDMA ↔ line_buffer 用 rows_available / rows_consumed 行级反压
+    //   ODMA ↔ ofb_writer  用 row_done_pulse / rows_drained 行级反压
     typedef enum logic [3:0] {
         S_IDLE         = 4'd0,
         S_FETCH        = 4'd1,
-        S_PRELOAD      = 4'd2,    // 发 wdma(is_first) + idma(batch only)，等完成
-        S_DISPATCH     = 4'd3,    // 发 core + wgt(is_first) (+ idma+odma if streaming)
-        S_WAIT         = 4'd4,    // 等 core (streaming 时也等 idma+odma)
-        S_DISPATCH_ODMA= 4'd5,    // batch 专用：core done 后发 odma
-        S_WAIT_ODMA    = 4'd6,    // batch 专用
-        S_BARRIER      = 4'd7,
-        S_END          = 4'd8
+        S_PRELOAD      = 4'd2,    // 发 wdma(is_first), 等完成
+        S_DISPATCH     = 4'd3,    // 并发启 core + wgt(is_first) + idma + odma
+        S_WAIT         = 4'd4,    // 等 core + idma + odma 全 done
+        S_BARRIER      = 4'd5,
+        S_END          = 4'd6
     } state_t;
     state_t state, state_next;
 
@@ -110,7 +105,7 @@ module sequencer (
     logic [3:0]   hd_type;
     logic         hd_is_first;
     logic         hd_is_last;
-    logic         hd_streaming_en;
+    // flags[6] FLAG_STREAMING_EN 历史字段; J-2 起恒 1, 硬件不再解析
     logic [3:0]   hd_pad_top, hd_pad_bot, hd_pad_left, hd_pad_right;
     logic [15:0]  hd_strip_y_start;
     logic [15:0]  hd_n_yout_strip;
@@ -122,7 +117,7 @@ module sequencer (
     assign hd_type           = fifo_rd_data[3:0];
     assign hd_is_first       = fifo_rd_data[4];
     assign hd_is_last        = fifo_rd_data[5];
-    assign hd_streaming_en   = fifo_rd_data[6];
+    // bit 6 = FLAG_STREAMING_EN, J-2 后废弃不读
     assign hd_pad_top        = fifo_rd_data[11:8];
     assign hd_pad_bot        = fifo_rd_data[15:12];
     assign hd_pad_left       = fifo_rd_data[19:16];
@@ -139,7 +134,6 @@ module sequencer (
     // =========================================================================
     logic [15:0]  r_strip_n_yout;
     logic [3:0]   r_pad_top, r_pad_bot, r_pad_left, r_pad_right;
-    logic         r_streaming_en;
     logic         r_is_first;
     logic [15:0]  r_strip_y_start;
     logic [19:0]  r_ifb_ddr_offset;
@@ -170,28 +164,16 @@ module sequencer (
                              default     : state_next = S_FETCH;
                          endcase
                      end
-            // PRELOAD 等 idma (batch only) + wdma (is_first only) 完成
-            S_PRELOAD : begin
-                logic wdma_ok, idma_ok;
-                wdma_ok = !r_is_first       || wdma_done;         // is_first 需要 wdma_done
-                idma_ok = r_streaming_en    || idma_strip_done;   // batch 需要 idma_done
-                if (wdma_ok && idma_ok)                   state_next = S_DISPATCH;
-            end
+            // PRELOAD 等 wdma (is_first only) 完成
+            S_PRELOAD : if (!r_is_first || wdma_done)       state_next = S_DISPATCH;
             S_DISPATCH: state_next = S_WAIT;
-            S_WAIT  : if (r_streaming_en) begin
-                         if (core_strip_done && idma_strip_done && odma_strip_done)
-                             state_next = S_FETCH;
-                      end else begin
-                         if (core_strip_done && idma_strip_done)
-                             state_next = S_DISPATCH_ODMA;
-                      end
-            S_DISPATCH_ODMA: state_next = S_WAIT_ODMA;
-            S_WAIT_ODMA    : if (odma_strip_done)           state_next = S_FETCH;
-            S_BARRIER: if (core_strip_done && idma_strip_done && odma_strip_done && wdma_done)
-                          state_next = S_FETCH;
-            S_END   : if (wdma_done && idma_strip_done && odma_strip_done)
-                          state_next = S_IDLE;
-            default :     state_next = S_IDLE;
+            S_WAIT    : if (core_strip_done && idma_strip_done && odma_strip_done)
+                            state_next = S_FETCH;
+            S_BARRIER : if (core_strip_done && idma_strip_done && odma_strip_done && wdma_done)
+                            state_next = S_FETCH;
+            S_END     : if (wdma_done && idma_strip_done && odma_strip_done)
+                            state_next = S_IDLE;
+            default   :     state_next = S_IDLE;
         endcase
     end
 
@@ -213,7 +195,6 @@ module sequencer (
             r_pad_bot         <= hd_pad_bot;
             r_pad_left        <= hd_pad_left;
             r_pad_right       <= hd_pad_right;
-            r_streaming_en    <= hd_streaming_en;
             r_is_first        <= hd_is_first;
             r_strip_y_start   <= hd_strip_y_start;
             r_ifb_ddr_offset  <= hd_ifb_ddr_offset;
@@ -238,13 +219,10 @@ module sequencer (
 
     assign start_core_pulse = (state == S_DISPATCH);
     assign start_wgt_pulse  = (state == S_DISPATCH) && r_is_first;
-    // IDMA: batch 模式 PRELOAD 进入时启，streaming 模式 DISPATCH 同拍启
-    assign start_idma_pulse = (preload_entry && !r_streaming_en) ||
-                              (state == S_DISPATCH && r_streaming_en);
-    // ODMA: streaming 模式 DISPATCH 同拍启，batch 模式 DISPATCH_ODMA 启
-    assign start_odma_pulse = (state == S_DISPATCH && r_streaming_en) ||
-                              (state == S_DISPATCH_ODMA);
-    // WDMA: is_first 时 PRELOAD 进入启（同拍 r_is_first 已 latch）
+    // J-2: IDMA / ODMA 同 DISPATCH 并发启动
+    assign start_idma_pulse = (state == S_DISPATCH);
+    assign start_odma_pulse = (state == S_DISPATCH);
+    // WDMA: is_first 时 PRELOAD 进入启 (同拍 r_is_first 已 latch)
     assign start_wdma_pulse = preload_entry && r_is_first;
 
     // =========================================================================
@@ -257,7 +235,6 @@ module sequencer (
     assign strip_pad_bot        = layer_busy ? r_pad_bot         : 4'd0;
     assign strip_pad_left       = layer_busy ? r_pad_left        : 4'd0;
     assign strip_pad_right      = layer_busy ? r_pad_right       : 4'd0;
-    assign strip_streaming_en   = layer_busy ? r_streaming_en    : 1'b0;
     assign strip_y_start        = layer_busy ? r_strip_y_start   : 16'd0;
     assign strip_ifb_ddr_offset = r_ifb_ddr_offset;
     assign strip_ifb_byte_len   = r_ifb_byte_len;

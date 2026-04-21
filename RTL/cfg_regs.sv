@@ -130,8 +130,8 @@ module cfg_regs #(
     output logic [5:0]               ofb_strip_rows,
     output logic [CORE_ADDR_W-1:0]   ddr_ifm_row_stride,
     output logic [CORE_ADDR_W-1:0]   ddr_ofm_row_stride,
-    output logic                     idma_streaming,
-    output logic                     odma_streaming,
+    // J-2: idma_streaming / odma_streaming outputs removed (hardware 恒 streaming).
+    // ADDR_DMA_MODE register 保留但硬件不读, 软件可写入无副作用。
 
     // ---- DMA 描述符输出（layer-level base；per-strip offset/len 由 Sequencer 叠加）----
     output logic [31:0]              idma_src_base,
@@ -382,8 +382,7 @@ module cfg_regs #(
     assign ofb_strip_rows     = r_ofb_strip_rows;
     assign ddr_ifm_row_stride = r_ddr_ifm_row_stride;
     assign ddr_ofm_row_stride = r_ddr_ofm_row_stride;
-    assign idma_streaming     = r_dma_mode_ctrl[0];
-    assign odma_streaming     = r_dma_mode_ctrl[1];
+    // J-2: r_dma_mode_ctrl 保留寄存器不 drive 输出 (硬件恒 streaming)
     assign idma_src_base   = r_idma_src_base;
     assign idma_byte_len   = r_idma_byte_len;
     assign wdma_src_base   = r_wdma_src_base;

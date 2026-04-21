@@ -34,8 +34,9 @@ def parse_args():
     p.add_argument('--tile_w',   type=int, default=32)
     p.add_argument('--seed',     type=int, default=42)
     p.add_argument('--shift',    type=int, default=0)
-    p.add_argument('--streaming', action='store_true',
-                   help='emit streaming-ring cfg')
+    # J-1: 硬件统一为 streaming 数据路径；flag 保留仅为兼容，默认 True
+    p.add_argument('--streaming', action='store_true', default=True,
+                   help='(deprecated, always streaming) emit streaming-ring cfg')
     p.add_argument('--pad',      type=int, default=0, help='symmetric pad')
     p.add_argument('--pad_top',  type=int, default=None)
     p.add_argument('--pad_left', type=int, default=None)

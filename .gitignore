@@ -38,6 +38,7 @@ toolchain/__pycache__/
 toolchain/**/__pycache__/
 toolchain/models/*.pt
 toolchain/models/*.pth
+toolchain/data/
 
 # F-2 多 case 生成物
 sim/tb_core_dma/cases/

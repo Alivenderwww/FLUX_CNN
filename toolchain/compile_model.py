@@ -26,6 +26,7 @@ import argparse
 
 import hw_files
 import compile_layer
+from model_zoo import MODELS, build_model
 
 
 _SCRIPT_DIR     = os.path.dirname(os.path.abspath(__file__))
@@ -53,17 +54,22 @@ def _align(x, a=ALIGN_BYTES):
 # Conv 链提取 + calibration
 # ---------------------------------------------------------------------------
 def _extract_conv_chain(model):
-    """遍历 model 按 forward 顺序提取 Conv2d；中间的 ReLU 隐式 => relu_en=1。"""
+    """
+    按 forward 顺序提取 Conv2d。返回 list of (conv, relu_en)。
+    若某 Conv2d 后紧跟 ReLU（中间可有 Identity 类无参模块），relu_en=True。
+    最后一个 Conv 之后无 ReLU → relu_en=False（分类 logits 层）。
+    """
     torch = compile_layer._require_torch()
-    convs = []
+    # 先按顺序收集 (kind, module)
+    flat = []
     def walk(m):
         for child in m.children():
-            if isinstance(child, torch.nn.Conv2d):
-                convs.append(child)
-            elif isinstance(child, torch.nn.ReLU):
-                continue
-            elif isinstance(child, (torch.nn.Sequential, torch.nn.ModuleList)):
+            if isinstance(child, (torch.nn.Sequential, torch.nn.ModuleList)):
                 walk(child)
+            elif isinstance(child, torch.nn.Conv2d):
+                flat.append(('conv', child))
+            elif isinstance(child, torch.nn.ReLU):
+                flat.append(('relu', child))
             elif len(list(child.children())) > 0:
                 walk(child)
             else:
@@ -71,6 +77,19 @@ def _extract_conv_chain(model):
                     f"compile_model: 暂不支持 {type(child).__name__}; "
                     f"当前只处理 Conv2d + ReLU 链")
     walk(model)
+
+    convs = []
+    i = 0
+    while i < len(flat):
+        kind, mod = flat[i]
+        if kind == 'conv':
+            has_relu = (i + 1 < len(flat) and flat[i+1][0] == 'relu')
+            convs.append((mod, has_relu))
+            i += 2 if has_relu else 1
+        elif kind == 'relu':
+            raise ValueError("出现孤立 ReLU（未跟在 Conv2d 后）")
+        else:
+            i += 1
     if not convs:
         raise ValueError("未找到任何 Conv2d")
     return convs
@@ -82,14 +101,14 @@ def _calibrate_activations(model, x):
     返回 (convs, scales[L+1], acts[L+1])。scales[k] = layer k 输入的对称量化 scale。
     """
     torch = compile_layer._require_torch()
-    convs = _extract_conv_chain(model)
+    conv_chain = _extract_conv_chain(model)   # [(conv, has_relu), ...]
     acts = []
     hooks = []
 
     def pre_hook(m, inp):
         acts.append(inp[0].detach().clone())
-    for c in convs:
-        hooks.append(c.register_forward_pre_hook(pre_hook))
+    for conv, _ in conv_chain:
+        hooks.append(conv.register_forward_pre_hook(pre_hook))
 
     def final_hook(m, inp, out):
         acts.append(out.detach().clone())
@@ -100,10 +119,10 @@ def _calibrate_activations(model, x):
     for h in hooks:
         h.remove()
 
-    if len(acts) != len(convs) + 1:
-        raise RuntimeError(f"calibration: acts={len(acts)} vs convs={len(convs)}+1")
+    if len(acts) != len(conv_chain) + 1:
+        raise RuntimeError(f"calibration: acts={len(acts)} vs convs={len(conv_chain)}+1")
     scales = [compile_layer.estimate_activation_scale(a) for a in acts]
-    return convs, scales, acts
+    return conv_chain, scales, acts
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +132,23 @@ def _plan_ddr(layer_cfgs):
     """
     输入每层 derive_layer_cfg；输出 list[dict] per layer:
       {ifb_base, ofb_base, wb_base, desc_base} (byte address)。
-    FM 共享：fm_bases[k+1] = layer k 的 OFB，也 = layer k+1 的 IFB。
+
+    FM 共享链：layer k 的 OFB 写到 fm_bases[k+1]，作为 layer k+1 的 IFB 读。
+    关键约束：fm_bases[k+1] - fm_bases[k] 必须 ≥ fm_size[k] (= layer k 的输入大小)，
+              否则 layer k 写 OFB 会覆盖自己还没读完的 IFB（streaming 下尤其致命）。
+              stride>1 的层 output size < input size，过去用 ofb_bytes 作步长会
+              让下层 OFB 落在本层 IFB 区间内 → DDR 被踩。
     """
     L = len(layer_cfgs)
     fm_bases = [DDR_FM_REGION_BASE]
+    # 第 0 个 FM (layer 0 输入) 大小 = L0 的 IFB bytes
+    cur_fm_size = (layer_cfgs[0]['H_IN'] * layer_cfgs[0]['W_IN']
+                   * layer_cfgs[0]['cin_slices'] * AXI_BYTES)
     for cfg in layer_cfgs:
-        ofb_bytes = cfg['H_OUT'] * cfg['W_OUT'] * cfg['cout_slices'] * AXI_BYTES
-        fm_bases.append(_align(fm_bases[-1] + ofb_bytes))
+        # layer k 的 IFB 占 fm_bases[k]..fm_bases[k]+cur_fm_size。下一层 OFB 必须跳过这整段。
+        fm_bases.append(_align(fm_bases[-1] + cur_fm_size))
+        # 下一个 FM (layer k 的 output = layer k+1 的 input)
+        cur_fm_size = cfg['H_OUT'] * cfg['W_OUT'] * cfg['cout_slices'] * AXI_BYTES
     if fm_bases[-1] > DDR_FM_REGION_LIMIT:
         raise ValueError(
             f"FM chain 超过 FM region: {fm_bases[-1]:#x} > {DDR_FM_REGION_LIMIT:#x}")
@@ -169,13 +198,13 @@ def compile_and_emit_model(
     """
     """
     torch = compile_layer._require_torch()
-    convs, scales, acts = _calibrate_activations(model, x_calib)
-    L = len(convs)
+    conv_chain, scales, acts = _calibrate_activations(model, x_calib)
+    L = len(conv_chain)
 
     # ---- Pass 1: derive 每层 cfg 拿尺寸 ----
     layer_cfgs = []
     h, w = x_calib.shape[2], x_calib.shape[3]
-    for k, conv in enumerate(convs):
+    for k, (conv, _relu) in enumerate(conv_chain):
         K      = conv.kernel_size[0]
         stride = conv.stride[0]
         pad    = conv.padding[0]
@@ -195,7 +224,7 @@ def compile_and_emit_model(
     # round 会有 off-by-1 偏差导致层间比对不一致
     os.makedirs(out_dir, exist_ok=True)
     summaries = []
-    for k, conv in enumerate(convs):
+    for k, (conv, relu_en) in enumerate(conv_chain):
         layer_out = (layer_dir_fn(k) if layer_dir_fn is not None
                      else os.path.join(out_dir, f"layer_{k:02d}"))
         ifm_override = summaries[k-1]['ofm_expected_q'] if k > 0 else None
@@ -211,7 +240,9 @@ def compile_and_emit_model(
             skip_ofb_clear  =(k < L - 1),
             emit_expected_ofm=(k == L - 1),
             ifm_int_override=ifm_override,
+            relu_en=relu_en,
         )
+        info['relu_en'] = relu_en
         info.update({
             'layer_idx': k, 'case_dir': layer_out,
             'is_first' : (k == 0), 'is_last' : (k == L - 1),
@@ -249,30 +280,6 @@ def compile_and_emit_model(
         json.dump(plan, f, indent=2)
     print(f"[compile_model] {model_name}: wrote {L} layers → {out_dir}")
     return summaries
-
-
-# ---------------------------------------------------------------------------
-# Model zoo
-# ---------------------------------------------------------------------------
-def _build_mnist2():
-    torch = compile_layer._require_torch()
-    torch.manual_seed(42)
-    model = torch.nn.Sequential(
-        torch.nn.Conv2d(1,  8, 3, padding=1, bias=True), torch.nn.ReLU(),
-        torch.nn.Conv2d(8, 16, 3, padding=1, bias=True), torch.nn.ReLU(),
-    )
-    x = torch.randn(1, 1, 48, 48)
-    return model, x, 2   # (model, calibration input, n_layers)
-
-MODELS = {
-    'mnist2': _build_mnist2,
-}
-
-
-def build_model(name):
-    if name not in MODELS:
-        raise ValueError(f"unknown model '{name}'; known: {list(MODELS.keys())}")
-    return MODELS[name]()
 
 
 # ---------------------------------------------------------------------------

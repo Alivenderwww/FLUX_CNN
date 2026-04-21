@@ -119,11 +119,14 @@ def compile_and_emit_conv2d(
     skip_ifb_preload=False, skip_ofb_clear=False,
     emit_expected_ofm=True,
     ifm_int_override=None,
+    relu_en=True,
 ):
     """
     ifm_int_override: [H_IN][W_IN][Cin] Python list of int. 非 None 时跳过对
         x_float 的 quantize，直接用这个整数输入算 expected_ofm 和写 ifb.txt。
         Phase G 多层：把上一层硬件 bit-exact 输出作为本层整数输入，避免层间 off-by-1。
+    relu_en: True → SDP 做 ReLU + clip 到 [0,127] (unsigned int8)；
+             False → 无 ReLU + clip 到 [-128,127] (signed int8)，用于分类 logits 层。
     """
     """
     单层 Conv2d 编译：量化 weight/bias/input，派生 mult/shift，写硬件文件。
@@ -163,12 +166,14 @@ def compile_and_emit_conv2d(
     w_arr    = _tensor_to_list4_weight(w_q)
     bias_arr = _tensor_to_list_bias(b_q)
 
-    # --- SDP cfg (int8 symmetric)：relu_en=1, zp_out=0, clip=[0,127] (ReLU+int8) ---
+    # --- SDP cfg (int8 symmetric) ---
+    # relu_en=1: post-ReLU → clip [0, 127] (非负 int8，供下层作 act 输入)
+    # relu_en=0: 无 ReLU    → clip [-128, 127] (signed int8 logits)，如分类网络最后一层
     sdp_zp_out   = 0
-    sdp_clip_min = 0           # ReLU post-clip: 输出限 [0, 127] (symmetric int8 + ReLU)
-    sdp_clip_max = 127
     sdp_round_en = 1
-    sdp_relu_en  = 1
+    sdp_relu_en  = 1 if relu_en else 0
+    sdp_clip_min = 0    if relu_en else -128
+    sdp_clip_max = 127                  # symmetric int8 上限固定 127
 
     # --- 派生 cfg ---
     cfg = hw_files.derive_layer_cfg(

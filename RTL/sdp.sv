@@ -50,6 +50,14 @@ module sdp #(
     logic signed [EXT_W-1:0]      act_ch   [0:NUM_COL-1];
     logic signed [EXT_W-1:0]      clip_ch  [0:NUM_COL-1];
 
+    // Sign-extend 9-bit signed cfg 到 EXT_W signed —— 必须通过 signed 变量保证比较走 signed 路径。
+    // 直接写 `{{(EXT_W-9){x[8]}}, x}` 会产生 unsigned concat，混进 signed 比较时 SV 会把两边都
+    // 当 unsigned 比，负值被当作巨大正值 → clip 误饱和（Phase H L4 relu_en=0 bug 根因）。
+    logic signed [EXT_W-1:0] zp_out_ext, clip_min_ext, clip_max_ext;
+    assign zp_out_ext   = EXT_W'(zp_out);     // SV: signed → 更宽 signed 自动 sign-extend
+    assign clip_min_ext = EXT_W'(clip_min);
+    assign clip_max_ext = EXT_W'(clip_max);
+
     logic signed [63:0] round_bias;
     assign round_bias = (round_en && shift_amt != 6'd0) ?
                         (64'sd1 <<< (shift_amt - 6'd1)) : 64'sd0;
@@ -67,19 +75,16 @@ module sdp #(
             round_ch[c]   = prod_ch[c] + round_bias;
             shifted_ch[c] = round_ch[c] >>> shift_amt;
 
-            // 4. Add output zero-point
-            q_zp_ch[c] = shifted_ch[c][EXT_W-1:0] + {{(EXT_W-9){zp_out[8]}}, zp_out};
+            // 4. Add output zero-point (signed add)
+            q_zp_ch[c] = shifted_ch[c][EXT_W-1:0] + zp_out_ext;
 
             // 5. ReLU (apply before clip)
             act_ch[c] = (relu_en && q_zp_ch[c] < 0) ? '0 : q_zp_ch[c];
 
-            // 6. Clip to [clip_min, clip_max]
-            if      (act_ch[c] < {{(EXT_W-9){clip_min[8]}}, clip_min})
-                clip_ch[c] = {{(EXT_W-9){clip_min[8]}}, clip_min};
-            else if (act_ch[c] > {{(EXT_W-9){clip_max[8]}}, clip_max})
-                clip_ch[c] = {{(EXT_W-9){clip_max[8]}}, clip_max};
-            else
-                clip_ch[c] = act_ch[c];
+            // 6. Clip to [clip_min, clip_max] (signed 比较)
+            if      (act_ch[c] < clip_min_ext) clip_ch[c] = clip_min_ext;
+            else if (act_ch[c] > clip_max_ext) clip_ch[c] = clip_max_ext;
+            else                               clip_ch[c] = act_ch[c];
 
             // 7. Truncate to 8-bit (signed int8 / or uint8 in legacy config)
             ofm_data[c*8 +: 8] = clip_ch[c][7:0];

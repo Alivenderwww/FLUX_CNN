@@ -91,7 +91,8 @@ CASES = [
 # 模型定义在 compile_model.py 的 MODELS dict；这里只声明名称+层数供 case 展开
 # ---------------------------------------------------------------------------
 MODEL_CASES = [
-    ("mnist2", "model", 2),
+    ("mnist2",         "model", 2),
+    ("mnist_allconv",  "model", 5),
 ]
 CASES += MODEL_CASES
 
@@ -284,10 +285,17 @@ def main():
     parser.add_argument("--only",  default="all",
                         choices=["batch", "stream", "model", "all"],
                         help="Filter cases: batch/stream/model/all (default: all)")
+    parser.add_argument("--case",  default=None,
+                        help="只跑 name 包含此子串的 case（大小写敏感）。例: --case C16C10")
     args = parser.parse_args()
     OUTPUT_FILE = args.out
 
     cases = [c for c in CASES if args.only == "all" or c[1] == args.only]
+    if args.case is not None:
+        cases = [c for c in cases if args.case in c[0]]
+        if not cases:
+            print(f"  no case name contains '{args.case}'; aborted.")
+            sys.exit(1)
     flat = flatten_cases(cases)
     n_cases = len(flat)
 

@@ -263,8 +263,11 @@ module line_buffer #(
     assign is_pad_now = cfg_arf_reuse_en ? is_pad_fill : is_pad;
 
     assign ifb_re    = issue_any && !is_pad_now;
-    assign ifb_raddr = cfg_arf_reuse_en ? (ptr_ky_base + fill_offset)
-                                        : (ptr_kx_base + iss_offset);
+    // ptr_*_base 已经是 ring-wrapped，但 +offset 可能再次跨 ring 边界，需再 wrap 一次
+    logic [ADDR_W-1:0] ifb_raddr_raw;
+    assign ifb_raddr_raw = cfg_arf_reuse_en ? (ptr_ky_base + fill_offset)
+                                            : (ptr_kx_base + iss_offset);
+    assign ifb_raddr     = wrap_addr(ifb_raddr_raw);
 
     // act_valid / act_vec
     //   reuse_en=0: fifo_count > 0 （原）

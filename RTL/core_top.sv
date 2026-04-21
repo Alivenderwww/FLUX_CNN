@@ -198,12 +198,19 @@ module core_top #(
     logic [19:0]       seq_strip_ifb_ddr_offset, seq_strip_ofb_ddr_offset;
     logic [23:0]       seq_strip_ifb_byte_len, seq_strip_ofb_byte_len;
 
-    // IFB base 预扣 pad offset: cfg_ifb_base - pad_top * w_in - pad_left
-    //   pad_top 4 bit × w_in 16 bit → 20 bit
+    // IFB base 预扣 pad offset: cfg_ifb_base - pad_top × ky_step - pad_left × cin_slices
+    //   - Batch 模式: 直接减；越界由 SRAM 地址位宽截断 + is_pad 门控保证不乱读
+    //   - Streaming 模式: ring 容量有限 (cfg_ifb_ring_words)，必须 ring-aware 减法：
+    //       eff = cfg_ifb_base + ring_words - pad_offset  （保证落在 [0, 2×ring) 内，
+    //       wrap_addr 可单次 mod 到正确 ring 位置）
+    logic [ADDR_W-1:0] pad_offset;
+    assign pad_offset = ({{(ADDR_W-20){1'b0}}, {12'd0, seq_pad_top} * cfg_ifb_ky_step[15:0]})
+                      + ({{(ADDR_W-10){1'b0}}, seq_pad_left * cfg_cin_slices});
+
     logic [ADDR_W-1:0] eff_ifb_base;
-    assign eff_ifb_base = cfg_ifb_base
-                        - ({{(ADDR_W-20){1'b0}}, {12'd0, seq_pad_top} * {4'd0, cfg_w_in}})
-                        - {{(ADDR_W-4){1'b0}}, seq_pad_left};
+    assign eff_ifb_base = cfg_idma_streaming
+                        ? (cfg_ifb_base + cfg_ifb_ring_words - pad_offset)
+                        : (cfg_ifb_base - pad_offset);
 
     // Per-strip DMA src_base / byte_len = 全局 base + descriptor offset
     logic [31:0]       eff_idma_src_base, eff_odma_dst_base;

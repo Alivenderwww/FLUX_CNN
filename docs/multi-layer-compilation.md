@@ -112,16 +112,37 @@ compile_and_emit_conv2d(..., ifm_int_override=ifm_override)
 ```bash
 cd toolchain
 
-# 只跑 model 回归（mnist2 2 层）
+# 训 MNIST all-conv 模型 (CPU ~2 分钟, 输出 toolchain/models/mnist_allconv.pt)
+.venv/Scripts/python.exe train_mnist.py
+
+# 只跑 model 回归（mnist2 2 层 + mnist_allconv 5 层）
 python run_regression.py --only model
 
-# 全回归（35 single + 2 model）
+# 全回归（35 single + 7 model layers）
 python run_regression.py
 
 # 单独调试 compile_model
-.venv/Scripts/python.exe compile_model.py --model mnist2 \
+.venv/Scripts/python.exe compile_model.py --model mnist_allconv \
     --sim-dir ../sim/tb_core_dma --start-idx 0
+
+# 回归 PASS 后验证 MNIST argmax (硬件 int8 vs PyTorch float vs true label)
+.venv/Scripts/python.exe validate_mnist.py
 ```
+
+## MNIST all-conv 模型
+
+不用 Pool，用 stride=2 conv 下采样；末层 K=7 pad=0 当 FC 等价：
+```
+Conv(1→16, K=3, pad=1, stride=1) + ReLU    28×28 → 28×28
+Conv(16→16, K=3, pad=1, stride=2) + ReLU   28×28 → 14×14
+Conv(16→16, K=3, pad=1, stride=1) + ReLU   14×14 → 14×14
+Conv(16→16, K=3, pad=1, stride=2) + ReLU   14×14 → 7×7
+Conv(16→10, K=7, pad=0, stride=1)          7×7  → 1×1  (分类 logits, 无 ReLU)
+```
+- CPU 训 8 epoch test_acc ≈ 98.9%
+- 硬件 bit-exact 匹配 `compute_expected_ofm` 的量化流水
+- 末层 `relu_en=0, clip=[-128,127]` signed int8 logits
+- argmax 和 PyTorch float forward 一致
 
 ## 当前范围 / 限制
 

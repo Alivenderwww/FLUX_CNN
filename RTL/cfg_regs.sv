@@ -24,7 +24,7 @@
 //   0x120  NUM_TILES         [7:0]
 //   0x124  LAST_VALID_W      [5:0]
 //   0x128  TOTAL_WRF         [9:0]
-//   0x12C  WRF_PACKED        [0]
+//   0x12C  (reserved, 原 WRF_PACKED 废弃)
 //   0x130  KK                [9:0]
 //   0x134  ROUNDS_PER_CINS   [2:0]
 //   0x138  ROUND_LEN_LAST    [5:0]
@@ -111,7 +111,6 @@ module cfg_regs #(
     output logic [7:0]               num_tiles,
     output logic [5:0]               last_valid_w,
     output logic [9:0]               total_wrf,
-    output logic                     wrf_packed,
     output logic [9:0]               kk,
     output logic [2:0]               rounds_per_cins,
     output logic [5:0]               round_len_last,
@@ -177,7 +176,7 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_NUM_TILES        = 12'h120;
     localparam [ADDR_W-1:0] ADDR_LAST_VALID_W     = 12'h124;
     localparam [ADDR_W-1:0] ADDR_TOTAL_WRF        = 12'h128;
-    localparam [ADDR_W-1:0] ADDR_WRF_PACKED       = 12'h12C;
+    // 0x12C reserved (原 WRF_PACKED, J 阶段 packed/chunked 统一后废弃)
     localparam [ADDR_W-1:0] ADDR_KK               = 12'h130;
     localparam [ADDR_W-1:0] ADDR_ROUNDS_PER_CINS  = 12'h134;
     localparam [ADDR_W-1:0] ADDR_ROUND_LEN_LAST   = 12'h138;
@@ -248,7 +247,6 @@ module cfg_regs #(
     logic [7:0]              r_num_tiles;
     logic [5:0]              r_last_valid_w;
     logic [9:0]              r_total_wrf;
-    logic                    r_wrf_packed;
     logic [9:0]              r_kk;
     logic [2:0]              r_rounds_per_cins;
     logic [5:0]              r_round_len_last;
@@ -302,7 +300,7 @@ module cfg_regs #(
                 ADDR_NUM_TILES       : r_num_tiles       <= reg_w_data[7:0];
                 ADDR_LAST_VALID_W    : r_last_valid_w    <= reg_w_data[5:0];
                 ADDR_TOTAL_WRF       : r_total_wrf       <= reg_w_data[9:0];
-                ADDR_WRF_PACKED      : r_wrf_packed      <= reg_w_data[0];
+                // 0x12C reserved
                 ADDR_KK              : r_kk              <= reg_w_data[9:0];
                 ADDR_ROUNDS_PER_CINS : r_rounds_per_cins <= reg_w_data[2:0];
                 ADDR_ROUND_LEN_LAST  : r_round_len_last  <= reg_w_data[5:0];
@@ -358,7 +356,6 @@ module cfg_regs #(
     assign num_tiles       = r_num_tiles;
     assign last_valid_w    = r_last_valid_w;
     assign total_wrf       = r_total_wrf;
-    assign wrf_packed      = r_wrf_packed;
     assign kk              = r_kk;
     assign rounds_per_cins = r_rounds_per_cins;
     assign round_len_last  = r_round_len_last;
@@ -422,7 +419,6 @@ module cfg_regs #(
             ADDR_NUM_TILES       : reg_r_data = {24'd0, r_num_tiles};
             ADDR_LAST_VALID_W    : reg_r_data = {26'd0, r_last_valid_w};
             ADDR_TOTAL_WRF       : reg_r_data = {22'd0, r_total_wrf};
-            ADDR_WRF_PACKED      : reg_r_data = {31'd0, r_wrf_packed};
             ADDR_KK              : reg_r_data = {22'd0, r_kk};
             ADDR_ROUNDS_PER_CINS : reg_r_data = {29'd0, r_rounds_per_cins};
             ADDR_ROUND_LEN_LAST  : reg_r_data = {26'd0, r_round_len_last};

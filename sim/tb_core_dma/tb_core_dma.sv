@@ -57,7 +57,6 @@ module tb_core_dma;
     localparam [11:0] ADDR_NUM_TILES        = 12'h120;
     localparam [11:0] ADDR_LAST_VALID_W     = 12'h124;
     localparam [11:0] ADDR_TOTAL_WRF        = 12'h128;
-    localparam [11:0] ADDR_WRF_PACKED       = 12'h12C;
     localparam [11:0] ADDR_KK               = 12'h130;
     localparam [11:0] ADDR_ROUNDS_PER_CINS  = 12'h134;
     localparam [11:0] ADDR_ROUND_LEN_LAST   = 12'h138;
@@ -275,7 +274,6 @@ module tb_core_dma;
                 "COUT_SLICES"    : axi_lite_write(ADDR_COUT_SLICES,     val);
                 "TILE_W"         : axi_lite_write(ADDR_TILE_W,          val);
                 "TOTAL_WRF"      : axi_lite_write(ADDR_TOTAL_WRF,       val);
-                "WRF_PACKED"     : axi_lite_write(ADDR_WRF_PACKED,      val);
                 "KK"             : axi_lite_write(ADDR_KK,              val);
                 "ROUNDS_PER_CINS": axi_lite_write(ADDR_ROUNDS_PER_CINS, val);
                 "ROUND_LEN_LAST" : axi_lite_write(ADDR_ROUND_LEN_LAST,  val);
@@ -380,9 +378,13 @@ module tb_core_dma;
     end
 
     // ================== Watchdog + main ==================
+    // 超时默认 2s sim time；run_regression.py 会通过 +TIMEOUT_NS=... plusarg 动态覆盖
     initial begin
-        #2_000_000_000;
-        $display("FATAL: timeout");
+        longint timeout_ns;
+        if (!$value$plusargs("TIMEOUT_NS=%d", timeout_ns)) timeout_ns = 2_000_000_000;
+        $display("[TB] watchdog timeout = %0d ns (%0d cycles @10ns)", timeout_ns, timeout_ns/10);
+        #(timeout_ns);
+        $display("FATAL: timeout after %0d ns", timeout_ns);
         $stop;
     end
 

@@ -7,7 +7,11 @@
       "Bash(ls -la \"C:\\\\_Project\\\\FLUX_CNN\\\\rtl\\\\core_ctrl\"*.sv)",
       "Bash(ls C:/_Project/FLUX_CNN/rtl/core_ctrl*.sv)",
       "Bash(vlib work *)",
-      "Bash(vlog -sv -work work -mfcu -suppress 2902 -f sim_file_list.f)"
+      "Bash(vlog -sv -work work -mfcu -suppress 2902 -f sim_file_list.f)",
+      "Bash(rm -rf work)",
+      "Bash(python gen_isa_test.py --k 3 --h_in 68 --w_in 120 --stride 1 --num_cin 8 --num_cout 8 --shift 0)",
+      "Bash(python gen_isa_test.py --k 7 --h_in 68 --w_in 120 --num_cin 8 --num_cout 8 --stride 1 --shift 2)",
+      "Bash(vsim -c -do run.tcl)"
     ]
   }
 }

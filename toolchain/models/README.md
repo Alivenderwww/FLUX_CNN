@@ -29,8 +29,7 @@ cd toolchain
 .venv/Scripts/python.exe models/dump_mnist_png.py -c 20  # 20 张 PNG
 
 # 跑推理
-.venv/Scripts/python.exe models/run_model.py \
-    --model mnist_allconv --image-dir models/images/mnist_test --limit 10
+.venv/Scripts/python.exe models/run_model.py --model mnist_allconv --image-dir models/images/mnist_test --limit 10
 ```
 
 报告写到 `models/model_report.txt`。

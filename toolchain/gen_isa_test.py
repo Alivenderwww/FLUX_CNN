@@ -85,8 +85,7 @@ def generate_random(
           f"TILE_W={cfg['TILE_W']}")
     print(f"Output : H_OUT={H_OUT}, W_OUT={W_OUT}, num_tiles={cfg['num_tiles']}, "
           f"last_valid_w={cfg['last_valid_w']}")
-    mode = 'packed' if cfg['wrf_packed'] else 'chunked'
-    print(f"Weight : total_wrf={cfg['total_wrf']}, mode={mode}, "
+    print(f"Weight : total_wrf={cfg['total_wrf']}, "
           f"rounds/cins={cfg['rounds_per_cins']}, round_len_last={cfg['round_len_last']}")
     print(f"SRAM   : IFB={cfg['ifb_words']}, WB={cfg['wb_words']}, OFB={cfg['ofb_words']} -> "
           f"SRAM_DEPTH={cfg['sram_depth']}")

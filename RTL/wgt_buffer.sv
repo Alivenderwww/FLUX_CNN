@@ -3,36 +3,32 @@
 // =============================================================================
 // wgt_buffer.sv  --  Weight Stream Feeder (WB → WRF → MAC)
 //
-// 两条路径由 cfg_wrf_packed 选择：
+// 单一路径 (cins-ahead 流水 load/compute 并行):
+//   状态机: S_IDLE → S_BIAS_LOAD → S_LOAD (冷启动填 round 0) → S_COMPUTE → S_DONE
 //
-// --- Packed (K²·cin_slices ≤ 32) ---
-//     S_IDLE → S_LOAD (一次 LOAD total_wrf 个) → S_COMPUTE → S_DONE
-//     COMPUTE 6 层循环 (yout, tile, cins, ky, kx, x)，wrf_raddr 走 running base
-//     wrf_base_kx = (cins·kk + ky·K + kx) 累加。
+// 两套独立指针并行:
+//   * compute ptr (x_cnt, pos_cnt, round_cnt, cins/tile/yout/cs_cnt)
+//     drive wrf_raddr = pos_cnt 和 wgt_valid；一个 pos 持续 cur_valid_w 拍。
+//   * load ptr    (l_pos, l_slots_done, l_round, l_cins, l_tile, l_yout, l_cs)
+//     drive wb_raddr / wrf_we / wrf_waddr；target = compute 的下一 round。
+//     l_pos 在 [0, l_cur_round_len) 内循环走；l_slots_done 跟踪写了多少 slot。
+//     起点 l_start_pos_next: 若下一 target round 比刚装完的长，从
+//     c_cur_round_len 开始 wrap（先写 compute 本 round 不读的高 slot，避免
+//     冲突）；否则从 0 顺序写。
 //
-// --- Chunked (K²·cin_slices > 32) ---  pipelined LOAD/COMPUTE overlap
-//     两套独立指针并行：
-//       * compute ptr (x_cnt, pos_cnt, round_cnt, cins/tile/yout/cs_cnt)
-//         drive wrf_raddr = pos_cnt 和 wgt_valid；一个 pos 持续 cur_valid_w 拍。
-//       * load ptr    (l_pos, l_slots_done, l_round, l_cins, l_tile, l_yout, l_cs)
-//         drive wb_raddr / wrf_we / wrf_waddr；target = compute 的下一 round。
-//         l_pos 在 [0, l_cur_round_len) 内循环走；l_slots_done 跟踪写了多少 slot。
-//         起点 l_start_pos_next: 若下一 target round 比刚装完的长，从
-//         c_cur_round_len 开始 wrap（先写 compute 本 round 不读的高 slot，避免
-//         冲突）；否则从 0 顺序写。
+// Hazard 规则（三选一）：
+//   (a) l_pos >= c_cur_round_len : compute 本 round 不读 slot l_pos，自由写。
+//   (b) pos_cnt > l_pos          : compute 已离开 slot l_pos。
+//   (c) pos_cnt == l_pos && x_is_last && wgt_fire：本拍 compute 读完 slot
+//       l_pos 的最后一 fire，下一 posedge cpos 推进，WRF[l_pos] 在 posedge
+//       t+2 写入时 compute 已在 l_pos+1。
 //
-//     状态机：S_IDLE → S_LOAD (冷启动填 round 0) → S_COMPUTE (compute+load 并行) → S_DONE
+// 同步状态 load_caught_up ∈ {0,1}。rounds_ahead = load_round - compute_round ∈ {1,2}。
+//   load_caught_up=0 ⇔ rounds_ahead=1 (load 正在装 compute 下一 round)
+//   load_caught_up=1 ⇔ rounds_ahead=2 (load 领先 2，等 compute 消费)
 //
-//     Hazard 规则（三选一）：
-//       (a) l_pos >= c_cur_round_len : compute 本 round 不读 slot l_pos，自由写。
-//       (b) pos_cnt > l_pos          : compute 已离开 slot l_pos。
-//       (c) pos_cnt == l_pos && x_is_last && wgt_fire：本拍 compute 读完 slot
-//           l_pos 的最后一 fire，下一 posedge cpos 推进，WRF[l_pos] 在 posedge
-//           t+2 写入时 compute 已在 l_pos+1。
-//
-//     同步状态 load_caught_up ∈ {0,1}。rounds_ahead = load_round - compute_round ∈ {1,2}。
-//       load_caught_up=0 ⇔ rounds_ahead=1 (load 正在装 compute 下一 round)
-//       load_caught_up=1 ⇔ rounds_ahead=2 (load 领先 2，等 compute 消费)
+// 权重布局: WB 按 (cs, cins, ky, kx) 顺序存, 每个 (yout, cs) 共 kk × cin_slices 个 word。
+// 每 tile 内 compute 遍历全部 cins × kk 个 pos, 下一 tile 同 cs 时 loader 重读 WB。
 // =============================================================================
 
 module wgt_buffer #(
@@ -41,7 +37,7 @@ module wgt_buffer #(
     parameter int DATA_WIDTH      = 8,
     parameter int PSUM_WIDTH      = 32,
     parameter int WRF_DEPTH       = 32,
-    parameter int MAX_COUT_SLICES = 16,    // BRF 深度，支持到 cout=256
+    parameter int MAX_COUT_SLICES = 32,    // BRF 深度，支持到 cout=512
     parameter int SRAM_DEPTH      = 8192,
     parameter int ADDR_W          = 20
 )(
@@ -60,7 +56,6 @@ module wgt_buffer #(
     input  logic [3:0]                           cfg_k,
     input  logic [9:0]                           cfg_kk,
     input  logic [9:0]                           cfg_total_wrf,
-    input  logic                                 cfg_wrf_packed,
     input  logic [2:0]                           cfg_rounds_per_cins,
     input  logic [5:0]                           cfg_round_len_last,
     input  logic [ADDR_W-1:0]                    cfg_wb_base,
@@ -94,8 +89,8 @@ module wgt_buffer #(
     typedef enum logic [2:0] {
         S_IDLE      = 3'd0,
         S_BIAS_LOAD = 3'd1,   // F-1b: 从 WB[0..cout_slices-1] 拉 bias 到 BRF
-        S_LOAD      = 3'd2,   // packed: 常规 LOAD；chunked: cold_load (仅整层首次)
-        S_COMPUTE   = 3'd3,   // packed: 常规 COMPUTE；chunked: compute+load 并行
+        S_LOAD      = 3'd2,   // cold load: 整层首次灌 round 0
+        S_COMPUTE   = 3'd3,   // compute + load 并行 (cins-ahead 流水)
         S_DONE      = 3'd4
     } state_t;
     state_t state, state_next;
@@ -103,21 +98,12 @@ module wgt_buffer #(
     // =========================================================================
     // 寄存器声明（按功能分组）
     // =========================================================================
-    // --- Compute 侧共享 counter（packed/chunked 都用）---
+    // --- Compute 侧 counter ---
     logic [5:0]  x_cnt;
     logic [5:0]  cins_cnt;
     logic [7:0]  tile_cnt;
     logic [15:0] yout_cnt;
     logic [5:0]  cs_cnt;
-
-    // --- Packed 专用 ---
-    logic [3:0]  kx_cnt;
-    logic [3:0]  ky_cnt;
-    logic [5:0]  wrf_base_cins;
-    logic [5:0]  wrf_base_ky;
-    logic [5:0]  wrf_base_kx;
-
-    // --- Chunked compute 专用 ---
     logic [5:0]  pos_cnt;
     logic [2:0]  round_cnt;
 
@@ -132,25 +118,25 @@ module wgt_buffer #(
     logic        l_exhausted;
     logic        load_caught_up;
 
-    // --- Packed/cold LOAD 阶段计数 + 1 拍延迟副本 ---
+    // --- cold LOAD 阶段计数 + 1 拍延迟副本 ---
     logic [9:0]  wb_rd_cnt;
     logic [9:0]  wrf_wr_cnt;
-    logic        wb_re_d1;       // for S_LOAD (packed & cold)
-    logic        l_wb_re_d1;     // for chunked run 路径
+    logic        wb_re_d1;       // for S_LOAD cold load
+    logic        l_wb_re_d1;     // for chunked 运行路径
     logic [WAW-1:0] l_wrf_waddr_d1;
 
     // --- Running base ---
-    logic [ADDR_W-1:0] cur_wb_base_cs;   // compute 侧 cs base（两路径都用）
-    logic [ADDR_W-1:0] cur_wb_rd_base;   // packed cold-load 的 WB 起点
-    logic [ADDR_W-1:0] l_wb_base;        // chunked load 的当前 round 起点
-    logic [ADDR_W-1:0] l_wb_base_cs;     // chunked load 侧 cs base
+    logic [ADDR_W-1:0] cur_wb_rd_base;   // cold-load 的 WB 起点
+    logic [ADDR_W-1:0] l_wb_base;        // load 侧当前 round 起点
+    logic [ADDR_W-1:0] l_wb_base_cs;     // load 侧 cs base
 
     // --- F-1b: BRF + bias load 阶段 ---
     //   WB SRAM 前缀布局：[0..cout_slices-1] 放 bias (每 word 低 NUM_COL×32bit 放 16 个 int32)
     //   S_BIAS_LOAD 扫 cout_slices 次 wb_re，1 拍延后把 wb_rdata 低 512bit 写入 BRF[bias_wr_idx_d1]
     //   COMPUTE 阶段 bias_vec 输出 = BRF[cs_cnt] 组合读（NUM_COL 个 int32 打包）
     localparam int BIAS_IDX_W = $clog2(MAX_COUT_SLICES);
-    logic [BIAS_IDX_W-1:0]           bias_load_cnt;
+    // bias_load_cnt 比 BRF index 宽 1 bit, 需要能到达 MAX_COUT_SLICES (停止条件)
+    logic [BIAS_IDX_W:0]             bias_load_cnt;
     logic [BIAS_IDX_W-1:0]           bias_wr_idx_d1;
     logic                            bias_re_gate;
     logic                            bias_re_d1;
@@ -168,8 +154,8 @@ module wgt_buffer #(
     assign c_cur_round_len = (round_cnt == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : 6'd32;
     assign l_cur_round_len = (l_round   == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : 6'd32;
 
-    logic [9:0] cur_load_len;       // packed 一次 LOAD total_wrf；cold_load 灌 round 0
-    assign cur_load_len = cfg_wrf_packed ? cfg_total_wrf : {4'd0, c_cur_round_len};
+    logic [9:0] cur_load_len;       // cold_load 灌 round 0
+    assign cur_load_len = {4'd0, c_cur_round_len};
 
     // =========================================================================
     // 边界 flag
@@ -182,12 +168,6 @@ module wgt_buffer #(
     assign yout_is_last = (yout_cnt == cfg_h_out         - 16'd1);
     assign cs_is_last   = (cs_cnt   == cfg_cout_slices   - 6'd1);
 
-    // Packed-only
-    logic kx_is_last, ky_is_last;
-    assign kx_is_last = (kx_cnt == cfg_k - 4'd1);
-    assign ky_is_last = (ky_cnt == cfg_k - 4'd1);
-
-    // Chunked compute-only
     logic pos_is_last, round_is_last;
     assign pos_is_last   = (pos_cnt   == c_cur_round_len     - 6'd1);
     assign round_is_last = (round_cnt == cfg_rounds_per_cins - 3'd1);
@@ -220,9 +200,7 @@ module wgt_buffer #(
     // 当前 (yout, cs) 的 COMPUTE 打完最后一拍（方式 1：cs 在 yout 内）
     // 去掉 yout_is_last，每个 (yout, cs) 扫完就触发
     logic cs_compute_last;
-    assign cs_compute_last = cfg_wrf_packed
-        ? (x_is_last && kx_is_last  && ky_is_last    && cins_is_last && tile_is_last)
-        : (x_is_last && pos_is_last && round_is_last && cins_is_last && tile_is_last);
+    assign cs_compute_last = (x_is_last && pos_is_last && round_is_last && cins_is_last && tile_is_last);
 
     // =========================================================================
     // 握手 / hazard / gate
@@ -235,17 +213,22 @@ module wgt_buffer #(
     assign sload_wb_re_gate = (state == S_LOAD) && (wb_rd_cnt < cur_load_len);
 
     // S_BIAS_LOAD 阶段的 WB 读 gate：bias_load_cnt 扫 0..cfg_cout_slices-1
-    assign bias_re_gate   = (state == S_BIAS_LOAD) && ({1'b0, bias_load_cnt} < cfg_cout_slices);
-    assign bias_load_done = (state == S_BIAS_LOAD) && ({1'b0, bias_load_cnt} == cfg_cout_slices);
+    //   bias_load_cnt 位宽 = BIAS_IDX_W+1, 和 cfg_cout_slices (6 bit) 对齐做比较
+    assign bias_re_gate   = (state == S_BIAS_LOAD) && (bias_load_cnt < cfg_cout_slices);
+    assign bias_load_done = (state == S_BIAS_LOAD) && (bias_load_cnt == cfg_cout_slices);
 
-    // Chunked run 阶段 hazard 判定
+    // 前向声明 (ff 在事件定义后):
+    // round_wrap 下一拍插 bubble, compute 停 1 拍等 WRF 写完成 (2 拍流水)
+    logic wgt_bubble;
+
+    // Chunked run 阶段 hazard 判定 (只允许 compute fire 时放行 loader)
     logic chunked_hazard_ok;
     assign chunked_hazard_ok = (l_pos >= c_cur_round_len)
                             || (pos_cnt >  l_pos)
                             || (pos_cnt == l_pos && x_is_last && wgt_fire);
 
     logic chunked_load_active;
-    assign chunked_load_active = !cfg_wrf_packed && (state == S_COMPUTE)
+    assign chunked_load_active = (state == S_COMPUTE)
                                  && !l_exhausted && !load_caught_up
                                  && chunked_hazard_ok;
 
@@ -256,50 +239,49 @@ module wgt_buffer #(
     // 命名事件（comb）
     //   evt_start             : IDLE 捕获 start
     //   evt_cold_load_done    : S_LOAD → S_COMPUTE 切换当拍
-    //   evt_pk_*              : packed compute 侧各级 wrap 链
-    //   evt_ck_*              : chunked compute 侧各级 wrap 链
-    //   evt_ld / evt_ld_*     : chunked load 侧 wb_re 和跨 round 链
+    //   evt_c_*               : compute 侧各级 wrap 链
+    //   evt_ld / evt_ld_*     : load 侧 wb_re 和跨 round 链
     // =========================================================================
     logic evt_start;
     logic evt_cold_load_done;
 
-    logic evt_pk_fire, evt_pk_x_wrap, evt_pk_kx_wrap, evt_pk_ky_wrap;
-    logic evt_pk_cins_wrap, evt_pk_tile_wrap, evt_pk_cs_wrap, evt_pk_yout_wrap;
-
-    logic evt_ck_fire, evt_ck_x_wrap, evt_ck_pos_wrap, evt_ck_round_wrap;
-    logic evt_ck_cins_wrap, evt_ck_tile_wrap, evt_ck_cs_wrap, evt_ck_yout_wrap;
+    logic evt_c_fire, evt_c_x_wrap, evt_c_pos_wrap, evt_c_round_wrap;
+    logic evt_c_cins_wrap, evt_c_tile_wrap, evt_c_cs_wrap, evt_c_yout_wrap;
 
     logic evt_ld, evt_ld_round_end;
-    logic evt_ld_round_wrap, evt_ld_cins_wrap, evt_ld_tile_wrap, evt_ld_yout_wrap;
+    logic evt_ld_round_wrap, evt_ld_cins_wrap, evt_ld_tile_wrap, evt_ld_cs_wrap, evt_ld_yout_wrap;
 
     always_comb begin
         evt_start          = ((state == S_IDLE) || (state == S_DONE)) && start;
         evt_cold_load_done = (state == S_LOAD) && sload_done;
 
-        evt_pk_fire       =  cfg_wrf_packed && (state == S_COMPUTE) && wgt_fire;
-        evt_pk_x_wrap     = evt_pk_fire    && x_is_last;
-        evt_pk_kx_wrap    = evt_pk_x_wrap  && kx_is_last;
-        evt_pk_ky_wrap    = evt_pk_kx_wrap && ky_is_last;
-        evt_pk_cins_wrap  = evt_pk_ky_wrap && cins_is_last;
-        evt_pk_tile_wrap  = evt_pk_cins_wrap && tile_is_last;
-        evt_pk_cs_wrap    = evt_pk_tile_wrap && cs_is_last;
-        evt_pk_yout_wrap  = evt_pk_cs_wrap   && yout_is_last;
+        evt_c_fire        = (state == S_COMPUTE) && wgt_fire;
+        evt_c_x_wrap      = evt_c_fire     && x_is_last;
+        evt_c_pos_wrap    = evt_c_x_wrap   && pos_is_last;
+        evt_c_round_wrap  = evt_c_pos_wrap && round_is_last;
+        evt_c_cins_wrap   = evt_c_round_wrap && cins_is_last;
+        evt_c_tile_wrap   = evt_c_cins_wrap  && tile_is_last;
+        evt_c_cs_wrap     = evt_c_tile_wrap  && cs_is_last;
+        evt_c_yout_wrap   = evt_c_cs_wrap    && yout_is_last;
 
-        evt_ck_fire       = !cfg_wrf_packed && (state == S_COMPUTE) && wgt_fire;
-        evt_ck_x_wrap     = evt_ck_fire    && x_is_last;
-        evt_ck_pos_wrap   = evt_ck_x_wrap  && pos_is_last;
-        evt_ck_round_wrap = evt_ck_pos_wrap && round_is_last;
-        evt_ck_cins_wrap  = evt_ck_round_wrap && cins_is_last;
-        evt_ck_tile_wrap  = evt_ck_cins_wrap && tile_is_last;
-        evt_ck_cs_wrap    = evt_ck_tile_wrap && cs_is_last;
-        evt_ck_yout_wrap  = evt_ck_cs_wrap   && yout_is_last;
-
+        // Load 侧嵌套必须与 compute 一致: yout 外 → cs → tile → cins → round → pos
         evt_ld             = chunked_load_active;
         evt_ld_round_end   = evt_ld              && l_round_done;
         evt_ld_round_wrap  = evt_ld_round_end    && l_round_is_last;
         evt_ld_cins_wrap   = evt_ld_round_wrap   && l_cins_is_last;
         evt_ld_tile_wrap   = evt_ld_cins_wrap    && l_tile_is_last;
-        evt_ld_yout_wrap   = evt_ld_tile_wrap    && l_yout_is_last;
+        evt_ld_cs_wrap     = evt_ld_tile_wrap    && l_cs_is_last;
+        evt_ld_yout_wrap   = evt_ld_cs_wrap      && l_yout_is_last;
+    end
+
+    // round_wrap 下一拍 compute 停 1 拍, 给 WRF 2-拍写流水完成.
+    // 仅在 c_cur_round_len == 1 (K=1) 时必要: WRF 单 slot, loader 写和 compute 读撞同一地址;
+    // round_len ≥ 2 场景下 compute 在 round_wrap 后回到 pos=0 读的 WRF[0] 早在若干拍前就被
+    // loader 写好, 不存在 hazard, 无需 bubble.
+    always_ff @(posedge clk or negedge rst_n) begin
+        if      (!rst_n)                                  wgt_bubble <= 1'b0;
+        else if (evt_start || evt_cold_load_done)         wgt_bubble <= 1'b0;
+        else                                              wgt_bubble <= evt_c_round_wrap && (c_cur_round_len == 6'd1);
     end
 
     // =========================================================================
@@ -310,7 +292,7 @@ module wgt_buffer #(
     assign wb_raddr_srun  = l_wb_base      + {{(ADDR_W-6) {1'b0}}, l_pos};
 
     assign wb_re    = sload_wb_re_gate | chunked_load_active | bias_re_gate;
-    assign wb_raddr = bias_re_gate        ? {{(AW-BIAS_IDX_W){1'b0}}, bias_load_cnt}
+    assign wb_raddr = bias_re_gate        ? {{(AW-BIAS_IDX_W-1){1'b0}}, bias_load_cnt}
                     : chunked_load_active ? wb_raddr_srun[AW-1:0]
                                           : wb_raddr_sload[AW-1:0];
 
@@ -318,8 +300,8 @@ module wgt_buffer #(
     assign wrf_waddr = l_wb_re_d1 ? l_wrf_waddr_d1 : wrf_wr_cnt[WAW-1:0];
     assign wrf_wdata = wb_rdata;
 
-    assign wgt_valid = (state == S_COMPUTE);
-    assign wrf_raddr = cfg_wrf_packed ? wrf_base_kx[WAW-1:0] : pos_cnt[WAW-1:0];
+    assign wgt_valid = (state == S_COMPUTE) && !wgt_bubble;
+    assign wrf_raddr = pos_cnt[WAW-1:0];
 
     // F-2 多 case：start 同拍 done 立即掉 0
     assign done = (state == S_DONE) && !start;
@@ -333,11 +315,8 @@ module wgt_buffer #(
             S_IDLE      : if (start)          state_next = S_BIAS_LOAD;
             S_BIAS_LOAD : if (bias_load_done) state_next = S_LOAD;
             S_LOAD      : if (sload_done)     state_next = S_COMPUTE;
-            S_COMPUTE   : if (wgt_fire && cs_compute_last) begin
-                // 方式 1：每 (yout, cs) 扫完；packed 都要重 LOAD 下一 (yout, cs)
-                state_next = (yout_is_last && cs_is_last) ? S_DONE
-                           : (cfg_wrf_packed ? S_LOAD : S_COMPUTE);
-            end
+            S_COMPUTE   : if (wgt_fire && cs_compute_last && yout_is_last && cs_is_last)
+                                              state_next = S_DONE;
             S_DONE      : if (start)          state_next = S_BIAS_LOAD;  // 多 case 重入
             default     :                     state_next = S_IDLE;
         endcase
@@ -365,7 +344,7 @@ module wgt_buffer #(
             bias_wr_idx_d1 <= '0;
         end else begin
             bias_re_d1     <= bias_re_gate;
-            bias_wr_idx_d1 <= bias_load_cnt;
+            bias_wr_idx_d1 <= bias_load_cnt[BIAS_IDX_W-1:0];
         end
     end
 
@@ -427,122 +406,60 @@ module wgt_buffer #(
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                               x_cnt <= '0;
         else if (evt_start || evt_cold_load_done)      x_cnt <= '0;
-        else if (evt_pk_x_wrap || evt_ck_x_wrap)       x_cnt <= '0;
-        else if (evt_pk_fire   || evt_ck_fire)         x_cnt <= x_cnt + 6'd1;
+        else if (evt_c_x_wrap)                         x_cnt <= '0;
+        else if (evt_c_fire)                           x_cnt <= x_cnt + 6'd1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                 cins_cnt <= '0;
         else if (evt_start || evt_cold_load_done)        cins_cnt <= '0;
-        else if (evt_pk_cins_wrap || evt_ck_cins_wrap)   cins_cnt <= '0;
-        else if (evt_pk_ky_wrap)                         cins_cnt <= cins_cnt + 6'd1;
-        else if (evt_ck_round_wrap)                      cins_cnt <= cins_cnt + 6'd1;
+        else if (evt_c_cins_wrap)                        cins_cnt <= '0;
+        else if (evt_c_round_wrap)                       cins_cnt <= cins_cnt + 6'd1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                 tile_cnt <= '0;
         else if (evt_start || evt_cold_load_done)        tile_cnt <= '0;
-        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)   tile_cnt <= '0;
-        else if (evt_pk_cins_wrap || evt_ck_cins_wrap)   tile_cnt <= tile_cnt + 8'd1;
+        else if (evt_c_tile_wrap)                        tile_cnt <= '0;
+        else if (evt_c_cins_wrap)                        tile_cnt <= tile_cnt + 8'd1;
     end
 
-    // yout_cnt 是外层 loop，只能在 evt_start / yout_wrap 重置；
-    // 原代码把 evt_cold_load_done 也纳入重置条件 —— 这在 chunked 冷启动时只触发一次没问题，
-    // 但 packed 模式每 (yout, cs) 都重 LOAD 一次 → S_LOAD→S_COMPUTE 每次都 fire，
-    // 会把 yout_cnt 不停清 0，yout 永远卡在 0。只有 start（跨 case）和 yout wrap 才清零。
+    // yout_cnt 外层 loop: start (跨 case) 和 yout_wrap 时清零
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                 yout_cnt <= '0;
         else if (evt_start)                              yout_cnt <= '0;
-        else if (evt_pk_yout_wrap || evt_ck_yout_wrap)   yout_cnt <= '0;
-        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)     yout_cnt <= yout_cnt + 16'd1;
+        else if (evt_c_yout_wrap)                        yout_cnt <= '0;
+        else if (evt_c_cs_wrap)                          yout_cnt <= yout_cnt + 16'd1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                                  cs_cnt <= '0;
         else if (evt_start)                                               cs_cnt <= '0;
-        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)                      cs_cnt <= '0;
-        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)                    cs_cnt <= cs_cnt + 6'd1;
+        else if (evt_c_cs_wrap)                                           cs_cnt <= '0;
+        else if (evt_c_tile_wrap)                                         cs_cnt <= cs_cnt + 6'd1;
     end
 
     // =========================================================================
-    // Packed-only counter
-    // =========================================================================
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)              kx_cnt <= '0;
-        else if (evt_cold_load_done)  kx_cnt <= '0;
-        else if (evt_pk_kx_wrap)      kx_cnt <= '0;
-        else if (evt_pk_x_wrap)       kx_cnt <= kx_cnt + 4'd1;
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)              ky_cnt <= '0;
-        else if (evt_cold_load_done)  ky_cnt <= '0;
-        else if (evt_pk_ky_wrap)      ky_cnt <= '0;
-        else if (evt_pk_kx_wrap)      ky_cnt <= ky_cnt + 4'd1;
-    end
-
-    // Packed wrf_base_* running base（cins/ky/kx 三级）
-    logic [5:0] kk_lo6, k_lo6;
-    assign kk_lo6 = cfg_kk[5:0];
-    assign k_lo6  = {2'd0, cfg_k};
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                    wrf_base_cins <= '0;
-        else if (evt_cold_load_done)                        wrf_base_cins <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_cins <= '0;
-        else if (evt_pk_ky_wrap)                            wrf_base_cins <= wrf_base_cins + kk_lo6;
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                    wrf_base_ky <= '0;
-        else if (evt_cold_load_done)                        wrf_base_ky <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_ky <= '0;
-        else if (evt_pk_ky_wrap)                            wrf_base_ky <= wrf_base_cins + kk_lo6;
-        else if (evt_pk_kx_wrap)                            wrf_base_ky <= wrf_base_ky + k_lo6;
-    end
-
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                    wrf_base_kx <= '0;
-        else if (evt_cold_load_done)                        wrf_base_kx <= '0;
-        else if (evt_pk_cins_wrap || evt_pk_tile_wrap)                          wrf_base_kx <= '0;
-        else if (evt_pk_ky_wrap)                            wrf_base_kx <= wrf_base_cins + kk_lo6;
-        else if (evt_pk_kx_wrap)                            wrf_base_kx <= wrf_base_ky + k_lo6;
-        else if (evt_pk_x_wrap)                             wrf_base_kx <= wrf_base_kx + 6'd1;
-    end
-
-    // =========================================================================
-    // Chunked compute-only counter
+    // Compute-only counter (pos / round)
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)              pos_cnt <= '0;
         else if (evt_cold_load_done)  pos_cnt <= '0;
-        else if (evt_ck_pos_wrap)     pos_cnt <= '0;
-        else if (evt_ck_x_wrap)       pos_cnt <= pos_cnt + 6'd1;
+        else if (evt_c_pos_wrap)      pos_cnt <= '0;
+        else if (evt_c_x_wrap)        pos_cnt <= pos_cnt + 6'd1;
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)              round_cnt <= '0;
         else if (evt_cold_load_done)  round_cnt <= '0;
-        else if (evt_ck_round_wrap)   round_cnt <= '0;
-        else if (evt_ck_pos_wrap)     round_cnt <= round_cnt + 3'd1;
+        else if (evt_c_round_wrap)    round_cnt <= '0;
+        else if (evt_c_pos_wrap)      round_cnt <= round_cnt + 3'd1;
     end
 
-    // =========================================================================
-    // Compute 侧 cs-base（两路径共享）
-    // =========================================================================
-    // 方式 1：cs 在 yout 内 → cs wrap 时 cur_wb_base_cs 归零，tile wrap 时跨到下一 cs
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                  cur_wb_base_cs <= '0;
-        else if (evt_start)                               cur_wb_base_cs <= cfg_wb_base;
-        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)      cur_wb_base_cs <= cfg_wb_base;
-        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)    cur_wb_base_cs <= cur_wb_base_cs + cfg_wb_cout_step;
-    end
-
+    // cold load (S_LOAD) 只在 case 启动时跑一次, base = cfg_wb_base
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                  cur_wb_rd_base <= '0;
         else if (evt_start)                               cur_wb_rd_base <= cfg_wb_base;
-        else if (evt_pk_cs_wrap   || evt_ck_cs_wrap)      cur_wb_rd_base <= cfg_wb_base;
-        else if (evt_pk_tile_wrap || evt_ck_tile_wrap)    cur_wb_rd_base <= cur_wb_base_cs + cfg_wb_cout_step;
     end
 
     // =========================================================================
@@ -558,11 +475,12 @@ module wgt_buffer #(
     logic cld_multi_cs;         // 单 round、单 cins、单 tile、单 yout、多 cs
 
     always_comb begin
+        // 优先级与 compute 嵌套一致: round > cins > tile > cs > yout
         cld_multi_round = (cfg_rounds_per_cins != 3'd1);
         cld_multi_cins  = !cld_multi_round  && (cfg_cin_slices != 6'd1);
         cld_multi_tile  = !cld_multi_round  && !cld_multi_cins && (cfg_num_tiles != 8'd1);
-        cld_multi_yout  = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && (cfg_h_out != 16'd1);
-        cld_multi_cs    = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && !cld_multi_yout && (cfg_cout_slices != 6'd1);
+        cld_multi_cs    = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && (cfg_cout_slices != 6'd1);
+        cld_multi_yout  = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && !cld_multi_cs && (cfg_h_out != 16'd1);
     end
 
     always_ff @(posedge clk or negedge rst_n) begin
@@ -604,67 +522,74 @@ module wgt_buffer #(
         else if (evt_ld_cins_wrap)                        l_tile <= l_tile + 8'd1;
     end
 
+    // Fix: cs 嵌在 yout 里 → cs 推进用 tile_wrap；yout 推进用 cs_wrap
+    always_ff @(posedge clk or negedge rst_n) begin
+        if      (!rst_n)                                  l_cs <= '0;
+        else if (evt_start)                               l_cs <= '0;
+        else if (evt_cold_load_done && cld_multi_cs)      l_cs <= 6'd1;
+        else if (evt_ld_cs_wrap)                          l_cs <= '0;
+        else if (evt_ld_tile_wrap)                        l_cs <= l_cs + 6'd1;
+    end
+
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                  l_yout <= '0;
         else if (evt_start)                               l_yout <= '0;
         else if (evt_cold_load_done && cld_multi_yout)    l_yout <= 16'd1;
         else if (evt_ld_yout_wrap)                        l_yout <= '0;
-        else if (evt_ld_tile_wrap)                        l_yout <= l_yout + 16'd1;
+        else if (evt_ld_cs_wrap)                          l_yout <= l_yout + 16'd1;
     end
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                  l_cs <= '0;
-        else if (evt_start)                               l_cs <= '0;
-        else if (evt_cold_load_done && cld_multi_cs)      l_cs <= 6'd1;
-        else if (evt_ld_yout_wrap && !l_cs_is_last)       l_cs <= l_cs + 6'd1;
-    end
-
-    // l_exhausted: 所有 load round 都完成（最后 cs 的 yout_wrap 触发）
+    // l_exhausted: 所有 load round 都完成（yout_wrap 已隐含 cs_last/tile_last/...）
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                  l_exhausted <= 1'b0;
         else if (evt_start)                               l_exhausted <= 1'b0;
         else if (evt_cold_load_done && !cld_multi_round && !cld_multi_cins
-                 && !cld_multi_tile && !cld_multi_yout && !cld_multi_cs)
+                 && !cld_multi_tile && !cld_multi_cs && !cld_multi_yout)
                                                           l_exhausted <= 1'b1;
-        else if (evt_ld_yout_wrap && l_cs_is_last)        l_exhausted <= 1'b1;
+        else if (evt_ld_yout_wrap)                        l_exhausted <= 1'b1;
     end
 
     // load_caught_up: rounds_ahead ∈ {1,2}；同拍 compute/load 事件抵消时保持
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                                    load_caught_up <= 1'b0;
         else if (evt_start || evt_cold_load_done)                           load_caught_up <= 1'b0;
-        else if (evt_ck_pos_wrap && evt_ld_round_end)                       load_caught_up <= load_caught_up;
-        else if (evt_ck_pos_wrap)                                           load_caught_up <= 1'b0;
+        else if (evt_c_pos_wrap && evt_ld_round_end)                        load_caught_up <= load_caught_up;
+        else if (evt_c_pos_wrap)                                            load_caught_up <= 1'b0;
         else if (evt_ld_round_end)                                          load_caught_up <= 1'b1;
     end
 
     // =========================================================================
-    // Chunked load 侧的 WB base（cs 内推进 + (yout,tile) 边界回到 cs_base + cs 边界 +wb_cout_step）
+    // Chunked load 侧的 WB base
+    //   嵌套: yout 外 → cs → tile → cins → round → pos
+    //   cs 内: 每 tile 复用同一组 kk × cin_slices 权重 (tile 间回到 cs_base)
+    //   cs 间: l_wb_base_cs 跨到下一 cs (+wb_cout_step)
+    //   yout 间: 回到 cfg_wb_base (cs=0 重来)
     // =========================================================================
     always_ff @(posedge clk or negedge rst_n) begin
-        if      (!rst_n)                                                 l_wb_base_cs <= '0;
-        else if (evt_start)                                              l_wb_base_cs <= cfg_wb_base;
-        else if (evt_cold_load_done && cld_multi_cs)                     l_wb_base_cs <= cfg_wb_base + cfg_wb_cout_step;
-        else if (evt_ld_yout_wrap && !l_cs_is_last)                      l_wb_base_cs <= l_wb_base_cs + cfg_wb_cout_step;
+        if      (!rst_n)                                  l_wb_base_cs <= '0;
+        else if (evt_start)                               l_wb_base_cs <= cfg_wb_base;
+        else if (evt_cold_load_done && cld_multi_cs)      l_wb_base_cs <= cfg_wb_base + cfg_wb_cout_step;
+        else if (evt_ld_cs_wrap)                          l_wb_base_cs <= cfg_wb_base;           // new yout
+        else if (evt_ld_tile_wrap && !l_cs_is_last)       l_wb_base_cs <= l_wb_base_cs + cfg_wb_cout_step;
     end
 
-    // 事件优先级（else-if 自上而下）：
-    //   yout_wrap && !cs_last : 进入新 cs   → l_wb_base_cs + wb_cout_step
-    //   yout_wrap             : cs 也是末尾（l_exhausted 同拍）→ 任意值即可
-    //   tile_wrap             : 新 yout，同 cs → 回 l_wb_base_cs
-    //   cins_wrap             : 新 tile，同 yout → 回 l_wb_base_cs
-    //   round_end             : 新 round 或新 cins（同 tile） → += l_cur_round_len
+    // 事件优先级（else-if 自上而下, 内→外包含）：
+    //   cs_wrap   : yout 推进 → l_wb_base = cfg_wb_base (cs=0)
+    //   tile_wrap : cs 推进 (yout 内) → l_wb_base = l_wb_base_cs + wb_cout_step
+    //   cins_wrap : tile 推进 (cs 内) → 回 l_wb_base_cs (cins=0 重来)
+    //   round_end : 新 round 或跨 cins (同 tile) → += l_cur_round_len
     always_ff @(posedge clk or negedge rst_n) begin
         if      (!rst_n)                                                 l_wb_base <= '0;
         else if (evt_start)                                              l_wb_base <= cfg_wb_base;
         else if (evt_cold_load_done && cld_multi_round)                  l_wb_base <= cfg_wb_base + {{(ADDR_W-6){1'b0}}, c_cur_round_len};
         else if (evt_cold_load_done && cld_multi_cins)                   l_wb_base <= cfg_wb_base + {{(ADDR_W-6){1'b0}}, c_cur_round_len};
         else if (evt_cold_load_done && cld_multi_tile)                   l_wb_base <= cfg_wb_base;
-        else if (evt_cold_load_done && cld_multi_yout)                   l_wb_base <= cfg_wb_base;
         else if (evt_cold_load_done && cld_multi_cs)                     l_wb_base <= cfg_wb_base + cfg_wb_cout_step;
-        else if (evt_ld_yout_wrap && !l_cs_is_last)                      l_wb_base <= l_wb_base_cs + cfg_wb_cout_step;
-        else if (evt_ld_tile_wrap || evt_ld_cins_wrap || evt_ld_yout_wrap) l_wb_base <= l_wb_base_cs;
-        else if (evt_ld_round_end)                                        l_wb_base <= l_wb_base + {{(ADDR_W-6){1'b0}}, l_cur_round_len};
+        else if (evt_cold_load_done && cld_multi_yout)                   l_wb_base <= cfg_wb_base;
+        else if (evt_ld_cs_wrap)                                         l_wb_base <= cfg_wb_base;
+        else if (evt_ld_tile_wrap)                                       l_wb_base <= l_wb_base_cs + cfg_wb_cout_step;
+        else if (evt_ld_cins_wrap)                                       l_wb_base <= l_wb_base_cs;
+        else if (evt_ld_round_end)                                       l_wb_base <= l_wb_base + {{(ADDR_W-6){1'b0}}, l_cur_round_len};
     end
 
 endmodule

@@ -7,7 +7,7 @@ run_regression.py -- FLUX CNN 统一回归测试脚本 (batch + streaming)
 
 输出：
     regression_report.txt  单份报告含两种模式所有用例，附握手 / SRAM / ARF / PARF
-    perf 指标。
+    perf 指标。（txt文件在 sim/tb_core_dma/ 下）
 """
 
 import subprocess
@@ -44,34 +44,64 @@ CASES = [
     # 整图装得下 SRAM → strip_rows=H_IN（ring 不 wrap，等价原 batch 串行 latency）；
     # 装不下 → strip 切小（ring-buffer 流式，IDMA/core/ODMA 并发，如 VGA）。
     #
-    # --- 基础 48x48 -----------------------------------------------------
-    ("K=3 C4C4   48x48 s=1",    "conv",  4,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C4C8   48x48 s=1",    "conv",  4,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C4   48x48 s=1",    "conv",  8,  4, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C8   48x48 s=1",    "conv",  8,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C8C32  48x48 s=1",    "conv",  8, 32, 3, 48, 48, 1, 0, 0),
-    ("K=3 C16C16 48x48 s=1",    "conv", 16, 16, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C8  48x48 s=1",    "conv", 32,  8, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C16 48x48 s=1",    "conv", 32, 16, 3, 48, 48, 1, 0, 0),
-    ("K=3 C32C32 48x48 s=1",    "conv", 32, 32, 3, 48, 48, 1, 0, 0),
-    ("K=3 C64C16 48x48 s=1",    "conv", 64, 16, 3, 48, 48, 1, 0, 0),
-    ("K=7 C8C8   48x48 s=1",    "conv",  8,  8, 7, 48, 48, 1, 2, 0),
-    ("K=7 C16C16 48x48 s=1",    "conv", 16, 16, 7, 48, 48, 1, 2, 0),
-    ("K=5 C16C16 48x48 s=2",    "conv", 16, 16, 5, 48, 48, 2, 1, 0),
-    ("K=5 C32C16 48x48 s=2",    "conv", 32, 16, 5, 48, 48, 2, 1, 0),
-    # --- Padding (same-conv 保持尺寸) ----------------------------------
-    ("K=3 C8C8   48x48 s=1 p1", "conv",  8,  8, 3, 48, 48, 1, 0, 1),
-    ("K=3 C16C16 48x48 s=1 p1", "conv", 16, 16, 3, 48, 48, 1, 0, 1),
-    ("K=5 C16C16 48x48 s=1 p2", "conv", 16, 16, 5, 48, 48, 1, 1, 2),
-    ("K=7 C16C16 48x48 s=1 p3", "conv", 16, 16, 7, 48, 48, 1, 2, 3),
-    # --- 大图 VGA (整图装不下 → strip 切小) ------------------------------
-    ("K=3 C3C16  478x638 s=1",  "conv",  3, 16, 3, 480, 640, 1, 2, 0),
+    # ---- ResNet-18-like model (input 960x540) — 每一 conv 层的等效独立 case ----
+    # Pool 层硬件不支持，跳过。FC 可视为 1x1 conv。streaming 已支持任意 Cin/Cout。
+
+    # ---- Stem ----
+    ("K=7 C4C8    960x540 s2 p3", "conv",   4,   8, 7, 960, 540, 2, 0, 3),  # Conv2d stem            -> 480x270
+  # ("MaxPool2d   480x270 s2 p1", "pool",   8,   8, 3, 480, 270, 2, 0, 1),  # MaxPool2d              -> 240x135  [无 pool 硬件]
+
+    # ---- Layer 1: 4 conv, C=8 ----
+    ("K=3 C8C8    240x135 s1 p1", "conv",   8,   8, 3, 240, 135, 1, 0, 1),  # L1.B1.Conv1
+    ("K=3 C8C8    240x135 s1 p1", "conv",   8,   8, 3, 240, 135, 1, 0, 1),  # L1.B1.Conv2
+    ("K=3 C8C8    240x135 s1 p1", "conv",   8,   8, 3, 240, 135, 1, 0, 1),  # L1.B2.Conv1
+    ("K=3 C8C8    240x135 s1 p1", "conv",   8,   8, 3, 240, 135, 1, 0, 1),  # L1.B2.Conv2
+
+    # ---- Layer 2: Cin 8->16, Cout 16 ----
+    ("K=3 C8C16   240x135 s2 p1", "conv",   8,  16, 3, 240, 135, 2, 0, 1),  # L2.B1.Conv1            -> 120x68
+    ("K=3 C16C16  120x68  s1 p1", "conv",  16,  16, 3, 120,  68, 1, 0, 1),  # L2.B1.Conv2
+    ("K=1 C8C16   240x135 s2 p0", "conv",   8,  16, 1, 240, 135, 2, 0, 0),  # L2.B1.Downsample (1x1) -> 120x68
+    ("K=3 C16C16  120x68  s1 p1", "conv",  16,  16, 3, 120,  68, 1, 0, 1),  # L2.B2.Conv1
+    ("K=3 C16C16  120x68  s1 p1", "conv",  16,  16, 3, 120,  68, 1, 0, 1),  # L2.B2.Conv2
+
+    # ---- Layer 3: Cin 16->32, Cout 32 ----
+    ("K=3 C16C32  120x68  s2 p1", "conv",  16,  32, 3, 120,  68, 2, 0, 1),  # L3.B1.Conv1            -> 60x34
+    ("K=3 C32C32  60x34   s1 p1", "conv",  32,  32, 3,  60,  34, 1, 0, 1),  # L3.B1.Conv2
+    ("K=1 C16C32  120x68  s2 p0", "conv",  16,  32, 1, 120,  68, 2, 0, 0),  # L3.B1.Downsample       -> 60x34
+    ("K=3 C32C32  60x34   s1 p1", "conv",  32,  32, 3,  60,  34, 1, 0, 1),  # L3.B2.Conv1
+    ("K=3 C32C32  60x34   s1 p1", "conv",  32,  32, 3,  60,  34, 1, 0, 1),  # L3.B2.Conv2
+
+    # ---- Layer 4: Cin 32->64, Cout 64 ----
+    ("K=3 C32C64  60x34   s2 p1", "conv",  32,  64, 3,  60,  34, 2, 0, 1),  # L4.B1.Conv1            -> 30x17
+    ("K=3 C64C64  30x17   s1 p1", "conv",  64,  64, 3,  30,  17, 1, 0, 1),  # L4.B1.Conv2
+    ("K=1 C32C64  60x34   s2 p0", "conv",  32,  64, 1,  60,  34, 2, 0, 0),  # L4.B1.Downsample       -> 30x17
+    ("K=3 C64C64  30x17   s1 p1", "conv",  64,  64, 3,  30,  17, 1, 0, 1),  # L4.B2.Conv1
+    ("K=3 C64C64  30x17   s1 p1", "conv",  64,  64, 3,  30,  17, 1, 0, 1),  # L4.B2.Conv2
+
+    # ---- Head ----
+  # ("AvgPool2d   4x4     s8 p0", "pool",  64,  64, 4,   4,   4, 8, 0, 0),  # AvgPool2d  -> 1x1      [无 pool 硬件]
+    ("FC1 C256C512 1x1",          "conv", 256, 512, 1,   1,   1, 1, 0, 0),  # FC1 (256->512, 1x1 conv)
+    ("FC2 C512C10  1x1",          "conv", 512,  10, 1,   1,   1, 1, 0, 0),  # FC2 (512->10,  1x1 conv)
 ]
 
 
 # ---------------------------------------------------------------------------
 # 生成单个 case 数据到 cases/caseNN/
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 单 case 超时估算 (ns) -- 用于 run 整份 regression 的 watchdog
+#   校准：stem K=7 C4C8 960x540 实测 ~6.35M cycles；这里用 100 cycles/out_pix/tile
+#   再乘 10x sim_time/cycle 系数 + 5x 安全余量，留足 DMA 阻塞等 corner case
+# ---------------------------------------------------------------------------
+def estimate_case_timeout_ns(c_in, c_out, k, h_in, w_in, stride, pad):
+    h_out = max(1, (h_in + 2 * pad - k) // stride + 1)
+    w_out = max(1, (w_in + 2 * pad - k) // stride + 1)
+    cin_tiles  = max(1, (c_in  + 15) // 16)
+    cout_tiles = max(1, (c_out + 15) // 16)
+    cycles = h_out * w_out * cin_tiles * cout_tiles * 100 + 500_000  # 500K 启停 overhead
+    return cycles * 10 * 5  # @10 ns clk, 5x safety margin
+
+
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
@@ -158,10 +188,11 @@ def write_report(results, label=""):
     L()
 
     # ---- Summary 表 ----
-    hdr = (f"  {'Case':<27} {'Mode':^6} {'Res':^5} {'Cycles':>10} {'MAC%':>6}  "
-           f"{'IFB_R':>8} {'WB_R':>6} {'OFB_W':>7}  "
-           f"{'ARF_W':>8} {'ARF_R':>8} {'Ratio':>6}  "
-           f"{'PARF_F':>8} {'PARF_D':>7}")
+    # 所有计数列统一 11 位宽 (够放 9,999,999 = 9 字符带逗号, 再留 2 余量)
+    hdr = (f"  {'Case':<27} {'Mode':^6} {'Res':^5} {'Cycles':>11} {'MAC%':>6}  "
+           f"{'IFB_R':>11} {'WB_R':>9} {'OFB_W':>11}  "
+           f"{'ARF_W':>11} {'ARF_R':>11} {'Ratio':>6}  "
+           f"{'PARF_F':>11} {'PARF_D':>11}")
     L(hdr)
     L(SUB)
     all_pass = True
@@ -175,11 +206,11 @@ def write_report(results, label=""):
         else:
             cname, mode = r["name"], "?"
         ratio = (r['arf_r'] / r['arf_w']) if r['arf_w'] > 0 else 0.0
-        row = (f"  {cname:<27} {mode:^6} {status:^5} {r['cycles']:>10,} "
+        row = (f"  {cname:<27} {mode:^6} {status:^5} {r['cycles']:>11,} "
                f"{r['mac_util']:>5.1f}%  "
-               f"{r['ifb_r']:>8,} {'-':>6} {r['ofb_w']:>7,}  "
-               f"{r['arf_w']:>8,} {r['arf_r']:>8,} {ratio:>5.2f}x  "
-               f"{r['parf_f']:>8,} {r['parf_d']:>7,}")
+               f"{r['ifb_r']:>11,} {'-':>9} {r['ofb_w']:>11,}  "
+               f"{r['arf_w']:>11,} {r['arf_r']:>11,} {ratio:>5.2f}x  "
+               f"{r['parf_f']:>11,} {r['parf_d']:>11,}")
         L(row)
     L(SUB)
     L("  MAC%: 硬件利用率 = min(Cin,16)×min(Cout,16)/(16×16)；")
@@ -210,6 +241,8 @@ def main():
                         help="(legacy option, J-1 起只有 conv 一种) default: all")
     parser.add_argument("--case",  default=None,
                         help="只跑 name 包含此子串的 case（大小写敏感）。例: --case C16C10")
+    parser.add_argument("--timeout-ns", type=int, default=0,
+                        help="vsim watchdog 超时 (ns)；0=按每 case 尺寸自动估算")
     args = parser.parse_args()
     OUTPUT_FILE = args.out
 
@@ -236,12 +269,27 @@ def main():
         print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']}")
 
     # 把 case0 的 sim_params.f 复制到 SIM_DIR/ 给 vsim 启动参数用（-gSRAM_DEPTH，-sva 等）
-    # 再 append +N_CASES 给 TB plusarg 用
+    # 再 append +N_CASES / +TIMEOUT_NS 给 TB plusarg 用
     src = os.path.join(SIM_DIR, "cases", "case00", "sim_params.f")
     dst = os.path.join(SIM_DIR, "sim_params.f")
     shutil.copy(src, dst)
+
+    if args.timeout_ns > 0:
+        timeout_ns = args.timeout_ns
+        t_src = "user --timeout-ns"
+    else:
+        # 按 case 总尺寸估算：对所有 case 的预算求和 + 100 ms 基础 overhead
+        est_total = sum(estimate_case_timeout_ns(c[2], c[3], c[4], c[5], c[6], c[7], c[9])
+                        for c in cases)
+        timeout_ns = est_total + 100_000_000  # +100 ms 设施 overhead
+        t_src = "auto-est"
+
     with open(dst, "a", encoding="utf-8") as f:
         f.write(f"+N_CASES={n_cases}\n")
+        f.write(f"+TIMEOUT_NS={timeout_ns}\n")
+
+    print(f"  watchdog timeout = {timeout_ns:,} ns "
+          f"(~{timeout_ns // 10:,} cycles @10 ns)  [{t_src}]")
 
     # Step 2: 单次 vsim 跑全部 case
     print(f"\n[Step 2] 启动单次 vsim (N_CASES={n_cases})，核心复用多次 start/done ...")

@@ -117,7 +117,7 @@
 
 | 类别       | 字段                                              | 来源       |
 |------------|--------------------------------------------------|-----------|
-| 卷积参数   | `K`, `stride`, `cin_slices`, `cout_slices`, `kk`, `total_wrf`, `wrf_packed`, `rounds_per_cins`, `round_len_last` | **全局 cfg** |
+| 卷积参数   | `K`, `stride`, `cin_slices`, `cout_slices`, `kk`, `total_wrf`, `rounds_per_cins`, `round_len_last` | **全局 cfg** |
 | 图尺寸     | `h_in_total`, `w_in`, `h_out_total`, `w_out`     | **全局 cfg** |
 | Tile 参数  | `tile_w`, `num_tiles`, `last_valid_w`            | **全局 cfg** |
 | SRAM 布局  | `ifb_base`, `wb_base`, `ofb_base`, `ifb_cin_step`, `ifb_row_step`, `wb_cin_step`, `wb_cout_step`, `ofb_cout_step`, `tile_in_step` | **全局 cfg** |
@@ -341,7 +341,7 @@ DFE 可以**先于** Sequencer 启动（`start_dfe_pulse` 比 `start_layer_pulse
 // ---- Layer setup ----
 // 1. 写全局 cfg（K, stride, h_in_total, w_in, h_out_total, w_out, ...
 //    cin_slices, cout_slices, tile_w, num_tiles, last_valid_w,
-//    kk, total_wrf, wrf_packed, rounds_per_cins, round_len_last,
+//    kk, total_wrf, rounds_per_cins, round_len_last,
 //    ifb_base, wb_base, ofb_base, all _step,
 //    ifb_strip_rows, ofb_strip_rows, ddr_*_row_stride, dma_mode,
 //    SDP: mult, shift, zp_out, clip_min, clip_max, round_en, relu_en,

@@ -147,7 +147,6 @@ module core_top #(
     logic [5:0]        cfg_cin_slices, cfg_cout_slices, cfg_tile_w, cfg_last_valid_w;
     logic [7:0]        cfg_num_tiles;
     logic [9:0]        cfg_total_wrf, cfg_kk;
-    logic              cfg_wrf_packed;
     logic [2:0]        cfg_rounds_per_cins;
     logic [5:0]        cfg_round_len_last;
     logic [ADDR_W-1:0] cfg_ifb_base, cfg_wb_base, cfg_ofb_base;
@@ -238,7 +237,7 @@ module core_top #(
         .k(cfg_k), .stride(cfg_stride),
         .cin_slices(cfg_cin_slices), .cout_slices(cfg_cout_slices),
         .tile_w(cfg_tile_w), .num_tiles(cfg_num_tiles), .last_valid_w(cfg_last_valid_w),
-        .total_wrf(cfg_total_wrf), .wrf_packed(cfg_wrf_packed),
+        .total_wrf(cfg_total_wrf),
         .kk(cfg_kk), .rounds_per_cins(cfg_rounds_per_cins), .round_len_last(cfg_round_len_last),
         .ifb_base(cfg_ifb_base), .wb_base(cfg_wb_base), .ofb_base(cfg_ofb_base),
         .ifb_row_step(cfg_ifb_row_step),
@@ -470,7 +469,7 @@ module core_top #(
         .DATA_WIDTH     (DATA_WIDTH),
         .PSUM_WIDTH     (PSUM_WIDTH),
         .WRF_DEPTH      (WRF_DEPTH),
-        .MAX_COUT_SLICES(16),
+        .MAX_COUT_SLICES(32),
         .SRAM_DEPTH     (SRAM_DEPTH),
         .ADDR_W         (ADDR_W)
     ) u_wgt_buffer (
@@ -487,7 +486,6 @@ module core_top #(
         .cfg_k               (cfg_k),
         .cfg_kk              (cfg_kk),
         .cfg_total_wrf       (cfg_total_wrf),
-        .cfg_wrf_packed      (cfg_wrf_packed),
         .cfg_rounds_per_cins (cfg_rounds_per_cins),
         .cfg_round_len_last  (cfg_round_len_last),
         .cfg_wb_base         (cfg_wb_base),

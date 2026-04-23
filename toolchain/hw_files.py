@@ -324,14 +324,30 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
 
     kk          = K * K
     total_wrf   = kk * cin_slices
-    wrf_packed  = total_wrf <= WRF_DEPTH
 
     # E-2 ARF reuse: cur_fill_len = cur_valid_w + K - 1 ≤ ARF_DEPTH → tile_w ≤ 33-K
     arf_reuse_en = (stride == 1 and K > 1)
-    if arf_reuse_en:
-        max_tile_w = ARF_DEPTH - K + 1
-        if TILE_W > max_tile_w:
-            TILE_W = max_tile_w
+    max_tile_w = ARF_DEPTH - K + 1 if arf_reuse_en else ARF_DEPTH
+    if TILE_W > max_tile_w:
+        TILE_W = max_tile_w
+
+    # K=1 时 parf_accum 的 fill / drain 节拍相等 (fill=kk*cins*cur_valid_w 退化成 cur_valid_w),
+    # 短尾 tile 会让下一 tile 的 fill 停等上一 tile 的 drain 完成 (drain_stall_fill), 成为瓶颈.
+    # 选 TILE_W 让 last_valid_w 尽量接近 TILE_W 可消除该停顿.
+    # K>1 时 fill >> drain, drain 天然藏在 fill 后面, 优先留大 TILE_W 减少 tile 边界 overhead.
+    if K == 1:
+        if W_OUT <= max_tile_w:
+            TILE_W = W_OUT
+        else:
+            best_tw, best_imbalance = TILE_W, max_tile_w
+            for tw in range(max_tile_w, 0, -1):
+                nt  = (W_OUT + tw - 1) // tw
+                lvw = W_OUT - (nt - 1) * tw
+                imb = tw - lvw
+                if imb < best_imbalance:
+                    best_imbalance = imb
+                    best_tw = tw
+            TILE_W = best_tw
 
     num_tiles    = (W_OUT + TILE_W - 1) // TILE_W
     last_valid_w = W_OUT - (num_tiles - 1) * TILE_W
@@ -385,7 +401,7 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         'NUM_CIN': NUM_CIN, 'NUM_COUT': NUM_COUT,
         'H_OUT': H_OUT, 'W_OUT': W_OUT,
         'cin_slices': cin_slices, 'cout_slices': cout_slices,
-        'kk': kk, 'total_wrf': total_wrf, 'wrf_packed': wrf_packed,
+        'kk': kk, 'total_wrf': total_wrf,
         'rounds_per_cins': rounds_per_cins, 'round_len_last': round_len_last,
         'num_tiles': num_tiles, 'last_valid_w': last_valid_w,
         'TILE_W': TILE_W, 'stride': stride,
@@ -440,7 +456,6 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'COUT_SLICES'    : cfg['cout_slices'],
         'TILE_W'         : cfg['TILE_W'],
         'TOTAL_WRF'      : cfg['total_wrf'],
-        'WRF_PACKED'     : 1 if cfg['wrf_packed'] else 0,
         'KK'             : cfg['kk'],
         'ROUNDS_PER_CINS': cfg['rounds_per_cins'],
         'ROUND_LEN_LAST' : cfg['round_len_last'],

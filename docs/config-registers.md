@@ -27,17 +27,14 @@
 
 | 寄存器 | 位宽 | 含义 | 软件计算 |
 |--------|------|------|----------|
-| `total_wrf` | 10 | Packed 模式下 WRF 装载总数 | `K² × cin_slices` |
-| `wrf_packed` | 1 | 1=packed, 0=chunked | `total_wrf ≤ 32` |
+| `total_wrf` | 10 | WRF 装载总数（= K² × cin_slices，当前未被 RTL 直接读，保留给软件查询） | `K² × cin_slices` |
 | `kk` | 10 | K²（每 cins 的 kernel 位置数） | `K × K` |
-| `rounds_per_cins` | 3 | 每 cins 内的轮次数（chunked） | `⌈K² / WRF_DEPTH⌉` |
-| `round_len_last` | 6 | 最后一轮的权重数（chunked） | `K² - (rounds-1) × WRF_DEPTH` |
+| `rounds_per_cins` | 3 | 每 cins 内的轮次数 | `⌈K² / WRF_DEPTH⌉` |
+| `round_len_last` | 6 | 最后一轮的权重数 | `K² - (rounds-1) × WRF_DEPTH` |
 
-三种权重调度模式：
-
-- **Packed**（v1 支持）：`K² × cin_slices ≤ 32`。一次 `LOAD_WGT` 灌满整个 cs 的所有 cins 权重
-- **Chunked 无轮次**（v1 不支持）：`K² ≤ 32 < K² × cin_slices`
-- **Chunked 多轮次**（v1 不支持）：`K² > 32`（K ≥ 7）
+J 阶段起统一走 cins-ahead 流水路径（原 chunked），每 cins 装 round_len 个权重进 WRF，装完即开算，
+load 与 compute 并行。kk ≤ 32 时 rounds_per_cins=1，round_len_last=kk；kk > 32（K=7）时
+rounds_per_cins > 1。
 
 ### 地址基址（20-bit）
 
@@ -81,7 +78,6 @@ CIN_SLICES = 1
 COUT_SLICES = 1
 TILE_W = 32
 TOTAL_WRF = 9
-WRF_PACKED = 1
 KK = 9
 ROUNDS_PER_CINS = 1
 ROUND_LEN_LAST = 9

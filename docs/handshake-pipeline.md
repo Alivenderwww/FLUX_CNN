@@ -210,9 +210,15 @@ v3 实测 70,128 = 理论 + 36 拍。紧贴极限。
 
 ---
 
-## 7. 下一步优化（未实现，v2 roadmap）
+## 7. 握手相关的已完成优化
 
-1. **支持 chunked**：K≥7 或 Cin>32 时 `K²·cin_slices > 32`，wgt_buffer 需要按 round 分块 LOAD（每个 (cins, round) 重灌 WRF）
-2. **stride=1 滑窗复用**：原 cfg-driven 有此优化，对 K=3 IFB 读能省 2/3、K=7 省 6/7
-3. **加法树流水**：16-PE 求和当前是全组合。插 1-2 级 pipe reg 可把 fmax 从 ~100 MHz 推到 ~300-500 MHz
-4. **padding / residual / pooling**：见 `docs/roadmap.md`
+- ✅ **Chunked 权重调度**：K≥7 或 Cin>32 时 wgt_buffer 按 round 分块 LOAD；J-3 起统一为单一 cins-ahead 流水路径（无需 packed 分支）
+- ✅ **K=1 bubble**：`c_cur_round_len=1` 时 `round_wrap` 后插 1 拍 `wgt_valid=0`，解决 WRF 2 拍写流水 hazard（详见 `docs/pe-fold.md`）
+- ✅ **Padding**：line_buffer 坐标越界判定，越界时 arf 喂 0（零代价硬件 padding）
+- ✅ **Kx-fold systolic PSUM shift**：PARF 拆 per-col 存储 + 每列独立 wr_addr 偏移 + psum_reshape 归约级（详见 `docs/pe-fold.md`）
+
+### 仍未实现
+
+- **stride=1 滑窗复用**：当前 IFB 读 = `TILE_W × K`；原 cfg-driven 可复用 K-1 个像素。主要是 IFB 带宽节约
+- **加法树流水**：16-PE 求和当前全组合，100 MHz 够用；拉到 ~300-500 MHz 需要 1-2 级 pipe reg
+- **residual / pooling**：见 `docs/roadmap.md`

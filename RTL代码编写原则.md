@@ -276,4 +276,4 @@ end
 - [ ] FSM 三段式；`state` 独立 `always_ff`
 - [ ] 复位按 §6 策略评估；需要时用同步复位；纯数据寄存器无复位
 - [ ] 端口与握手契约未变
-- [ ] `sim/tb_core_isa/` 下 `python run_regression.py` 14/14 PASS，MAC% 不降
+- [ ] `toolchain/` 下 `python run_regression.py` 22/22 PASS，MAC% 不降；加 `--fold --kx-fold` 跑一遍 fold 路径

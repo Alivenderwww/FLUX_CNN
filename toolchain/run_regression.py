@@ -102,14 +102,18 @@ def estimate_case_timeout_ns(c_in, c_out, k, h_in, w_in, stride, pad):
     return cycles * 10 * 5  # @10 ns clk, 5x safety margin
 
 
-def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad):
+def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad,
+                   ky_fold=False, kx_fold=False):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
     # J-1: gen_isa_test.py 的 --streaming 默认 True，无需显式传
+    fold_flag = ""
+    if ky_fold: fold_flag += " --ky-fold"
+    if kx_fold: fold_flag += " --kx-fold"
     gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" "
                f"--num_cin {c_in} --num_cout {c_out} --k {k} "
                f"--h_in {h_in} --w_in {w_in} --stride {stride} "
-               f"--shift {shift} --pad {pad} "
+               f"--shift {shift} --pad {pad} {fold_flag} "
                f"--out-dir \"{case_dir}\" "
                # case-name 里不能有空格（TB $sscanf %s 会在空格停）；用 _ 替代
                f"--case-name \"{name.replace(' ', '_')}|{mode}\"")
@@ -213,7 +217,8 @@ def write_report(results, label=""):
                f"{r['parf_f']:>11,} {r['parf_d']:>11,}")
         L(row)
     L(SUB)
-    L("  MAC%: 硬件利用率 = min(Cin,16)×min(Cout,16)/(16×16)；")
+    L("  MAC%: useful_mac_ops / peak_mac_ops; useful = H_out×W_out×K²×Cin×Cout (pre-fold原始 conv);")
+    L("        peak = cycles×NUM_COL×NUM_PE. fold pad + Kx tail partial 都会扣掉利用率。")
     L("  ARF_W=ARF写(=IFB读扣除 pad)；ARF_R=ARF读到 MAC；Ratio=ARF_R/ARF_W (>1 表示 kx 滑窗复用)")
     L("  IFB_R/OFB_W=SRAM 访问次数；PARF_F/PARF_D=psum 累加写/读")
     L()
@@ -243,6 +248,10 @@ def main():
                         help="只跑 name 包含此子串的 case（大小写敏感）。例: --case C16C10")
     parser.add_argument("--timeout-ns", type=int, default=0,
                         help="vsim watchdog 超时 (ns)；0=按每 case 尺寸自动估算")
+    parser.add_argument("--fold", action="store_true",
+                        help="对所有 K>1 且 Cin<16 的 case 启用 Ky fold")
+    parser.add_argument("--kx-fold", action="store_true",
+                        help="对所有 K>1 且 Cout<16 的 case 启用 Kx fold (可与 --fold 叠加)")
     args = parser.parse_args()
     OUTPUT_FILE = args.out
 
@@ -262,11 +271,21 @@ def main():
     # Step 1: 生成每 case 数据到 cases/caseNN/
     print(f"\n[Step 1] 生成 {n_cases} 个 case 数据 ...")
     for i, case in enumerate(cases):
-        gen_info, err = gen_case_files(i, *case)
+        # case 里 c_in 是第 3 个字段 (idx 2), k 是第 5 个 (idx 4)
+        _, _, c_in_v, _, k_v, _, _, _, _, _ = case
+        # case 里 c_out 是第 4 个字段 (idx 3)
+        _, _, _, c_out_v, _, _, _, _, _, _ = case
+        # fold 条件: K>1 且 Cin<16 (Ky); K>1 且 Cout<16 (Kx)
+        use_ky = args.fold    and (k_v > 1) and (c_in_v  < 16)
+        use_kx = args.kx_fold and (k_v > 1) and (c_out_v < 16)
+        gen_info, err = gen_case_files(i, *case, ky_fold=use_ky, kx_fold=use_kx)
         if err:
             print(f"  case {i} ({case[0]}) gen ERROR: {err}")
             sys.exit(1)
-        print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']}")
+        fold_mark = ""
+        if use_ky: fold_mark += "[ky]"
+        if use_kx: fold_mark += "[kx]"
+        print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']} {fold_mark}")
 
     # 把 case0 的 sim_params.f 复制到 SIM_DIR/ 给 vsim 启动参数用（-gSRAM_DEPTH，-sva 等）
     # 再 append +N_CASES / +TIMEOUT_NS 给 TB plusarg 用

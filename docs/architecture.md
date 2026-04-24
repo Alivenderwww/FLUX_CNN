@@ -3,27 +3,25 @@
 ## 1. 顶层数据通路
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                                  core_top                                            │
-│                                                                                      │
-│   cfg_regs  (共享配置，对所有模块只读；TB 通过 u_cfg.r_* 层次引用写入)                 │
-│   ═════════════════════════════════════════════════════════════════════════════════  │
-│                                                                                      │
-│   IFB ─► line_buffer ─────(act v/r)──► mac_array ──(psum v/r)──► parf_accum ──┐     │
-│          (ring buffer)                  (elastic join,                        │     │
-│           act_buf × 32                   2-stage pipe)                      (acc v/r)│
-│           fifo_count                          ▲                                │     │
-│           iss_pos + 6 层 counter              │                                │     │
-│                                               │                                ▼     │
-│                    WB ─► wgt_buffer ───(wgt v/r)─┘                        ofb_writer │
-│                          (WRF write port ─────┘  (wrf_raddr/we/wdata)     + SDP 组合 │
-│                           4 层 counter)                                        │     │
-│                                                                                ▼     │
-│                                                                               OFB    │
-└─────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  core_top                                                │
+│                                                                                          │
+│   cfg_regs  (共享配置, 通过 axi_lite_csr 外部写; 对核流水模块只读广播)                    │
+│   ═══════════════════════════════════════════════════════════════════════════════════════│
+│                                                                                          │
+│   IFB ─► line_buffer ───(act v/r)──► mac_array ──(psum v/r)──► parf_accum ──► psum_reshape ──► ofb_writer │
+│          (ring buffer)                (elastic join,          (parf_col ×16, (组合归约级,          (SDP + OFB write) │
+│           act_buf × 32                 2-stage pipe)           per-col       Kx-fold cout                          │
+│           fold-aware iss_pos)          ▲                       wr_addr)      归约)                                 │
+│                                        │                                                                           │
+│                   WB ─► wgt_buffer ────┘                                                                          │
+│                        (cins-ahead                                                                                 │
+│                         chunked loader                                                                             │
+│                         + K=1 bubble)                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-TB 通过层次引用（`u_core_top.u_cfg.r_*`）直接写配置寄存器，拉 `start`，等 `done` —— 无指令总线、无外部 AXI 接口。
+host 通过 AXI-Lite（`axi_lite_csr`）写 `cfg_regs` + 下发 DMA descriptor，拉 `CTRL[5]`（start_layer）启动；`CTRL[4]`（start_dfe）触发 descriptor fetch。
 
 ---
 
@@ -38,9 +36,11 @@ TB 通过层次引用（`u_core_top.u_cfg.r_*`）直接写配置寄存器，拉 
 | `mac_array` | `RTL/mac_array.sv` | 16×16 MAC；elastic join 握手；2 级 pipe valid 追踪 |
 | `mac_col` | `RTL/mac_col.sv` | 单列：16 PE + 加法树 + 1 级 pipe reg（无 PARF） |
 | `mac_pe` | `RTL/mac_pe.sv` | 单 PE：WRF + 1 拍流水乘法器；stall 下寄存器保持 |
-| `parf_accum` | `RTL/parf_accum.sv` | 特殊 FIFO；FILL / DRAIN 独立 FSM + cross-tile overlap |
+| `parf_col` | `RTL/parf_col.sv` | 单列 PSUM 存储（PARF_DEPTH × 32-bit）+ 独立 we/wr_addr/rdata |
+| `parf_accum` | `RTL/parf_accum.sv` | parf 外壳：FILL/DRAIN 独立 FSM + cross-tile overlap + per-col wr_addr 生成（Kx-fold 偏移） |
+| `psum_reshape` | `RTL/psum_reshape.sv` | drain 组合归约级：Kx-fold 时 cout_groups × cout_orig 汇总成 cout_orig 路 int32 psum |
 | `ofb_writer` | `RTL/ofb_writer.sv` | 4 层 counter + 内嵌 SDP + OFB 写端口 |
-| `sdp` | `RTL/sdp.sv` | 纯组合：>> shift → ReLU → clip to uint8 |
+| `sdp` | `RTL/sdp.sv` | 纯组合：mult → shift → round → ReLU → clip |
 | `std_rf` | `RTL/std_rf.sv` | 通用同步写/组合读 RF（WRF 用） |
 | `sram_model` | `RTL/sram_model.sv` | 行为级 SRAM（1 拍读延迟），综合映射到 RAMB36 |
 
@@ -70,9 +70,14 @@ TB 通过层次引用（`u_core_top.u_cfg.r_*`）直接写配置寄存器，拉 
 
 ### 4.1 权重静止复用（Weight Stationary）
 
-v1 只支持 **packed 模式**（`K²·cin_slices ≤ 32`）：每个 `cs` 开头 `wgt_buffer` 从 WB 灌 `cfg_total_wrf` 个权重到 mac_array 的 WRF，整个 cs 内所有 `(yout, tile, cins, ky, kx)` 迭代都从这组 WRF 读。`wrf_raddr = cins·K² + ky·K + kx`，用 3 个 running base（`wrf_base_cins / ky / kx`）零乘法推进。
+J-3 起**统一走 chunked cins-ahead 流水路径**（原 packed 分支已废弃）。`wgt_buffer` 以 FSM `S_IDLE → S_BIAS_LOAD → S_LOAD (cold round 0) → S_COMPUTE (load/compute overlap) → S_DONE`：
 
-Chunked 模式（K≥7 或 Cin>32）v1 暂不支持，见 `docs/roadmap.md`。
+- WRF 容量 `WRF_DEPTH=32`。每轮最多装 32 个权重（=`c_cur_round_len`）。
+- K² ≤ 32（K ≤ 5）时 `rounds_per_cins=1`，round_len=K²；K=7 时 `rounds_per_cins=2`（32+17）
+- compute 在 S_COMPUTE 期间连续 fire，loader 通过 hazard 检查（`pos_cnt > l_pos` 等）边算边灌下一 round / cins，实现完整 overlap
+- 跨 tile / cs / yout 的权重地址链通过 `l_wb_base / l_wb_base_cs` 维护，无需再退回 S_LOAD
+
+**K=1 守护**：`c_cur_round_len == 1` 时 WRF 每 cins 切换仅 1 个 slot，2 拍流水写不及时。在 `round_wrap` 下一拍插 1 拍 `wgt_valid=0` bubble 等 WRF 更新完成，仅 K=1 场景触发。
 
 ### 4.2 输出通道广播（Output Channel Broadcast）
 
@@ -88,18 +93,52 @@ Chunked 模式（K≥7 或 Cin>32）v1 暂不支持，见 `docs/roadmap.md`。
 
 ---
 
-## 5. PARF / parf_accum 的 cross-tile overlap
+## 5. PARF 架构（per-col 存储 + cross-tile overlap）
 
-原架构 PARF 在 `mac_col` 内部，FILL（累加）和 DRAIN（读出）在同一条时间线上严格串行。
+**K 阶段重构**：`parf_accum` 拆成外壳 + 16 个 `parf_col` 子模块：
 
-新架构把 PARF 外置到 `parf_accum` 模块，内部拆成两个独立 FSM：
+- `parf_col`：单列 PSUM 存储（PARF_DEPTH × 32-bit）+ 独立 write port（we/wr_addr/wdata）+ 组合读 port
+- `parf_accum`：外壳只管计数器（`wr_addr_base / kk_cnt / cins_cnt / fill_tile_cnt` + `rd_addr / drain_tile_cnt / drain_active`）、握手、per-col 地址生成
 
-- **FILL**：维护 `wr_addr / kk_cnt / cins_cnt / fill_tile_cnt`，每拍根据 `psum_in` 做累加或覆盖写入
-- **DRAIN**：维护 `rd_addr / drain_tile_cnt / drain_active`，当 FILL 完成一个 tile 时 (`fill_tile_done`) 立即拉起 `drain_active`
+每列的 wr_addr 可独立：
 
-关键：DRAIN 的 32 拍**隐藏在**下一个 tile 的 FILL first_round 的 32 拍里。同拍 drain 读 parf_data[X]（组合读 → 拿到 tile N 的旧值），fill 写 parf_data[X]（同步写 → 下一拍 register = tile N+1 first_round 值）。没有地址冲突。
+```systemverilog
+wr_addr_col[c] = wr_addr_base − col_group[c] × cfg_fold_col_shift
+we_col[c]      = fill_fire && in_range(wr_addr_col[c])
+```
 
-为防止 fill 领先 drain 导致后续 drain 读到 tile N+1 覆盖值，overlap 期间强制同步：`psum_in_ready = acc_out_ready`（fill 只在 drain 也 fire 时 fire）。
+无 Kx-fold 时 `cfg_fold_col_shift=0`，所有列同 wr_addr，行为等价原单体 parf。有 Kx-fold 时列组按 `col_shift` 偏移，实现 systolic psum shift。
+
+### Cross-tile FILL/DRAIN overlap（保留）
+
+- **FILL**：`wr_addr / kk_cnt / cins_cnt / fill_tile_cnt` 推进，每拍 per-col 累加写入
+- **DRAIN**：`rd_addr / drain_tile_cnt / drain_active`；`fill_tile_done` 事件拉起 `drain_active`
+- DRAIN 的 `cur_valid_w_drain` 拍**隐藏在**下一 tile 的 FILL first_round 里。同拍 drain 读（组合 → 旧值）、fill 写（同步 → 下拍 = 新值）
+- overlap 同步约束：`psum_in_ready = (!overlap || acc_out_ready)` 保证 fill 不领先 drain
+
+### Kx-fold 下的 cur_valid_w 扩展
+
+```
+cur_valid_w_fill_ext = cur_valid_w_fill + (cfg_fold_cout_groups − 1) × cfg_fold_col_shift
+```
+
+line_buffer、wgt_buffer 同步扩展 iss_pos / x_cnt 迭代范围（fire 数要对齐，否则 handshake 死锁 —— 这是 K-2 调试中找到的 hang bug）。
+
+---
+
+## 6. psum_reshape 归约级
+
+Kx-fold 下虚拟 cout_fake = cout_orig × groups。drain 时需把 groups 份 int32 psum 合并：
+
+```systemverilog
+// psum_reshape.sv (纯组合, 0 延迟)
+for (co = 0; co < cout_orig; co++)
+    out[co] = Σ_{g=0..cout_groups−1} in[g × cout_orig + co]
+for (co = cout_orig; co < NUM_COL; co++)
+    out[co] = 0
+```
+
+adder tree 深 `log2(16)=4` 级。无 fold 时 `cout_orig=NUM_COL cout_groups=1`，逻辑直通。
 
 ---
 

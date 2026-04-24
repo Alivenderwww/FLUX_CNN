@@ -57,6 +57,7 @@ module tb_core_dma;
     localparam [11:0] ADDR_NUM_TILES        = 12'h120;
     localparam [11:0] ADDR_LAST_VALID_W     = 12'h124;
     localparam [11:0] ADDR_TOTAL_WRF        = 12'h128;
+    localparam [11:0] ADDR_KY               = 12'h12C;
     localparam [11:0] ADDR_KK               = 12'h130;
     localparam [11:0] ADDR_ROUNDS_PER_CINS  = 12'h134;
     localparam [11:0] ADDR_ROUND_LEN_LAST   = 12'h138;
@@ -88,6 +89,9 @@ module tb_core_dma;
     localparam [11:0] ADDR_IFB_KY_STEP      = 12'h1B0;
     localparam [11:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
     localparam [11:0] ADDR_ARF_REUSE_EN     = 12'h1B8;
+    localparam [11:0] ADDR_FOLD_COUT_ORIG   = 12'h1BC;
+    localparam [11:0] ADDR_FOLD_COUT_GROUPS = 12'h1C0;
+    localparam [11:0] ADDR_FOLD_COL_SHIFT= 12'h1C4;
     localparam [11:0] ADDR_STATUS           = 12'h004;
     localparam [11:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [11:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -235,6 +239,9 @@ module tb_core_dma;
     string case_name_cfg;
     int    ifb_words_cfg, wb_words_cfg, ofb_words_cfg;
     int    num_cin_cfg, num_cout_cfg;
+    // 原始卷积维度 (pre-fold), 用于算真实 MAC 利用率
+    int    k_orig_cfg, num_cin_orig_cfg, num_cout_orig_cfg;
+    int    h_out_cfg, w_out_cfg;
     // Phase G: 多层支持。缺失 → 用 TB hard-coded 默认
     logic [31:0] ddr_ifb_base_cfg, ddr_wb_base_cfg, ddr_ofb_base_cfg, ddr_desc_base_cfg;
     bit          skip_ifb_preload_cfg, skip_ofb_clear_cfg;
@@ -265,10 +272,11 @@ module tb_core_dma;
             count = $sscanf(line, "%s = %d", key, val);
             if (count < 2) continue;
             case (key)
-                "H_OUT"          : axi_lite_write(ADDR_H_OUT,           val);
-                "W_OUT"          : axi_lite_write(ADDR_W_OUT,           val);
+                "H_OUT"          : begin axi_lite_write(ADDR_H_OUT, val); h_out_cfg = val; end
+                "W_OUT"          : begin axi_lite_write(ADDR_W_OUT, val); w_out_cfg = val; end
                 "W_IN"           : axi_lite_write(ADDR_W_IN,            val);
                 "K"              : axi_lite_write(ADDR_K,               val);
+                "KY"             : axi_lite_write(ADDR_KY,              val);
                 "STRIDE"         : axi_lite_write(ADDR_STRIDE,          val);
                 "CIN_SLICES"     : axi_lite_write(ADDR_CIN_SLICES,      val);
                 "COUT_SLICES"    : axi_lite_write(ADDR_COUT_SLICES,     val);
@@ -289,6 +297,9 @@ module tb_core_dma;
                 "IFB_KY_STEP"    : axi_lite_write(ADDR_IFB_KY_STEP,    val);
                 "TILE_PIX_STEP"  : axi_lite_write(ADDR_TILE_PIX_STEP,  val);
                 "ARF_REUSE_EN"   : axi_lite_write(ADDR_ARF_REUSE_EN,   val);
+                "FOLD_COUT_ORIG" : axi_lite_write(ADDR_FOLD_COUT_ORIG,   val);
+                "FOLD_COUT_GROUPS":axi_lite_write(ADDR_FOLD_COUT_GROUPS, val);
+                "FOLD_COL_SHIFT":axi_lite_write(ADDR_FOLD_COL_SHIFT,val);
                 "NUM_TILES"      : axi_lite_write(ADDR_NUM_TILES,       val);
                 "LAST_VALID_W"   : axi_lite_write(ADDR_LAST_VALID_W,    val);
                 "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
@@ -315,6 +326,9 @@ module tb_core_dma;
                 "_META_OFB_WORDS" : ofb_words_cfg = val;
                 "_META_NUM_CIN"   : num_cin_cfg   = val;
                 "_META_NUM_COUT"  : num_cout_cfg  = val;
+                "_META_K_ORIG"        : k_orig_cfg        = val;
+                "_META_NUM_CIN_ORIG"  : num_cin_orig_cfg  = val;
+                "_META_NUM_COUT_ORIG" : num_cout_orig_cfg = val;
                 // Phase G 多层：META DDR base + skip flags
                 "_META_DDR_IFB_BASE"    : ddr_ifb_base_cfg     = val;
                 "_META_DDR_WB_BASE"     : ddr_wb_base_cfg      = val;
@@ -409,7 +423,7 @@ module tb_core_dma;
         int snap_parf_f, snap_parf_d;
         int snap_wrf_writes;
         longint delta_cycles, delta_mac_fire, delta_wrf_writes;
-        int active_pe_per_fire;
+        longint useful_mac;
 
         case_dir = (c < 10) ? $sformatf("cases/case0%0d", c)
                             : $sformatf("cases/case%0d",  c);
@@ -509,14 +523,19 @@ module tb_core_dma;
             for (int pp = 0; pp < NUM_PE; pp++)
                 delta_wrf_writes += pe_wrf_write_arr[cc][pp];
         delta_wrf_writes -= snap_wrf_writes;
-        active_pe_per_fire = ((num_cin_cfg  > NUM_PE)  ? NUM_PE  : num_cin_cfg) *
-                             ((num_cout_cfg > NUM_COL) ? NUM_COL : num_cout_cfg);
 
+        // MAC 利用率: useful_mac_ops / peak_mac_ops
+        //   useful = H_out × W_out × K_orig² × Cin_orig × Cout_orig (原始 conv, fold pad 不算)
+        //   peak   = cycles × NUM_COL × NUM_PE
+        // 100% 只在 Cin×Cout=256 且无 pad/setup 开销时可达, 真正意义的 PE 利用率
+        useful_mac = longint'(h_out_cfg) * longint'(w_out_cfg)
+                   * longint'(k_orig_cfg) * longint'(k_orig_cfg)
+                   * longint'(num_cin_orig_cfg) * longint'(num_cout_orig_cfg);
         // 单 case 结果（一行精简）+ 若干关键指标给 run_regression parser 用
         if (mismatch_cnt == 0)
             $display("CASE_RESULT %0d PASS  cycles=%0d  mac_fire=%0d  mac_util=%.2f%%  arf_w=%0d  arf_r=%0d  parf_f=%0d  parf_d=%0d  ifb_r=%0d  wb_r=%0d  ofb_w=%0d  name=%s",
                      c, delta_cycles, delta_mac_fire,
-                     (real'(delta_mac_fire * active_pe_per_fire) / (real'(delta_cycles) * real'(NUM_COL * NUM_PE))) * 100.0,
+                     (real'(useful_mac) / (real'(delta_cycles) * real'(NUM_COL * NUM_PE))) * 100.0,
                      u_core.u_line_buffer.arf_write_cnt - snap_arf_w,
                      u_core.u_line_buffer.arf_read_cnt  - snap_arf_r,
                      u_core.u_parf_accum.fill_fire_cnt  - snap_parf_f,

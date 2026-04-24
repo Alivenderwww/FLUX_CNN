@@ -49,8 +49,12 @@ module line_buffer #(
     // ---- cfg ----
     input  logic [15:0]                          cfg_h_out,
     input  logic [15:0]                          cfg_w_in,
-    input  logic [3:0]                           cfg_k,
+    input  logic [3:0]                           cfg_k,   // = Kx (可能是虚拟 Kx = kxper)
+    input  logic [3:0]                           cfg_ky,  // Ky (无 fold 时 = cfg_k)
     input  logic [2:0]                           cfg_stride,
+    // Kx-fold: 扩展 iss_pos 到 cur_valid_w + (groups-1)*col_shift, 覆盖 systolic 尾部
+    input  logic [4:0]                           cfg_fold_cout_groups,
+    input  logic [3:0]                           cfg_fold_col_shift,
     input  logic [5:0]                           cfg_cin_slices,
     input  logic [5:0]                           cfg_cout_slices,
     input  logic [5:0]                           cfg_tile_w,
@@ -153,8 +157,14 @@ module line_buffer #(
     // =========================================================================
     // 派生量 + 边界
     // =========================================================================
+    logic [5:0] cur_valid_w_orig;
     logic [5:0] cur_valid_w;
-    assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+    logic [8:0] cur_valid_w_9;
+    assign cur_valid_w_orig = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+    // Kx-fold: iss_pos 扩展到 cur_valid_w_orig + (groups-1)*col_shift
+    assign cur_valid_w_9   = {3'd0, cur_valid_w_orig} +
+                             (cfg_fold_cout_groups - 5'd1) * cfg_fold_col_shift;
+    assign cur_valid_w     = cur_valid_w_9[5:0];
 
     // FILL 长度：仅 reuse_en=1 下有意义；= cur_valid_w + K - 1（滑动窗口覆盖 kx 全范围）
     // 编译器必须保证 cur_fill_len ≤ ARF_DEPTH（tile_w ≤ 33-K）
@@ -166,7 +176,7 @@ module line_buffer #(
 
     logic kx_is_last, ky_is_last, cins_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign kx_is_last   = (kx_cnt   == cfg_k             - 4'd1);
-    assign ky_is_last   = (ky_cnt   == cfg_k             - 4'd1);
+    assign ky_is_last   = (ky_cnt   == cfg_ky            - 4'd1);
     assign cins_is_last = (cins_cnt == cfg_cin_slices    - 6'd1);
     assign tile_is_last = (tile_cnt == cfg_num_tiles     - 8'd1);
     assign yout_is_last = (yout_cnt == cfg_h_out         - 16'd1);
@@ -217,7 +227,7 @@ module line_buffer #(
     //     不会由 IDMA 提供；rows_needed 不能超过 cfg_h_in，否则永远 stall
     logic signed [16:0] rows_needed_signed;
     logic [15:0] rows_needed;
-    assign rows_needed_signed = y_row_base + $signed({13'd0, cfg_k});
+    assign rows_needed_signed = y_row_base + $signed({13'd0, cfg_ky});
     assign rows_needed        = (rows_needed_signed < 0)                        ? 16'd0
                               : (rows_needed_signed > $signed({1'b0, cfg_h_in})) ? cfg_h_in
                               : rows_needed_signed[15:0];

@@ -60,6 +60,9 @@ module wgt_buffer #(
     input  logic [5:0]                           cfg_round_len_last,
     input  logic [ADDR_W-1:0]                    cfg_wb_base,
     input  logic [ADDR_W-1:0]                    cfg_wb_cout_step,
+    // Kx-fold: 扩展 x_cnt 迭代到 cur_valid_w + (groups-1)*col_shift
+    input  logic [4:0]                           cfg_fold_cout_groups,
+    input  logic [3:0]                           cfg_fold_col_shift,
 
     // ---- WB 读 ----
     output logic                                 wb_re,
@@ -146,8 +149,12 @@ module wgt_buffer #(
     // =========================================================================
     // 派生量
     // =========================================================================
-    logic [5:0] cur_valid_w;
-    assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+    logic [5:0] cur_valid_w_orig, cur_valid_w;
+    logic [8:0] cur_valid_w_9;
+    assign cur_valid_w_orig = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+    assign cur_valid_w_9    = {3'd0, cur_valid_w_orig} +
+                              (cfg_fold_cout_groups - 5'd1) * cfg_fold_col_shift;
+    assign cur_valid_w      = cur_valid_w_9[5:0];
 
     logic [5:0] c_cur_round_len;    // compute 侧当前 round 长度
     logic [5:0] l_cur_round_len;    // load 侧当前 round 长度

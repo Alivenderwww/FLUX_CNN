@@ -15,7 +15,8 @@
 | `h_out` | 16 | 输出特征图高度 | `(H_IN - K) / stride + 1` | line_buffer, wgt_buffer, ofb_writer |
 | `w_out` | 16 | 输出特征图宽度 | `(W_IN - K) / stride + 1` | (未被任何模块直接引用，历史遗留) |
 | `w_in` | 16 | 输入宽度（ky 行步进单位） | 直接取 `W_IN` | line_buffer |
-| `k` | 4 | 卷积核边长（1/3/5/7/9） | 直接取 `K` | line_buffer, wgt_buffer |
+| `k` | 4 | 虚拟 Kx (kernel x 维, Kx-fold 时 = kxper，否则 = 原 Kx) | `kxper` if Kx-fold else `K` | line_buffer, wgt_buffer |
+| `ky` | 4 | 虚拟 Ky (kernel y 维, Ky-fold 时 = ky_per_group，否则 = 原 Ky) | `ky_per_group` if Ky-fold else `K` | line_buffer |
 | `stride` | 3 | 卷积步长（1~7） | 直接取 `stride` | line_buffer |
 | `cin_slices` | 6 | 输入通道切片数 | `⌈Cin / NUM_PE⌉` | line_buffer, wgt_buffer, parf_accum |
 | `cout_slices` | 6 | 输出通道切片数 | `⌈Cout / NUM_COL⌉` | line_buffer, wgt_buffer, ofb_writer |
@@ -62,6 +63,18 @@ rounds_per_cins > 1。
 | `sdp_shift` | 5 | 反量化右移量（0~31） |
 | `sdp_relu_en` | 1 | ReLU 使能 |
 
+### Kx-fold（K 阶段新增）
+
+详见 [`pe-fold.md`](pe-fold.md)。
+
+| 寄存器 | 位宽 | 含义 | 无 fold 默认 |
+|--------|------|------|---:|
+| `fold_cout_orig` | 6 | Kx-fold 每组内原始 Cout (∈ {1,2,4,8,16}) | 16 |
+| `fold_cout_groups` | 5 | Kx-fold 列组数 = PE_W / cout_orig | 1 |
+| `fold_col_shift` | 4 | 列组间 wr_addr 偏移量 = kxper / stride | 0 |
+
+消费者：`parf_accum`（per-col wr_addr）、`psum_reshape`（drain 归约）、`line_buffer` / `wgt_buffer`（iss_pos / x_cnt 扩展）。
+
 ---
 
 ## config.txt 示例
@@ -73,6 +86,7 @@ H_OUT = 66
 W_OUT = 118
 W_IN = 120
 K = 3
+KY = 3
 STRIDE = 1
 CIN_SLICES = 1
 COUT_SLICES = 1
@@ -81,6 +95,9 @@ TOTAL_WRF = 9
 KK = 9
 ROUNDS_PER_CINS = 1
 ROUND_LEN_LAST = 9
+FOLD_COUT_ORIG = 16
+FOLD_COUT_GROUPS = 1
+FOLD_COL_SHIFT = 0
 IFB_BASE = 0
 WB_BASE = 0
 OFB_BASE = 0

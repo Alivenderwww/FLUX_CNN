@@ -1,134 +1,116 @@
-# 未来工作规划
+# 未来工作
 
 ## 已完成
 
-- ✅ **握手驱动去中心化流水**（v1 → v3 迭代，MAC 利用率到 99.95%）
-- ✅ **Macro-ISA → cfg-driven FSM**（已退役）
-- ✅ **cross-round pipeline + parf_accum FILL/DRAIN overlap**
-- ✅ **20-bit 内部地址**，支持大图单切片
-- ✅ **chunked 权重调度**（K=7 kk=49 + rolling WRF pipeline）
-- ✅ **DMA 子系统**（IDMA / WDMA / ODMA + axi_m_mux + axi_lite_csr）
-- ✅ **Streaming row-ring 架构**（VGA 480×640 MAC 99.93%）
-- ✅ **RTL 风格规范**（`RTL代码编写原则.md`）
-- ✅ **多 case 回归**（单 vsim + 多 case reuse start/done）
-- ✅ **Phase G：PyTorch 多层编译器**（`nn.Sequential` Conv2d+ReLU 链 bit-exact）
-- ✅ **Phase H：MNIST all-conv 端到端部署验证**
-- ✅ **Phase J-1：batch/streaming 数据路径统一**
-- ✅ **Phase J-2：chunked 多 cout_slices bug 修复 + bias 位宽修复**
-- ✅ **Phase J-3：packed/chunked 统一为单路径**（wgt_buffer 删除 packed 分支 ~200 行）
-- ✅ **Phase J-3：Padding**（line_buffer 坐标越界判定，零代价硬件 padding）
-- ✅ **Phase J-3：Cout/Cin > 16 切片**（streaming 支持任意通道数，v2 `cout_slices=1` 限制打破）
-- ✅ **Phase K-1：K=1 PE 利用率优化**（TILE_W 均衡，消除 parf_accum 短尾 drain_stall）
-- ✅ **Phase K-2：Ky-fold**（Cin < 16 时把 Ky 折到 cin_fake，纯软件，零 RTL 改动）
-- ✅ **Phase K-3：Kx-fold**（Cout < 16 时把 Kx 折到 cout_fake，systolic psum shift）
-  - `parf_col` per-col 存储拆分
-  - `psum_reshape` 组合归约级
-  - Stem 5.74× / L1 2.07× / 端到端 3.29× 加速，MAC util 22% → 77%
+### 架构 / 数据通路
+- 握手驱动去中心化流水（line_buffer / wgt_buffer / mac_array / parf_accum / ofb_writer，valid-ready 对齐）
+- cross-round pipeline + parf_accum FILL/DRAIN overlap
+- 20-bit 内部 SRAM 地址
+- chunked 权重调度（K² > WRF_DEPTH 时按 round 切片，cins-ahead 流水）
+- streaming row-ring 架构（IFB / OFB ring 行级反压，IDMA / core / ODMA 三阶段并发）
+- 任意 Cin / Cout 切片支持（cin_slices / cout_slices > 1）
+- Padding（line_buffer 坐标越界判定，零 RTL 代价）
 
-详见 [`pe-fold.md`](pe-fold.md)。
+### DMA / AXI
+- DMA 子系统：IDMA / WDMA / ODMA / DFE + axi_m_mux + axi_lite_csr
+- descriptor 驱动：DFE 拉取 + desc_fifo + sequencer 分发
+
+### 编译 / 端到端
+- PyTorch 多层编译器：`nn.Sequential` Conv2d+ReLU 链 bit-exact
+- MNIST all-conv 端到端部署验证
+
+### PE 利用率优化
+- K=1 layer TILE_W 均衡（消除 parf_accum 短尾 drain_stall）
+- Ky-fold（Cin<16 时把 Ky 折到 cin_fake，编译器侧）
+- Kx-fold（Cout<16 时把 Kx 折到 cout_fake，systolic psum shift；含 parf_col 拆分 + psum_reshape 归约）
+- Space-to-Depth（stride≥2 时把 4 相位折到 cin，编译器侧重排无复制）
+
+### 工具链
+- 多 case 单 vsim 回归
+- handshake profile 报告（每 case 4 个 V/R 接口的 fire/stall/idle 统计）
+
+详见 [`pe-fold.md`](pe-fold.md) / [`simulation.md`](simulation.md) / 各模块文档 [`modules/`](modules/)。
 
 ---
 
 ## 未来工作
-
-### stride=1 滑窗复用
-
-原 cfg-driven FSM 支持 stride=1 下 ARF 滑窗复用：`kx=0` 载入 `TILE_W=32` 像素，`kx=1..K-1` 每个只加载 1 个新像素。当前 streaming 架构没有此优化，IFB 读 = `TILE_W × K`。
-
-- **K=3 stride=1**：可省 2/3 IFB 读
-- **K=7 stride=1**：可省 6/7 IFB 读
-
-主要是 IFB 带宽节约；当前 MAC utilization 已经很高，实际 cycle 收益有限。
 
 ### Residual Add（SDP 融合）
 
 扩展 `sdp.sv` 在 shift 之前加一路残差加法：
 
 ```systemverilog
-// sdp 新增输入
 input logic signed [NUM_COL*PSUM_WIDTH-1:0] residual_in;
 input logic                                 residual_en;
-
-// 每列组合：psum + residual → shift → relu → clip
-wire signed [PSUM_WIDTH-1:0] combined_ch = 
-    residual_en ? (psum_ch[c] + residual_ch[c]) : psum_ch[c];
+combined_ch[c] = residual_en ? (psum_ch[c] + residual_ch[c]) : psum_ch[c];
 ```
 
-需要新模块（或扩展 `ofb_writer`）从另一块 SRAM 读残差。cfg 加 `cfg_sdp_res_en`, `cfg_res_base`。
+需要从另一块 SRAM 读残差，扩展 `ofb_writer` 或新模块。cfg 加 `cfg_sdp_res_en` / `cfg_res_base`。当前 22 层 ResNet 回归把残差拆成软件加法。
 
 ### Pooling（Max / Avg）
 
-- 新增 `pool_mode` cfg 字段
+- cfg 加 `pool_mode`
 - `sdp` 或独立 pool 模块实现 max 比较和 avg 累加
-- `ofb_writer` 根据 pool stride 调整写地址步进
+- `ofb_writer` 按 pool stride 调整写地址步进
 
 ### Depthwise Conv
 
-每通道独立卷积，MAC 阵列的"16×16 广播"结构不适用。选择：
-- **方案 A**：每列独占一个输入通道、一个输出通道，关闭广播
-- **方案 B**：`DW_MODE` 把 K² 个 tap 展平成 16 个 PE 的工作
+每通道独立卷积，16×16 广播结构不适用。可选：
+- 每列独占一个输入通道 + 一个输出通道，关闭广播
+- `DW_MODE` 把 K² 个 tap 展平到 16 PE 的工作
+
+### Kx systolic tail 跨 tile 重叠
+
+Stem K=8 stride=2 fold 路径里测得 ~7% util gap 来自 Kx-fold 的 head + tail 列 mask（每 tile 4 partial 拍）。把当前 tile 的 tail 拍和下一 tile 的 head 拍时间叠合（让 group 0 提前算下一 tile、group 1 还在补当前 tile 末尾）可消掉这部分。需要 PARF 同时存两 tile 的 psum、wgt_buffer 给两组提供不同 (kx_v, ky_local) 序列、line_buffer iss_pos 跨 tile 连续推进。
 
 ---
 
-## Phase 3 — 时序优化
+## 时序优化（频率）
 
-### 加法树流水化
+100 MHz 下当前 RTL 的全组合路径都不卡。拉到 250-400 MHz 需要：
 
-`mac_col` 的加法树当前是全组合（16 个 16-bit prod 相加到 32-bit），在 100 MHz 基本不成为瓶颈。拉更高频（250-400 MHz）需要：
-
-- 把 16-PE 求和拆成 2-3 级流水（8+8 → 8 + 剩余 → 最终和）
-- 相应调整 `parf_accum` 的 pipe valid 追踪（从 2 级到 3-4 级）
-- 关键路径从 16-way adder tree 缩到 4-way
-
-### SDP 拆流水
-
-纯组合的 `sdp` 在 int8 下不是关键路径，如果进一步拉频可拆成 1 shift + 1 relu + 1 clip。相应 `ofb_writer` 的 OFB 写地址要延后 2-3 拍对齐。
+- mac_col 加法树拆成 2-3 级流水（16-PE 求和 → 8+8 → 4+4 + 终和）；相应 `mac_array` 的 pipe valid 追踪从 2 级扩到 3-4 级
+- `sdp` 拆 1 shift + 1 relu + 1 clip 三级，`ofb_writer` 的 OFB 写地址延后 2-3 拍对齐
 
 ---
 
-## Phase 4 — 多核与系统级
+## 多核与系统级
 
 ### 多核 Mesh 互联
 
-每个核 256 MAC，多核时用片上 mesh 互联做：
-- **权重广播**：Cin 小、图大场景，权重分发到多核
-- **激活广播**：Cout 大场景
-- **Psum 流动**：Cin 和 Cout 都大，Psum 在核间接力累加
+每核 256 MAC，多核场景：
+- 权重广播：Cin 小 + 图大时，权重分发到多核
+- 激活广播：Cout 大时
+- Psum 流动：Cin 和 Cout 都大，Psum 在核间接力累加
 
 ### 行流式跨层融合
 
-IFB 容量小，不需要整层特征图存下。下游核攒够 K 行就启动，延迟从"整层"降到"K 行"。
+下游核攒够 K 行就启动，延迟从"整层"降到"K 行"。利用现有 streaming row-ring 反压，无需新硬件机制。
 
 ### Task Descriptor + Router
 
-编译器/调度器生成每个核的 Task Descriptor：
-- 卷积配置（现有 cfg 寄存器）
-- 数据路由（input 来源 / output 目的）
-- 核间同步（`wait_mask`, `signal_done`）
-
-握手流水架构对这种 DMA 不确定时序**天然友好** —— 模块间的 valid-ready 背压可以直接接到 DMA 的送数节奏上。
+每核独立 descriptor 队列：卷积 cfg、数据路由（input 来源 / output 目的）、核间同步（`wait_mask` / `signal_done`）。
 
 ---
 
-## Phase 5 — 工程化 / 验证 / 编译器
+## 验证 / 工程化
 
-- **真实 SRAM 替换**：`sram_model` → BRAM 原语
-- **UVM 验证平台**：定向测试 → 约束随机覆盖边界场景
-- **性能模型（Roofline）**：算术强度 vs 带宽分析
-- **编译器**：`gen_isa_test.py` → 图编译器，支持多层网络
-- **多层自动调度器**：ONNX → Task Descriptor 链
+- 真实 SRAM 替换：`sram_model` → BRAM 原语
+- UVM 验证平台：定向 → 约束随机
+- 性能模型（Roofline）：算术强度 vs 带宽
+- 多层自动调度器：ONNX → 多层 descriptor 链
 
 ---
 
 ## 优先级建议
 
-| 优先级 | 工作 | 理由 |
-|--------|------|------|
-| 高 | Residual + SDP 融合 | ResNet 是当代标准；当前 22 层 ResNet 回归仍把残差拆成软件加法 |
-| 高 | 多核 Mesh 互联 | 单核已饱和 PE 利用率，下一步性能必须多核 |
-| 中 | Pooling | 大部分 CNN 需要；实现简单（max/avg 比较累加）|
+| 优先级 | 项 | 备注 |
+| --- | --- | --- |
+| 高 | Residual + SDP 融合 | ResNet 主流必备；当前残差走软件 |
+| 高 | 多核 Mesh 互联 | 单核已饱和，下一阶段性能依赖多核 |
+| 中 | Pooling | 多数 CNN 需要 |
+| 中 | Kx tail 跨 tile 重叠 | 收益 ~7% util，仅 fold 场景受益 |
 | 中 | 板级验证 | FPGA 平台选型 + RTL 冻结下板 |
-| 中 | Depthwise Conv | MobileNet / EfficientNet 主导，现有 16×16 广播结构不匹配 |
-| 低 | stride=1 滑窗复用 | IFB 带宽节约，次要但实用 |
-| 低 | 时序优化 | 100 MHz 够用；拉到 400 MHz 需要 mac_col 加法树流水化 |
-| 低 | 门控时钟 / 功耗优化 | 后期 PPA 优化项 |
+| 中 | Depthwise Conv | MobileNet / EfficientNet 主导 |
+| 低 | 频率提升（mac_col 加法树流水化） | 100 MHz 够用 |
+| 低 | 门控时钟 / 功耗优化 | 后期 PPA |

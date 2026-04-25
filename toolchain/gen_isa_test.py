@@ -46,6 +46,8 @@ def parse_args():
                    help='Cin<HW_PE 且 K>1 时启用 Ky 折叠: 把 Ky 维展开到 cin_fake, 提升 PE 空间利用率')
     p.add_argument('--kx-fold', action='store_true',
                    help='Cout<HW_COL 且 K>1 时启用 Kx 折叠: 把 Kx 维展开到 cout_fake (systolic psum), 可与 Ky-fold 叠加')
+    p.add_argument('--s2d', action='store_true',
+                   help='stride>=2 时启用 Space-to-Depth: 把 (kx%stride, ky%stride) 相位折到 cin, 等价 stride=1 conv. K 不被 stride 整除时内核补零.')
     p.add_argument('--out-dir',  default=DEFAULT_OUT_DIR,
                    help='output directory (default: ../sim/tb_core_dma/)')
     p.add_argument('--case-name', default="",
@@ -58,6 +60,7 @@ def generate_random(
     shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
     streaming=False, pad_top=0, pad_left=0, strip_rows=0,
     out_dir=DEFAULT_OUT_DIR, case_name="", ky_fold=False, kx_fold=False,
+    s2d=False,
 ):
     """随机 ifm + weight + 兼容旧 SDP (mult=1, shift=N, clip[0,255], ReLU) 的测试生成。"""
     os.makedirs(out_dir, exist_ok=True)
@@ -124,6 +127,7 @@ def generate_random(
     sdp_round_en, sdp_relu_en = 0, 1
 
     # ---- 模拟硬件算 expected_ofm（bias=None）----
+    #   注意 expected_ofm 用 *原始* conv 计算 (pre-S2D, pre-fold), bit-exact 对照.
     ofm_arr, _H, _W = hw_files.compute_expected_ofm(
         H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride, pad_top, pad_left,
         ifm_arr, w_arr, bias_arr=None,
@@ -131,6 +135,43 @@ def generate_random(
         sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
         sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en)
     assert _H == H_OUT and _W == W_OUT
+
+    # ---- S2D 变换 (软件层): stride>=2 时把 stride 维折到 cin
+    #   等价为 stride=1, K_new=ceil(K/stride), Cin_new=stride²·Cin 的 conv.
+    #   下游 Ky/Kx fold + HW 完全无感, 走标准 stride=1 路径.
+    #   保留原始 (K, NUM_CIN, stride) 用于 META 算 MAC util.
+    K_pre_s2d, NUM_CIN_pre_s2d, stride_pre_s2d = K, NUM_CIN, stride
+    H_IN_pre_s2d, W_IN_pre_s2d, pad_top_pre, pad_left_pre = H_IN, W_IN, pad_top, pad_left
+    s2d_active = False
+    if s2d:
+        K_new, Cin_new, applicable, pad_waste = \
+            hw_files.compute_s2d_params(K, NUM_CIN, stride, HW_PE)
+        if applicable:
+            print(f"S2D    : K={K}→{K_new}, Cin={NUM_CIN}→{Cin_new}, stride={stride}→1, "
+                  f"kernel_pad_waste={pad_waste*100:.1f}%")
+            ifm_arr, H_IN, W_IN, NUM_CIN = hw_files.s2d_input(
+                ifm_arr, H_IN, W_IN, NUM_CIN, pad_top, pad_left, stride)
+            w_arr = hw_files.s2d_weights(w_arr, K, NUM_CIN_pre_s2d, NUM_COUT, stride)
+            K = K_new
+            stride = 1
+            pad_top = 0    # pad 已 absorb 到 pre-pad 输入
+            pad_left = 0
+            s2d_active = True
+
+            # 重派生 cfg (新维度)
+            try:
+                cfg = hw_files.derive_layer_cfg(
+                    H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
+                    stride=stride, pad_top=pad_top, pad_left=pad_left,
+                    TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
+                    streaming=streaming)
+            except ValueError as e:
+                sys.exit(f"ERROR (s2d): {e}")
+            # H_OUT/W_OUT 不变 (S2D 是等价变换)
+            assert cfg['H_OUT'] == H_OUT and cfg['W_OUT'] == W_OUT, \
+                f"S2D cfg dims mismatch: {cfg['H_OUT']}x{cfg['W_OUT']} vs {H_OUT}x{W_OUT}"
+            cin_slices = cfg['cin_slices']
+            cout_slices = cfg['cout_slices']
 
     # ---- Ky / Kx fold (软件层): expand cin_fake (Ky-fold) 和 cout_fake (Kx-fold)
     #   Ky-fold: 虚拟 Cin=cin_fake 填满 PE 行, Ky→ky_per_group (输入 y-shift 复制到 cin 不同行)
@@ -194,10 +235,6 @@ def generate_random(
         cfg['fold_cout_orig']    = NUM_COUT if groups_x > 1 else 16
         cfg['fold_cout_groups']  = groups_x
         cfg['fold_col_shift']    = col_shift  # = kxper/stride, 无 fold 时 0
-        # 原始卷积维度 (给 TB 算 MAC util 用, fold 后 cfg['K/NUM_CIN/NUM_COUT'] 是虚拟值)
-        cfg['K_orig']        = K
-        cfg['NUM_CIN_orig']  = NUM_CIN
-        cfg['NUM_COUT_orig'] = NUM_COUT
 
         hw_files.write_ifb(out_dir, ifm_virt, H_IN_virt, W_IN, cin_fake, HW_PE)
         hw_files.write_wb(out_dir, w_virt, bias_arr=None,
@@ -212,6 +249,11 @@ def generate_random(
                           HW_PE=HW_PE, HW_COL=HW_COL)
         H_IN_hw = H_IN
         pad_top_hw = pad_top
+
+    # 原始卷积维度 (给 TB 算 MAC util 用): 取 *S2D 之前* 的原始值, 与 fold/S2D 无关
+    cfg['K_orig']        = K_pre_s2d
+    cfg['NUM_CIN_orig']  = NUM_CIN_pre_s2d
+    cfg['NUM_COUT_orig'] = NUM_COUT
 
     # expected_ofm 始终以原始 conv 输出为基准 (bit-exact 对照)
     hw_files.write_expected_ofm(out_dir, ofm_arr, H_OUT, W_OUT, NUM_COUT, HW_COL)
@@ -255,4 +297,4 @@ if __name__ == '__main__':
         pad_top=pad_t, pad_left=pad_l,
         strip_rows=args.strip_rows,
         out_dir=args.out_dir, case_name=args.case_name,
-        ky_fold=args.ky_fold, kx_fold=args.kx_fold)
+        ky_fold=args.ky_fold, kx_fold=args.kx_fold, s2d=args.s2d)

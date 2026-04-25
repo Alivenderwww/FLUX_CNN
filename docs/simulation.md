@@ -8,7 +8,9 @@
 cd toolchain
 python run_regression.py                      # 无 fold 基线, 22 case
 python run_regression.py --fold               # Ky-fold 启用
-python run_regression.py --fold --kx-fold     # Ky + Kx fold (最优)
+python run_regression.py --fold --kx-fold     # Ky + Kx fold
+python run_regression.py --s2d                # Space-to-Depth (stride>=2 case)
+python run_regression.py --fold --kx-fold --s2d   # 三个一起
 
 # 只跑 name 含指定子串的 case
 python run_regression.py --case "C8C8"
@@ -22,17 +24,7 @@ python run_regression.py --timeout-ns 2000000000
 1. 对 `CASES` 列表里每个用例调用 `gen_isa_test.py` 生成 `cases/caseNN/*.txt`
 2. 把 case 0 的 `sim_params.f` 拷到 sim dir 并追加 `+N_CASES` / `+TIMEOUT_NS` plusarg
 3. 跑 `vsim -c -do run.tcl`（单 vsim 跑完整个 case 列表，核之间 start/done reuse）
-4. 解析每个 `CASE_RESULT` 行，汇总成 `regression_report.txt`
-
-### 报告示例（Ky+Kx fold）
-
-```
-[ 0] PASS  cycles=1,107,469  MAC= 99.9%  K=7_C4C8____960x540_s2_p3|conv   (stem)
-[ 1] PASS  cycles=  144,520  MAC= 96.3%  K=3_C8C8____240x135_s1_p1|conv   (L1.B1.Conv1)
-[ 6] PASS  cycles=   75,988  MAC= 96.7%  K=3_C16C16__120x68__s1_p1|conv   (L2.B1.Conv2)
-[16] PASS  cycles=   78,934  MAC= 93.0%  K=3_C64C64__30x17___s1_p1|conv   (L4.B1.Conv2)
-[20] PASS  cycles=    9,843  MAC=  5.2%  FC1_C256C512_1x1|conv            (FC1, 1x1 输出低 util)
-```
+4. 解析每个 `CASE_RESULT` 行，汇总成 `regression_report.txt`，含 PROFILE 表（每接口 fire/stall/idle %）
 
 ---
 
@@ -46,9 +38,14 @@ python gen_isa_test.py \
     --stride 1 --pad 1 --shift 0
 
 # 带 fold
-python gen_isa_test.py --k 7 --h_in 960 --w_in 540 \
-    --num_cin 4 --num_cout 8 --stride 2 --pad 3 \
+python gen_isa_test.py --k 8 --h_in 960 --w_in 540 \
+    --num_cin 4 --num_cout 8 --stride 2 --pad 4 \
     --ky-fold --kx-fold
+
+# 带 S2D (stride>=2)
+python gen_isa_test.py --k 8 --h_in 960 --w_in 540 \
+    --num_cin 4 --num_cout 8 --stride 2 --pad 4 \
+    --s2d --kx-fold
 
 # 跑仿真 (--out-dir 默认 ../sim/tb_core_dma)
 cd ../sim/tb_core_dma
@@ -112,10 +109,12 @@ python models/run_model.py --model mnist_allconv \
 ## 5. 仿真输出 CASE_RESULT 格式
 
 ```
-CASE_RESULT 0 PASS  cycles=1107469  mac_fire=1106208  mac_util=71.68%
-                    arf_w=1105920  arf_r=1105920  parf_f=1105920  parf_d=129600
-                    ifb_r=...      wb_r=...        ofb_w=129600
-                    name=K=7_C4C8____960x540_s2_p3|conv
+CASE_RESULT 0 PASS  cycles=1124175  mac_fire=1119768  mac_util=92.76%
+                    arf_w=1119768  arf_r=1119768  parf_f=1119768  parf_d=130351
+                    ifb_r=1106300  wb_r=...        ofb_w=130351
+                    name=K=8_C4C8____960x540_s2_p4|conv
+
+CASE_PROFILE 0 cycles=1124175 act_fire=1085057 act_stall=...   acc_idle=994067 ...
 ```
 
 字段定义：
@@ -129,6 +128,8 @@ CASE_RESULT 0 PASS  cycles=1107469  mac_fire=1106208  mac_util=71.68%
 - `ifb_r` / `wb_r` / `ofb_w`：SRAM 访问次数
 
 FAIL 分支只打 `cycles + mismatches + name`（无 perf counters）。
+
+`CASE_PROFILE` 行包含 4 个核心 V/R 接口（act / wgt / psum / acc）的 {fire, stall, idle} 三计数（解析见 `run_regression.py`）。`run_regression` 把这些计数转成 % 后输出到 `regression_report.txt` 的 PROFILE 表，供分析瓶颈用：fire 高 → 接口顺畅；stall 高 → 该接口被下游卡；idle 高 → 该接口在等上游。
 
 ---
 

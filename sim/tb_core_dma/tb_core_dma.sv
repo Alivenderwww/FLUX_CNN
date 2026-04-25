@@ -532,7 +532,7 @@ module tb_core_dma;
                    * longint'(k_orig_cfg) * longint'(k_orig_cfg)
                    * longint'(num_cin_orig_cfg) * longint'(num_cout_orig_cfg);
         // 单 case 结果（一行精简）+ 若干关键指标给 run_regression parser 用
-        if (mismatch_cnt == 0)
+        if (mismatch_cnt == 0) begin
             $display("CASE_RESULT %0d PASS  cycles=%0d  mac_fire=%0d  mac_util=%.2f%%  arf_w=%0d  arf_r=%0d  parf_f=%0d  parf_d=%0d  ifb_r=%0d  wb_r=%0d  ofb_w=%0d  name=%s",
                      c, delta_cycles, delta_mac_fire,
                      (real'(useful_mac) / (real'(delta_cycles) * real'(NUM_COL * NUM_PE))) * 100.0,
@@ -544,9 +544,36 @@ module tb_core_dma;
                      wb_re_cnt  - snap_wb_re,
                      ofb_we_cnt - snap_ofb_we,
                      case_name_cfg);
-        else
+            // PROFILE: 4 个核心 V/R 接口的 {fire, stall, idle} 原始计数
+            //   接口含义:
+            //     act  : line_buffer  → mac_array      (输入激活)
+            //     wgt  : wgt_buffer   → mac_array      (权重)
+            //     psum : mac_array    → parf_accum     (psum 写入)
+            //     acc  : parf_accum   → sdp/ofb_writer (psum 读出送 SDP)
+            //   语义:
+            //     fire  = V=1 & R=1   (握手成功)
+            //     stall = V=1 & R=0   (上游 valid 但下游不收，下游慢)
+            //     idle  = V=0 & R=1   (下游能收但上游没数据，上游慢)
+            //   解读规则: stall 表示该接口被下游卡; idle 表示该接口在等上游
+            $display("CASE_PROFILE %0d cycles=%0d act_fire=%0d act_stall=%0d act_idle=%0d wgt_fire=%0d wgt_stall=%0d wgt_idle=%0d psum_fire=%0d psum_stall=%0d psum_idle=%0d acc_fire=%0d acc_stall=%0d acc_idle=%0d name=%s",
+                     c, delta_cycles,
+                     u_core.u_mac_array.hs_act_fire   - snap_act_fire,
+                     u_core.u_mac_array.hs_act_stall  - snap_act_stall,
+                     u_core.u_mac_array.hs_act_idle   - snap_act_idle,
+                     u_core.u_mac_array.hs_wgt_fire   - snap_wgt_fire,
+                     u_core.u_mac_array.hs_wgt_stall  - snap_wgt_stall,
+                     u_core.u_mac_array.hs_wgt_idle   - snap_wgt_idle,
+                     u_core.u_mac_array.hs_psum_fire  - snap_psum_fire,
+                     u_core.u_mac_array.hs_psum_stall - snap_psum_stall,
+                     u_core.u_mac_array.hs_psum_idle  - snap_psum_idle,
+                     u_core.u_ofb_writer.hs_acc_fire  - snap_acc_fire,
+                     u_core.u_ofb_writer.hs_acc_stall - snap_acc_stall,
+                     u_core.u_ofb_writer.hs_acc_idle  - snap_acc_idle,
+                     case_name_cfg);
+        end else begin
             $display("CASE_RESULT %0d FAIL  cycles=%0d  mismatches=%0d  name=%s",
                      c, delta_cycles, mismatch_cnt, case_name_cfg);
+        end
     endtask
 
     initial begin

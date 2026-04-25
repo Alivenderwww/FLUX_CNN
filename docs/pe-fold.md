@@ -1,208 +1,188 @@
-# PE 利用率优化：Ky / Kx fold
+# PE 利用率优化：Ky-fold / Kx-fold / Space-to-Depth
 
-K 阶段引入的两种**维度折叠**技术，通过把卷积核的 Ky / Kx 维折叠到 PE 阵列的空闲维度（cin / cout），把 Cin < 16 或 Cout < 16 的"小通道"层从固定 12.5% ~ 50% 的空间利用率拉到 95%+。
+16 × 16 PE 阵列只有当 `Cin ≥ 16 && Cout ≥ 16` 时才能填满。Cin 小或 Cout 小时空间利用率分别只有 `Cin/16` 或 `Cout/16`。三种维度折叠技术分别处理这两种情况：
 
----
+- **Ky-fold**：Cin 小时把卷积核 Ky 维折到 cin 维，编译器侧输入 y 方向偏移复制
+- **Kx-fold**：Cout 小时把卷积核 Kx 维折到 cout 维，硬件 systolic psum shift
+- **Space-to-Depth (S2D)**：stride ≥ 2 时把 (kx%stride, ky%stride) 相位折到 cin 维，编译器侧数据重排
 
-## 1. 背景：16×16 PE 阵列的浪费
+## 1. Ky-fold（编译器侧）
 
-MAC 阵列物理结构：16 列 × 16 PE，每列一个 cout，每行一个 cin。
+### 数学
 
-- `min(Cin, 16) × min(Cout, 16)` 才是**有效活跃 PE 数**
-- stem 层 `Cin=4 Cout=8`：活跃 PE = 32 / 256 = **12.5%**，其余 224 个 PE 空转
-- L1 `Cin=Cout=8`：活跃 PE = 64 / 256 = **25%**
-
-原始 ResNet-18 风格 22 层回归的加权平均 MAC util 只有 **22.1%**，大头卡在 stem（75% 总时间 × 12.5% util）。
-
----
-
-## 2. Ky-fold：纯软件方案
-
-### 2.1 核心思路
-
-Cin 小意味着 PE 行维空闲。把卷积核的 Ky 维"折"成额外的 Cin 通道：
-
-- 原卷积：`Σ_{ky, kx, c} W[ky, kx, c, co] × I[y·s+ky, x·s+kx, c]`
-- 按 Ky 分组：每 `ky_per_group` 个 Ky 为一组，`groups_y = PE_H / Cin` 组
-- 虚拟 Cin: `cin_fake = groups_y × Cin`
-- 虚拟输入：`I'[y, x, g·Cin + c] = I[y + g·ky_per_group·s, x, c]`（y 方向偏移 g·ky_per_group 行的原图复制）
-- 虚拟权重：`W'[ky_local, kx, co, g·Cin+c] = W[g·ky_per_group + ky_local, kx, co, c]`
-
-### 2.2 数学等价性
+原卷积：
 
 ```
-Σ_{ky_local, kx, g, c} W'[...] × I'[...]
-= Σ_{ky_local, kx, g, c} W[g·ky_per_group + ky_local, kx, co, c]
-                        × I[y·s + g·ky_per_group·s + ky_local·s, x·s + kx, c]
-= Σ_{ky, kx, c} W[ky, kx, co, c] × I[y·s + ky·s, x·s + kx, c]   ※ 令 ky = g·ky_per_group + ky_local
-
-wait, 这里 stride 用法有点问题。严格推导：
-I'[y, x, g·Cin + c] = I_padded[y + g·ky_per_group, x, c]
-虚拟卷积 (stride=s) 的 I 索引 = I'[y_out·s + ky_local, ...]
-                             = I_padded[y_out·s + ky_local + g·ky_per_group, x·s+kx, c]
-                             = I_padded[y_out·s + (g·ky_per_group + ky_local), ...]
-                             = I_padded[y_out·s + ky_orig, x·s + kx, c]  ✓
+out[y_out, x_out, co] = Σ_{ky, kx, c} W[ky, kx, co, c] · I_padded[y_out·s + ky, x_out·s + kx, c]
 ```
 
-### 2.3 实现位置
-
-**纯软件**，RTL 零改动：
-- `toolchain/hw_files.py::compute_fold_params(K, Cin, PE_H)` 计算 (groups, ky_per_group, cin_fake, pad_ky)
-- `fold_input()` 生成虚拟 ifm（y-偏移复制）
-- `fold_weights()` 重排权重矩阵
-
-### 2.4 效果
-
-| 层 | 原 util (spatial) | Ky-fold 后 util |
-|---|---:|---:|
-| Stem C4C8 | 12.5% | 50% |
-| L1 C8C8 | 25% | 48.7% |
-| L2.B1.Conv1 C8C16 | 50% | 97.2% |
-
-Ky-fold 单独使 22 层总时间从 8.45M → 3.50M cycles (**2.42× 加速**)。
-
----
-
-## 3. Kx-fold：需要硬件支持
-
-Kx-fold 要把 Kx 折到 **cout 维度**。但 cout 在 MAC 阵列里表现为列，**列之间共享同一个输入广播**——没法像 Ky-fold 那样通过输入预处理解决。
-
-### 3.1 Systolic PSUM Shift 方案
-
-核心思想：**所有列共享同一 x_in 广播，但每列写入 PSUM 的目标地址按列组偏移**。
+按 `ky = g·kyper + ky_local` 分组，定义虚拟 cin 通道 `g·Cin + c`：
 
 ```
-col c (group g, co) 持有权重 W[ky, kx = g·kxper + kx_v, co, cin_row]
-
-cycle (kx_v 外层, x_in 内层) 广播 I[y+ky, x_in, cin]:
-  col c 的目标 x_out = (x_in - col_kx) / stride
-                     = (x_in - g·kxper - kx_v) / stride
+I'[y_virt, x, g·Cin + c] = I_padded[y_virt + g·kyper, x, c]
+W'[ky_local, kx, co, g·Cin+c] = W[g·kyper + ky_local, kx, co, c]
 ```
 
-### 3.2 stride 约束：`kxper % stride == 0`
+虚拟卷积用 `K_new=kyper` 的 ky 维 + `cin_fake = groups_y · Cin` 的 cin 维即等价原计算。
 
-让所有 group 的 parity 对齐（否则每拍只有部分列能发射）。
-
-若 `kxper % stride == 0`，则 `g·kxper/stride` 是整数，每列的 wr_addr 偏移是**静态整数**：
+### 参数选择
 
 ```
-iss_pos = x_in / stride (line_buffer 的 iss_pos 迭代)
-col c 的 wr_addr = iss_pos − g × (kxper / stride) = iss_pos − g × col_shift
+groups_y = HW_PE / Cin                    # PE 行数 / Cin
+kyper    = ceil(K / groups_y)
+pad_ky   = groups_y · kyper - K           # 末组零 pad 数
+cin_fake = groups_y · Cin
 ```
 
-所有列同拍同 parity，整个 16 列齐发，无需 parity gate。
+### 实现位置
 
-### 3.3 iss_pos 迭代范围延长
+- `toolchain/hw_files.py::compute_fold_params(K, Cin, HW_PE)`：返回 `(groups, kyper, cin_fake, pad_ky)`
+- `hw_files.py::fold_input()`：生成虚拟 ifm（每个 y_virt 位置存 groups_y × Cin 个通道，来自 groups_y 个 y-shifted 物理行）
+- `hw_files.py::fold_weights()`：把 W 重排到 W'，pad_ky 位置补零
+- HW 完全无感，按普通 conv 跑
 
-原 line_buffer `iss_pos` 从 0 扫到 `cur_valid_w-1`。Kx-fold 下要延长 `(groups-1) × col_shift` 拍，给最后一个列组留 systolic 尾部：
+### 代价
+
+- IFB 占用 × `groups_y`（输入 y-方向偏移复制）
+- pad_ky > 0 时一部分 PE 行在末组上空算（贡献为 0）
+
+## 2. Kx-fold（硬件支持）
+
+Kx 不能像 Ky 那样靠输入复制解决——MAC 阵列每拍所有列共享同一像素广播，列之间无法用不同输入。
+
+### Systolic PSUM Shift
+
+每列存一个 (cout, kx) 对的权重；不同列组算同一 cout 的不同 kx 贡献，写到 PARF 同一位置时按列组偏移：
 
 ```
-cur_valid_w_ext = cur_valid_w + (groups-1) × col_shift
+col c (group g, co) 持有 W[ky, kx = g·kxper + kx_v, co, cin_row]
+广播 I[y+ky, x_in, cin] (kx_v 外层, x_in 内层):
+  col c 的目标 x_out = (x_in − g·kxper − kx_v) / stride
+                     = iss_pos − g · col_shift
+  col_shift = kxper / stride
 ```
 
-参与 iter 扩展的模块：`line_buffer`、`wgt_buffer`、`parf_accum`。三者必须同步（否则 handshake fire 数对不上死锁，这是调试中找到的 hang bug）。
+### 约束
 
-### 3.4 PARF 重构为 per-col 存储
+`kxper % stride == 0`（让所有 group 的 parity 对齐，每拍 16 列齐发）。
 
-原 `parf_accum` 所有列共用一个 wr_addr。为 Kx-fold，拆成：
+### iss_pos 扩展
 
-- `parf_col.sv`：单列 PSUM 存储（PARF_DEPTH × 32-bit）+ 独立 we/wr_addr/rdata
-- `parf_accum.sv`：外壳只管计数、握手、fill/drain 状态；per-col 地址生成
+LB 的 `iss_pos` 从 `cur_valid_w` 延长到 `cur_valid_w + (groups_x-1) × col_shift`，给最后一列组留 systolic 尾部。`line_buffer / wgt_buffer / parf_accum` 三方扩展量必须一致。
 
-```systemverilog
-// parf_accum 每列 wr_addr
-wr_addr_col[c] = wr_addr_base − col_group[c] × cfg_fold_col_shift
+### PARF 每列 wr_addr 偏移
 
-// 越界 mask (wr_addr_col 超出 [0, cur_valid_w_fill) 时禁写)
-we_col[c] = fill_fire && in_range(wr_addr_col[c])
+`parf_accum` 把 PARF 拆成 16 个独立 `parf_col`：
+
+```
+wr_addr_col[c] = wr_addr − col_group[c] × cfg_fold_col_shift
+we_col[c]      = fill_fire && (0 ≤ wr_addr_col[c] < cur_valid_w_fill)
 ```
 
-### 3.5 psum_reshape 组合归约级
+越界 mask 让首尾几拍只有部分列实际写入。
 
-Kx-fold 后 cout_fake = cout_orig × groups，但原始 Cout 数量不变。drain 时需把同一 cout 下的 groups 个 psum 求和（int32 精度）才能给 SDP：
+### psum_reshape 归约
 
-```systemverilog
-// psum_reshape.sv (纯组合, 不占 cycle)
-for co in [0, cout_orig):
-    out[co] = Σ_{g=0..groups-1} in[g × cout_orig + co]
-for co in [cout_orig, 16):
-    out[co] = 0
+drain 时用 `psum_reshape` 把同一 cout 下 `groups_x` 个列贡献求和，给 SDP `cout_orig` 路：
+
+```
+out[co] = Σ_{g=0..groups_x-1} in[g · cout_orig + co]    co ∈ [0, cout_orig)
+out[co] = 0                                              co ∈ [cout_orig, NUM_COL)
 ```
 
-adder tree 深 `log2(max_groups) = 4` 级，远低于 10 ns budget。
+纯组合，0 周期。
 
-### 3.6 K=1 的时序守护（Bubble）
+### K=1 round_wrap bubble
 
-K=1 时 `c_cur_round_len = 1`（WRF 只存 1 个 weight）。cins 切换瞬间：
-- compute 前一拍读 WRF[0] = cins=k 权重
-- loader 这一拍写 WRF[0] = cins=k+1 权重（2 拍流水）
-- 下一拍 compute 读 WRF[0] 时 ram 还未更新 → 读到旧值，数据错
+K=1 时 WRF 只用 1 slot。cins 切换瞬间 compute 读 WRF[0] 与 loader 写 WRF[0] 撞同址。修复：`c_cur_round_len == 1` 时 round_wrap 下一拍插 1 拍 bubble（`wgt_valid=0`）等 WRF 写完成。K≥2 时 round_len≥2 自然错开。
 
-修复：`c_cur_round_len == 1` 时在 `round_wrap` 下一拍插 1 拍 bubble（`wgt_valid=0`），等 WRF 写完成。K≥2 的 round_len≥2 slot 自然错开，无此 hazard。
+### 参数选择
 
----
+`compute_fold_params_kx(K, Cout, stride, HW_COL)`：
 
-## 4. ARF 约束与 TILE_W
-
-Kx-fold 下 `cur_fill_len = cur_valid_w_ext + K − 1` 可能超 ARF_DEPTH=32。软件选 TILE_W 时要预留 fold_tail：
-
-```python
-max_tile_w = ARF_DEPTH − K + 1 − fold_tail
-# fold_tail = (groups_x − 1) × col_shift
+```
+groups_max = HW_COL // Cout
+for g in range(groups_max, 1, -1):
+    kxper = ceil(K/g) 向上取整到 stride 倍数
+    if g·kxper ≥ K AND kxper % stride == 0:
+        cand = (g, kxper, g·Cout, g·kxper-K, kxper/stride)
+取 pad_kx 最小 (tie-break: groups 更大)
 ```
 
-### Kx-fold 参数选择算法（`compute_fold_params_kx`）
+## 3. Space-to-Depth（编译器侧）
 
-```python
-for g in range(groups_max, 1, -1):            # groups_max = PE_W // Cout
-    kxper_min = ceil(K / g)
-    kxper = ceil(kxper_min / stride) * stride  # 向上取整到 stride 倍数
-    if g × kxper >= K and kxper % stride == 0:
-        pad_kx = g × kxper − K
-        col_shift = kxper // stride
-        # 取 pad_kx 最小 (tie-break 取 groups 更大)
+stride ≥ 2 的卷积，把 (kx%stride, ky%stride) 4 个相位折到 cin 维。等价为 stride=1、`K_new = ceil(K/stride)`、`Cin_new = stride² · Cin` 的卷积。
+
+### 数学
+
+`ky = stride·ky' + a, kx = stride·kx' + b, p = a·stride + b`：
+
+```
+I'[Y, X, p·Cin + c] = I_padded[Y·stride + a, X·stride + b, c]
+W'[ky', kx', co, p·Cin+c] = W[ky'·stride + a, kx'·stride + b, co, c]
+                            (越界补 0, K 不被 stride 整除时)
 ```
 
----
+### 参数
 
-## 5. 回归性能（Ky + Kx fold 叠加）
+```
+K_new   = ceil(K / stride)
+Cin_new = stride² · Cin
+pad_waste = (K_new² · stride² - K²) / (K_new² · stride²)
+```
 
-| 层 | 原始 | Ky+Kx fold | 加速 | MAC util |
-|---|---:|---:|---:|---:|
-| Stem K=7 C4C8 960×540 s=2 | 6,353,678 | 1,107,469 | **5.74×** | **99.9%** |
-| L1 K=3 C8C8 ×4 | 1,197,584 | 578,080 | 2.07× | 96.3% |
-| 其他 18 层（Cin/Cout≥16 或 K=1） | 903,635 | 880,067 | 1.00× | 不变 |
-| **合计** | **8,454,897** | **2,565,616** | **3.29×** | - |
+K 被 stride 整除时 `pad_waste=0`（如 K=8 stride=2，4 个相位都是 4×4）；不整除时不同相位 sub-kernel 形状不齐，统一 pad 到 K_new × K_new 会浪费一部分 MAC。
 
-@ 100 MHz: 84.5 ms → **25.7 ms / 39 fps**
-@ 400 MHz: 6.4 ms / **156 fps**
+### 实现位置
 
-加权平均 MAC util：**22.1% → ~77%**（≈197 个 PE 平均活跃）
+- `compute_s2d_params(K, Cin, stride)`：返回 `(K_new, Cin_new, applicable, pad_waste)`
+- `s2d_input()`：pre-pad 到 stride 整除尺寸 + 重排 4 相位通道
+- `s2d_weights()`：W 重排 + 内核 pad 到统一 K_new
 
----
+### 代价 / 收益
 
-## 6. 受益层筛选规则
+- DDR / IFB 内存：等量重排（不复制）。相比 Ky-fold 的 `groups_y` 倍 inflation，多核场景 DDR 带宽节省明显
+- HW 完全无感（按 stride=1 conv 跑）
+- 启用 stride=1 ARF reuse_en=1 滑动窗口复用，IFB 读次数大幅下降
+- 反压：reuse_en=1 模式 ky 边界 K 拍 FILL 启动惰性，对 cycles 有 ~3% 量级影响
 
-Fold 生效条件（`run_regression.py` 里的自动决策）：
+## 4. ARF 容量约束
 
-| 优化 | 生效条件 |
-|---|---|
-| Ky-fold | `K > 1` AND `Cin < 16` |
-| Kx-fold | `K > 1` AND `Cout < 16` AND `Cout` 是 16 的整约数（∈ {1,2,4,8}） |
+Kx-fold 下 LB 的 FILL 长度：
 
-K=1 的 Downsample / FC 层不受益（无 ky/kx 可折）。Cin / Cout ≥ 16 的主层已近满 util，无需 fold。
+```
+cur_fill_len = cur_valid_w_ext + K - 1 = (cur_valid_w + (groups_x-1)·col_shift) + K - 1
+```
 
----
+必须 ≤ `ARF_DEPTH = 32`。编译器选 `tile_w` 时要预留 `fold_tail = (groups_x-1)·col_shift`：
 
-## 7. 相关文件
+```
+max_tile_w = ARF_DEPTH - K + 1 - fold_tail
+```
 
-| 文件 | 职责 |
-|---|---|
-| `RTL/parf_col.sv` | 单列 PSUM 存储 |
-| `RTL/parf_accum.sv` | parf 外壳 + per-col wr_addr 生成 |
-| `RTL/psum_reshape.sv` | drain 时 cout 归约级 |
-| `RTL/cfg_regs.sv` | FOLD_COUT_ORIG / FOLD_COUT_GROUPS / FOLD_COL_SHIFT 寄存器 |
+## 5. 受益层判定
+
+`run_regression.py` 自动决策：
+
+| 优化 | 触发条件 |
+| --- | --- |
+| Ky-fold | `K > 1 AND Cin < 16` |
+| Kx-fold | `K > 1 AND Cout < 16 AND Cout ∈ {1,2,4,8}` |
+| S2D | `stride ≥ 2 AND K ≥ stride` |
+
+S2D 启用后 Cin 变为 stride²·Cin，重新判定 Ky-fold 触发条件（多数情况下 S2D 后 Cin' ≥ 16 不再需要 Ky-fold）。
+
+K=1 / FC 层不受益（无可折维度）。Cin/Cout ≥ 16 的主层已近满 util，不需要 fold。
+
+## 6. 相关 RTL / 工具链文件
+
+| 文件 | 内容 |
+| --- | --- |
+| `RTL/parf_col.sv` | Kx-fold 单列 PSUM 存储 |
+| `RTL/parf_accum.sv` | per-col wr_addr 偏移 + we mask |
+| `RTL/psum_reshape.sv` | Kx-fold drain 时 cout 归约 |
+| `RTL/cfg_regs.sv` | FOLD_COUT_ORIG / FOLD_COUT_GROUPS / FOLD_COL_SHIFT |
 | `RTL/line_buffer.sv` | iss_pos 扩展到 `cur_valid_w + fold_tail` |
 | `RTL/wgt_buffer.sv` | x_cnt 同步扩展 + K=1 bubble |
-| `toolchain/hw_files.py` | fold 工具：`compute_fold_params` / `compute_fold_params_kx` / `fold_input` / `fold_weights` |
-| `toolchain/gen_isa_test.py` | `--ky-fold` / `--kx-fold` 命令行入口 |
+| `toolchain/hw_files.py` | `compute_fold_params*` / `fold_input/weights` / `compute_s2d_params` / `s2d_input/weights` |
+| `toolchain/gen_isa_test.py` | `--ky-fold` / `--kx-fold` / `--s2d` |

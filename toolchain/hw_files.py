@@ -46,6 +46,97 @@ def sdp_sim(psum_i32, mult, shift, zp_out, clip_min, clip_max, round_en, relu_en
 
 
 # ---------------------------------------------------------------------------
+# Space-to-Depth (S2D): stride>=2 时把 (kx%stride, ky%stride) 相位折到 cin 维
+#   原 conv (K, Cin, stride>=2) → 等价 conv (K_new=ceil(K/stride), Cin_new=stride²·Cin, stride=1)
+#   编译器侧纯数据重排 + 内核补零, HW 完全无感 (按普通 stride=1 conv 跑).
+#   收益: 不需要输入复制 (vs Ky-fold), 多核 DDR 带宽 1× (vs Ky-fold 的 stride²× inflation).
+#   代价: K 不被 stride 整除时, 不同相位 sub-kernel 形状不齐, 需补零到统一 K_new × K_new,
+#         浪费比例 = (K_new² × stride² − K²) / (K_new² × stride²).
+# ---------------------------------------------------------------------------
+def compute_s2d_params(K, NUM_CIN, stride, HW_PE=16):
+    """
+    返回 (K_new, Cin_new, applicable, padding_waste).
+    适用条件: stride >= 2 AND K >= stride.
+    K_new       = ceil(K / stride)
+    Cin_new     = stride² × NUM_CIN
+    padding_waste = 内核 0-pad 比例 (K=stride 倍数时为 0).
+    """
+    if stride < 2 or K < stride:
+        return K, NUM_CIN, False, 0.0
+    K_new = (K + stride - 1) // stride
+    Cin_new = stride * stride * NUM_CIN
+    total_padded = K_new * K_new * stride * stride
+    total_useful = K * K
+    padding_waste = (total_padded - total_useful) / total_padded
+    return K_new, Cin_new, True, padding_waste
+
+
+def s2d_input(ifm_arr, H_IN, W_IN, NUM_CIN, pad_top, pad_left, stride):
+    """
+    对原始 ifm 做 pre-pad + S2D 重排.
+    1. pre-pad 到 stride 整除尺寸 (含 pad_top/left 区, 必要时末尾再补 0)
+    2. I_s2d[Y, X, p·Cin+c] = I_padded[Y·stride + a(p), X·stride + b(p), c]
+       其中 p = a·stride + b, a,b ∈ [0, stride)
+    返回 (ifm_s2d, H_s2d, W_s2d, Cin_new).
+    新 conv 用 stride=1, pad_top=0, pad_left=0 (pad 已吸收进 pre-pad 输入).
+    """
+    H_pad = H_IN + 2 * pad_top
+    W_pad = W_IN + 2 * pad_left
+    H_pad_aln = ((H_pad + stride - 1) // stride) * stride
+    W_pad_aln = ((W_pad + stride - 1) // stride) * stride
+    Cin_new   = stride * stride * NUM_CIN
+    H_s2d     = H_pad_aln // stride
+    W_s2d     = W_pad_aln // stride
+
+    # pre-padded full image (zeros for pad regions + stride 对齐补零)
+    padded = [[[0] * NUM_CIN for _ in range(W_pad_aln)] for _ in range(H_pad_aln)]
+    for y in range(H_IN):
+        for x in range(W_IN):
+            for c in range(NUM_CIN):
+                padded[y + pad_top][x + pad_left][c] = ifm_arr[y][x][c]
+
+    # S2D rearrange
+    ifm_s2d = [[[0] * Cin_new for _ in range(W_s2d)] for _ in range(H_s2d)]
+    for Y in range(H_s2d):
+        for X in range(W_s2d):
+            for a in range(stride):
+                for b in range(stride):
+                    p = a * stride + b
+                    y_src = Y * stride + a
+                    x_src = X * stride + b
+                    for c in range(NUM_CIN):
+                        ifm_s2d[Y][X][p * NUM_CIN + c] = padded[y_src][x_src][c]
+    return ifm_s2d, H_s2d, W_s2d, Cin_new
+
+
+def s2d_weights(w_arr, K, NUM_CIN, NUM_COUT, stride):
+    """
+    权重 S2D 重排 + 内核补零到 K_new × K_new.
+    W'[ky', kx', co, p·Cin+c] = W[ky'·stride + a(p), kx'·stride + b(p), co, c]
+        if ky'·stride + a < K AND kx'·stride + b < K, else 0 (kernel pad).
+    返回 w_new [K_new][K_new][Cout][Cin_new].
+    """
+    K_new   = (K + stride - 1) // stride
+    Cin_new = stride * stride * NUM_CIN
+    w_new = [[[[0] * Cin_new for _ in range(NUM_COUT)]
+              for _ in range(K_new)]
+             for _ in range(K_new)]
+    for ky_new in range(K_new):
+        for kx_new in range(K_new):
+            for a in range(stride):
+                for b in range(stride):
+                    p = a * stride + b
+                    ky_orig = ky_new * stride + a
+                    kx_orig = kx_new * stride + b
+                    if ky_orig < K and kx_orig < K:
+                        for co in range(NUM_COUT):
+                            for c in range(NUM_CIN):
+                                w_new[ky_new][kx_new][co][p * NUM_CIN + c] = \
+                                    w_arr[ky_orig][kx_orig][co][c]
+    return w_new
+
+
+# ---------------------------------------------------------------------------
 # Kx-fold: Cout < PE_W 时把 Kx 维折到 cout_fake 维 (利用空闲列, systolic psum shift)
 # ---------------------------------------------------------------------------
 def compute_fold_params_kx(K, NUM_COUT, stride=1, HW_COL=16):

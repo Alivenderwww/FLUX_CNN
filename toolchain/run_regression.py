@@ -48,7 +48,7 @@ CASES = [
     # Pool 层硬件不支持，跳过。FC 可视为 1x1 conv。streaming 已支持任意 Cin/Cout。
 
     # ---- Stem ----
-    ("K=7 C4C8    960x540 s2 p3", "conv",   4,   8, 7, 960, 540, 2, 0, 3),  # Conv2d stem            -> 480x270
+    ("K=7 C4C8    960x540 s2 p4", "conv",   4,   8, 7, 960, 540, 2, 0, 4),  # Conv2d stem            -> 480x270
   # ("MaxPool2d   480x270 s2 p1", "pool",   8,   8, 3, 480, 270, 2, 0, 1),  # MaxPool2d              -> 240x135  [无 pool 硬件]
 
     # ---- Layer 1: 4 conv, C=8 ----
@@ -103,13 +103,14 @@ def estimate_case_timeout_ns(c_in, c_out, k, h_in, w_in, stride, pad):
 
 
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad,
-                   ky_fold=False, kx_fold=False):
+                   ky_fold=False, kx_fold=False, s2d=False):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
     # J-1: gen_isa_test.py 的 --streaming 默认 True，无需显式传
     fold_flag = ""
     if ky_fold: fold_flag += " --ky-fold"
     if kx_fold: fold_flag += " --kx-fold"
+    if s2d:     fold_flag += " --s2d"
     gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" "
                f"--num_cin {c_in} --num_cout {c_out} --k {k} "
                f"--h_in {h_in} --w_in {w_in} --stride {stride} "
@@ -147,31 +148,51 @@ CASE_RE = re.compile(
     r"(?:\s+mismatches=(\d+))?"
     r"\s+name=([^\n]+)")
 
+# CASE_PROFILE 行: 4 个 V/R 接口 × 3 状态 = 12 个原始 handshake 计数
+PROFILE_RE = re.compile(
+    r"CASE_PROFILE\s+(\d+)\s+cycles=(\d+)"
+    r"\s+act_fire=(\d+)\s+act_stall=(\d+)\s+act_idle=(\d+)"
+    r"\s+wgt_fire=(\d+)\s+wgt_stall=(\d+)\s+wgt_idle=(\d+)"
+    r"\s+psum_fire=(\d+)\s+psum_stall=(\d+)\s+psum_idle=(\d+)"
+    r"\s+acc_fire=(\d+)\s+acc_stall=(\d+)\s+acc_idle=(\d+)"
+    r"\s+name=([^\n]+)")
+
 
 def parse_sim_log(text):
     """返回 list of dict（按 case index 排序）"""
     results = {}
     for line in text.splitlines():
         m = CASE_RE.search(line)
-        if not m:
+        if m:
+            idx = int(m.group(1))
+            results.setdefault(idx, {})
+            results[idx].update({
+                "idx":        idx,
+                "passed":     m.group(2) == "PASS",
+                "cycles":     int(m.group(3)),
+                "mac_fire":   int(m.group(4) or 0),
+                "mac_util":   float(m.group(5) or 0.0),
+                "arf_w":      int(m.group(6) or 0),
+                "arf_r":      int(m.group(7) or 0),
+                "parf_f":     int(m.group(8) or 0),
+                "parf_d":     int(m.group(9) or 0),
+                "ifb_r":      int(m.group(10) or 0),
+                "wb_r":       int(m.group(11) or 0),
+                "ofb_w":      int(m.group(12) or 0),
+                "name":       m.group(14).strip(),
+                "mismatches": int(m.group(13) or 0),
+            })
             continue
-        idx = int(m.group(1))
-        results[idx] = {
-            "idx":        idx,
-            "passed":     m.group(2) == "PASS",
-            "cycles":     int(m.group(3)),
-            "mac_fire":   int(m.group(4) or 0),
-            "mac_util":   float(m.group(5) or 0.0),
-            "arf_w":      int(m.group(6) or 0),
-            "arf_r":      int(m.group(7) or 0),
-            "parf_f":     int(m.group(8) or 0),
-            "parf_d":     int(m.group(9) or 0),
-            "ifb_r":      int(m.group(10) or 0),
-            "wb_r":       int(m.group(11) or 0),
-            "ofb_w":      int(m.group(12) or 0),
-            "name":       m.group(14).strip(),
-            "mismatches": int(m.group(13) or 0),
-        }
+        mp = PROFILE_RE.search(line)
+        if mp:
+            idx = int(mp.group(1))
+            results.setdefault(idx, {})
+            results[idx].update({
+                "act_fire":   int(mp.group(3)),  "act_stall":  int(mp.group(4)),  "act_idle":   int(mp.group(5)),
+                "wgt_fire":   int(mp.group(6)),  "wgt_stall":  int(mp.group(7)),  "wgt_idle":   int(mp.group(8)),
+                "psum_fire":  int(mp.group(9)),  "psum_stall": int(mp.group(10)), "psum_idle":  int(mp.group(11)),
+                "acc_fire":   int(mp.group(12)), "acc_stall":  int(mp.group(13)), "acc_idle":   int(mp.group(14)),
+            })
     return [results[i] for i in sorted(results.keys())]
 
 
@@ -223,6 +244,55 @@ def write_report(results, label=""):
     L("  IFB_R/OFB_W=SRAM 访问次数；PARF_F/PARF_D=psum 累加写/读")
     L()
 
+    # ---- Handshake PROFILE 表 ----
+    # 4 个 V/R 接口 × {fire, stall, idle} 原始计数, 百分比相对 case cycles
+    # 解读:
+    #   fire  = V&R 都 1 (握手成功)
+    #   stall = V=1 R=0 (上游有数据但下游不收, 下游慢)
+    #   idle  = V=0 R=1 (下游能收但上游没数据, 上游慢)
+    if any('act_fire' in r for r in results):
+        L(SEP)
+        L("  Handshake PROFILE — 各 V/R 接口 {fire / stall / idle} 占总 cycle %")
+        L(SEP)
+        L()
+        hdr = (f"  {'Case':<27} {'Cycles':>11}  "
+               f"{'act F/S/I':>22}  "
+               f"{'wgt F/S/I':>22}  "
+               f"{'psum F/S/I':>22}  "
+               f"{'acc F/S/I':>22}")
+        L(hdr)
+        L(SUB)
+        for r in results:
+            if 'act_fire' not in r:
+                continue
+            if "|" in r["name"]:
+                cname, _ = r["name"].rsplit("|", 1)
+            else:
+                cname = r["name"]
+            cy = max(r['cycles'], 1)
+            def fsi(prefix):
+                f = 100.0 * r[f'{prefix}_fire']  / cy
+                s = 100.0 * r[f'{prefix}_stall'] / cy
+                i = 100.0 * r[f'{prefix}_idle']  / cy
+                return f"{f:>5.1f}/{s:>5.1f}/{i:>5.1f}"
+            row = (f"  {cname:<27} {r['cycles']:>11,}  "
+                   f"{fsi('act'):>22}  "
+                   f"{fsi('wgt'):>22}  "
+                   f"{fsi('psum'):>22}  "
+                   f"{fsi('acc'):>22}")
+            L(row)
+        L(SUB)
+        L("  接口含义:")
+        L("    act  = line_buffer  → mac_array      (输入激活)")
+        L("    wgt  = wgt_buffer   → mac_array      (权重)")
+        L("    psum = mac_array    → parf_accum     (psum 写入)")
+        L("    acc  = parf_accum   → sdp/ofb_writer (psum 读出送 SDP)")
+        L("  解读:")
+        L("    fire 高 → 接口在该 % 时间正常握手 (理想就是 100% fire)")
+        L("    stall 高 → 该接口被下游卡: 检查 stall 接口的下一级")
+        L("    idle 高 → 该接口在等上游: 检查 idle 接口的上一级")
+        L()
+
     L(SEP)
     L(f"  Overall: {'All PASS [OK]' if all_pass else 'Some FAILED [!!]'}  ({len(results)} cases)")
     L(SEP)
@@ -252,6 +322,8 @@ def main():
                         help="对所有 K>1 且 Cin<16 的 case 启用 Ky fold")
     parser.add_argument("--kx-fold", action="store_true",
                         help="对所有 K>1 且 Cout<16 的 case 启用 Kx fold (可与 --fold 叠加)")
+    parser.add_argument("--s2d", action="store_true",
+                        help="对所有 stride>=2 且 K>=stride 的 case 启用 Space-to-Depth (可与 fold 叠加)")
     args = parser.parse_args()
     OUTPUT_FILE = args.out
 
@@ -272,19 +344,28 @@ def main():
     print(f"\n[Step 1] 生成 {n_cases} 个 case 数据 ...")
     for i, case in enumerate(cases):
         # case 里 c_in 是第 3 个字段 (idx 2), k 是第 5 个 (idx 4)
-        _, _, c_in_v, _, k_v, _, _, _, _, _ = case
+        _, _, c_in_v, _, k_v, _, _, stride_v, _, _ = case
         # case 里 c_out 是第 4 个字段 (idx 3)
         _, _, _, c_out_v, _, _, _, _, _, _ = case
-        # fold 条件: K>1 且 Cin<16 (Ky); K>1 且 Cout<16 (Kx)
-        use_ky = args.fold    and (k_v > 1) and (c_in_v  < 16)
-        use_kx = args.kx_fold and (k_v > 1) and (c_out_v < 16)
-        gen_info, err = gen_case_files(i, *case, ky_fold=use_ky, kx_fold=use_kx)
+        # 转换条件:
+        #   S2D : stride>=2 AND K>=stride (S2D 后 stride=1, Cin'=stride²·Cin)
+        #   Ky-fold: K>1 AND Cin<16 (S2D 后 Cin' 通常 ≥16, Ky-fold 自动跳过)
+        #   Kx-fold: K>1 AND Cout<16
+        use_s2d = args.s2d and (stride_v >= 2) and (k_v >= stride_v)
+        # S2D 后 Cin' = stride²·Cin, 重新判断 fold 触发条件
+        c_in_eff = (stride_v * stride_v * c_in_v) if use_s2d else c_in_v
+        k_eff    = ((k_v + stride_v - 1) // stride_v) if use_s2d else k_v
+        use_ky = args.fold    and (k_eff > 1) and (c_in_eff < 16)
+        use_kx = args.kx_fold and (k_eff > 1) and (c_out_v  < 16)
+        gen_info, err = gen_case_files(i, *case,
+                                       ky_fold=use_ky, kx_fold=use_kx, s2d=use_s2d)
         if err:
             print(f"  case {i} ({case[0]}) gen ERROR: {err}")
             sys.exit(1)
         fold_mark = ""
-        if use_ky: fold_mark += "[ky]"
-        if use_kx: fold_mark += "[kx]"
+        if use_s2d: fold_mark += "[s2d]"
+        if use_ky:  fold_mark += "[ky]"
+        if use_kx:  fold_mark += "[kx]"
         print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']} {fold_mark}")
 
     # 把 case0 的 sim_params.f 复制到 SIM_DIR/ 给 vsim 启动参数用（-gSRAM_DEPTH，-sva 等）

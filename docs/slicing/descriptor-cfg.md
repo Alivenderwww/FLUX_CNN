@@ -32,7 +32,7 @@
 
 | 寄存器 | 含义 |
 | --- | --- |
-| `KK` (0x130) | `K × KY`（fold 后是 `kxper × kyper`），parf_accum 计 fill 拍数用 |
+| `KK` (0x130) | `K × KY`（Ky-fold 后是 `K × kyper`），parf_accum 计 fill 拍数用 |
 | `TOTAL_WRF` (0x128) | `KK × cin_slices`，wgt_buffer cold load 总写 WRF 次数 |
 | `ROUNDS_PER_CINS` (0x134) | `⌈KK / 32⌉`，K² 超 WRF 容量时按 round 切片 |
 | `ROUND_LEN_LAST` (0x138) | 末 round 长度 |
@@ -84,10 +84,9 @@ axi_lite_write(ADDR_DESC_COUNT,     n_strips + 1)
 | 启用项 | 影响 |
 | --- | --- |
 | `--ky-fold` | 用 `cin_fake = groups_y × Cin` 重派 → 一般 `cin_slices = 1` |
-| `--kx-fold` | 用 `cout_fake = groups_x × Cout = 16` 重派 → `cout_slices = 1` |
 | `--s2d` | 用 `Cin_new = stride² × Cin` 重派 → `cin_slices` 可能 > 1 |
 
-Kx-fold 配的 `FOLD_COUT_ORIG / FOLD_COUT_GROUPS / FOLD_COL_SHIFT` 是独立 cfg 字段（0x1BC..0x1C4），和切片机制不冲突。`KK` 在 fold 时用 `kxper × kyper`，`K` 和 `KY` 用虚拟 K（fold 后维度），`COUT_SLICES` 重新派生（一般是 1）。
+Ky-fold 后 `KY = kyper`、`KK = K × kyper`、`Cin' = cin_fake`，`COUT_SLICES` 不受影响（Cout 维度不折叠）。S2D 后 `K = K_new`、`stride = 1`、`Cin' = stride² × Cin`，按新维度重派 `cin_slices`。
 
 ## 软件 source of truth
 

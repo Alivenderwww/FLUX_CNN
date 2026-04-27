@@ -1,6 +1,6 @@
 # ofb_writer
 
-接收 `psum_reshape` 输出的 16 路 psum，过 SDP 量化成 16 路 int8，写入 OFB SRAM。同时维护 row-level credit 给 ODMA（streaming 模式下）。
+接收 `parf_accum` 输出的 16 路 psum，过 SDP 量化成 16 路 int8，写入 OFB SRAM。同时维护 row-level credit 给 ODMA（streaming 模式下）。
 
 ## 参数
 
@@ -26,7 +26,7 @@
 | --- | --- | --- |
 | `start / done` | in / out | 与 sequencer 的握手 |
 
-### 上游（来自 parf_accum 经 psum_reshape）
+### 上游（来自 parf_accum）
 
 | 信号 | 方向 | 含义 |
 | --- | --- | --- |
@@ -125,7 +125,7 @@ acc 接口的 {fire, stall, idle} 三计数器：
 ## 在 core_top 中的位置
 
 实例 `u_ofb_writer`：
-- 上游：`u_psum_reshape.out_*`（间接来自 `u_parf_accum.acc_out_*`）
+- 上游：`u_parf_accum.acc_out_*`
 - 下游：`u_ofb` SRAM 的写端口
 - start/done 由 `u_sequencer` 同步驱动
 - `rows_written / rows_drained / row_done_pulse` 与 `u_odma` 双向交互（streaming row credit）

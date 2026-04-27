@@ -137,45 +137,6 @@ def s2d_weights(w_arr, K, NUM_CIN, NUM_COUT, stride):
 
 
 # ---------------------------------------------------------------------------
-# Kx-fold: Cout < PE_W 时把 Kx 维折到 cout_fake 维 (利用空闲列, systolic psum shift)
-# ---------------------------------------------------------------------------
-def compute_fold_params_kx(K, NUM_COUT, stride=1, HW_COL=16):
-    """
-    返回 (groups_x, kx_per_group, cout_fake, pad_kx, col_shift).
-      col_shift = kx_per_group // stride (parf 每列组 wr_addr 偏移量)
-
-    约束:
-      1. NUM_COUT < HW_COL 且 K > 1
-      2. NUM_COUT 是 HW_COL 的整数约数 (parf 当前要求 cout_orig ∈ {1,2,4,8,16})
-      3. kx_per_group 必须是 stride 的倍数 (让所有 group 的 parity 对齐)
-      4. groups × kx_per_group ≥ K (覆盖原 kx)
-
-    算法: 在 [1, groups_max] 内扫 groups, 取使 pad_kx 最小的方案.
-    """
-    if NUM_COUT >= HW_COL or K <= 1 or (HW_COL % NUM_COUT) != 0:
-        return 1, K, NUM_COUT, 0, 0
-    groups_max = HW_COL // NUM_COUT
-    best = None  # (groups, kxper, cout_fake, pad_kx, col_shift)
-    for g in range(groups_max, 0, -1):
-        if g == 1:
-            continue  # 1 组等于不折叠
-        kxper_min = (K + g - 1) // g
-        kxper = ((kxper_min + stride - 1) // stride) * stride  # 向上取整到 stride 倍数
-        if kxper == 0 or g * kxper < K:
-            continue
-        if kxper % stride != 0:
-            continue
-        pad_kx = g * kxper - K
-        col_shift = kxper // stride
-        cand = (g, kxper, g * NUM_COUT, pad_kx, col_shift)
-        if best is None or cand[3] < best[3] or (cand[3] == best[3] and cand[0] > best[0]):
-            best = cand
-    if best is None:
-        return 1, K, NUM_COUT, 0, 0
-    return best
-
-
-# ---------------------------------------------------------------------------
 # Ky fold: Cin < PE_H 时把 Ky 维折到 cin_fake 维, 把 PE 阵列空闲的行填满
 # ---------------------------------------------------------------------------
 def compute_fold_params(K, NUM_CIN, HW_PE=16):
@@ -198,39 +159,29 @@ def compute_fold_params(K, NUM_CIN, HW_PE=16):
 
 
 def fold_weights(w_arr, K, NUM_CIN, NUM_COUT,
-                 groups_y, ky_per_group,
-                 groups_x=1, kx_per_group=None):
+                 groups_y, ky_per_group):
     """
-    支持 Ky + Kx 同时折叠.
-    w_arr: [K][K][NUM_COUT][NUM_CIN] 原卷积核 (注意 K 在此特指 Ky=Kx 方形)
-    返回: [ky_per_group][kx_per_group][cout_fake][cin_fake]
-        cin_fake  = groups_y * NUM_CIN
-        cout_fake = groups_x * NUM_COUT
-        W'[ky_local, kx_local, g_x*NUM_COUT+co, g_y*NUM_CIN+c]
-           = W[g_y*ky_per_group + ky_local, g_x*kx_per_group + kx_local, co, c]
-           (超出原 K 范围填 0)
+    Ky-fold 权重重排.
+    w_arr: [K][K][NUM_COUT][NUM_CIN] 原卷积核 (KY=K 方形)
+    返回: [ky_per_group][K][NUM_COUT][cin_fake]
+        cin_fake = groups_y * NUM_CIN
+        W'[ky_local, kx, co, g_y*NUM_CIN+c] = W[g_y*ky_per_group + ky_local, kx, co, c]
+        (g_y*ky_per_group + ky_local 超出原 K 范围填 0)
     """
-    if kx_per_group is None:
-        kx_per_group = K
-    cin_fake  = groups_y * NUM_CIN
-    cout_fake = groups_x * NUM_COUT
+    cin_fake = groups_y * NUM_CIN
     w_virt = [[[[0 for _ in range(cin_fake)]
-                for _ in range(cout_fake)]
-               for _ in range(kx_per_group)]
+                for _ in range(NUM_COUT)]
+               for _ in range(K)]
               for _ in range(ky_per_group)]
     for ky_local in range(ky_per_group):
-        for kx_local in range(kx_per_group):
-            for g_x in range(groups_x):
-                for co in range(NUM_COUT):
-                    for g_y in range(groups_y):
-                        for c in range(NUM_CIN):
-                            ky_orig = g_y * ky_per_group + ky_local
-                            kx_orig = g_x * kx_per_group + kx_local
-                            if ky_orig < K and kx_orig < K:
-                                w_virt[ky_local][kx_local] \
-                                      [g_x * NUM_COUT + co] \
-                                      [g_y * NUM_CIN + c] = \
-                                    w_arr[ky_orig][kx_orig][co][c]
+        for kx in range(K):
+            for co in range(NUM_COUT):
+                for g_y in range(groups_y):
+                    for c in range(NUM_CIN):
+                        ky_orig = g_y * ky_per_group + ky_local
+                        if ky_orig < K:
+                            w_virt[ky_local][kx][co][g_y * NUM_CIN + c] = \
+                                w_arr[ky_orig][kx][co][c]
     return w_virt
 
 
@@ -527,40 +478,35 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
                      pad_top, pad_left, TILE_W=32, HW_PE=16, HW_COL=16,
                      WRF_DEPTH=32, ARF_DEPTH=32,
                      IFB_SRAM_WORDS=8192, OFB_SRAM_WORDS=8192,
-                     streaming=None, KY=None, Kx_orig=None, fold_tail=0):
+                     streaming=None, KY=None):
     """
     派生 conv layer 的所有硬件 cfg 字段。返回 dict。
 
-    K        = 虚拟 Kx (kernel x 维), Kx-fold 时 = kxper; 无 Kx-fold 时 = 原 Kx
-    KY       = 虚拟 Ky, 默认 = K (方形核). Ky-fold 时 < K 缩短 Ky 迭代
-    Kx_orig  = 原始 Kx, 用于计算原 W_OUT; 默认 = K (无 Kx-fold)
+    K        = 卷积核 Kx 维
+    KY       = 卷积核 Ky 维, 默认 = K (方形核). Ky-fold 时 < K 缩短 Ky 迭代
     kk       = K * KY (虚拟 kk, 用于 wgt_buffer/parf 时间迭代)
 
     J-1 起，单一数据路径 = streaming。
     """
     if KY is None:
         KY = K
-    if Kx_orig is None:
-        Kx_orig = K
     pad_bot, pad_right = pad_top, pad_left
 
     cin_slices  = (NUM_CIN  + HW_PE  - 1) // HW_PE
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
 
     H_OUT = (H_IN + pad_top + pad_bot - KY) // stride + 1
-    W_OUT = (W_IN + pad_left + pad_right - Kx_orig) // stride + 1
+    W_OUT = (W_IN + pad_left + pad_right - K) // stride + 1
     if H_OUT <= 0 or W_OUT <= 0:
         raise ValueError(f"invalid output {H_OUT}x{W_OUT}")
 
     kk          = K * KY
     total_wrf   = kk * cin_slices
 
-    # E-2 ARF reuse: cur_fill_len = cur_valid_w + K - 1 ≤ ARF_DEPTH → tile_w ≤ 33-K
-    # 注: ARF 复用是 x 方向滑窗, 只受 Kx (=K) 约束, 与 Ky 无关
-    # Kx-fold: line_buffer 的 iss_pos 扩展到 cur_valid_w + fold_tail, cur_fill_len
-    # 相应变成 cur_valid_w + fold_tail + K - 1, 所以 TILE_W 需要再减 fold_tail
+    # ARF reuse: cur_fill_len = cur_valid_w + K - 1 ≤ ARF_DEPTH → tile_w ≤ 33-K
+    # ARF 复用是 x 方向滑窗, 只受 Kx (=K) 约束, 与 Ky 无关
     arf_reuse_en = (stride == 1 and K > 1)
-    max_tile_w = (ARF_DEPTH - K + 1 - fold_tail) if arf_reuse_en else (ARF_DEPTH - fold_tail)
+    max_tile_w = (ARF_DEPTH - K + 1) if arf_reuse_en else ARF_DEPTH
     if max_tile_w < 1:
         max_tile_w = 1
     if TILE_W > max_tile_w:
@@ -731,10 +677,6 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'IFB_KY_STEP'    : cfg['W_IN']   * cfg['cin_slices'],
         'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg['stride'],
         'ARF_REUSE_EN'   : 1 if cfg['arf_reuse_en'] else 0,
-        # Kx-fold: 默认无折叠 (cout_orig=16, groups=1, col_shift=0)
-        'FOLD_COUT_ORIG'   : cfg.get('fold_cout_orig', 16),
-        'FOLD_COUT_GROUPS' : cfg.get('fold_cout_groups', 1),
-        'FOLD_COL_SHIFT'   : cfg.get('fold_col_shift', 0),
     }
     # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
     if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base

@@ -30,8 +30,10 @@ if   os.path.exists(_VENV_PY_WIN): PY = _VENV_PY_WIN
 elif os.path.exists(_VENV_PY_NIX): PY = _VENV_PY_NIX
 else:                              PY = sys.executable
 
-# Report 输出到 sim dir（和生成的 .txt 放一起）
-OUTPUT_FILE = os.path.join(SIM_DIR, "regression_report.txt")
+# Report 输出到 sim dir（和生成的 .txt 放一起）。
+# 默认文件名带时间戳: regression_report_YYYY-MM-DD_HH-MM-SS.txt
+# 在 main() 里 lazy 生成（取脚本启动当时的时间），可用 --out 覆盖.
+OUTPUT_FILE = None
 
 # ---------------------------------------------------------------------------
 # 测试用例定义
@@ -39,7 +41,7 @@ OUTPUT_FILE = os.path.join(SIM_DIR, "regression_report.txt")
 #   mode: 'batch' 一次性搬完后核跑；'stream' row-ring 并行
 #   pad : symmetric pad (top=bot=left=right)；0 = no pad
 # ---------------------------------------------------------------------------
-CASES = [
+CASES_OLD = [
     # J-1 起 batch/stream 数据路径统一（硬件单一 streaming engine），mode='conv'。
     # 整图装得下 SRAM → strip_rows=H_IN（ring 不 wrap，等价原 batch 串行 latency）；
     # 装不下 → strip 切小（ring-buffer 流式，IDMA/core/ODMA 并发，如 VGA）。
@@ -48,7 +50,7 @@ CASES = [
     # Pool 层硬件不支持，跳过。FC 可视为 1x1 conv。streaming 已支持任意 Cin/Cout。
 
     # ---- Stem ----
-    ("K=7 C4C8    960x540 s2 p4", "conv",   4,   8, 7, 960, 540, 2, 0, 4),  # Conv2d stem            -> 480x270
+    ("K=7 C4C8    960x540 s2 p3", "conv",   4,   8, 7, 960, 540, 2, 0, 3),  # Conv2d stem            -> 480x270
   # ("MaxPool2d   480x270 s2 p1", "pool",   8,   8, 3, 480, 270, 2, 0, 1),  # MaxPool2d              -> 240x135  [无 pool 硬件]
 
     # ---- Layer 1: 4 conv, C=8 ----
@@ -84,6 +86,46 @@ CASES = [
     ("FC2 C512C10  1x1",          "conv", 512,  10, 1,   1,   1, 1, 0, 0),  # FC2 (512->10,  1x1 conv)
 ]
 
+CASES = [
+    # 网络结构（输入 960×540×4）:
+    #   Patch embed (4×4, s=4, 4→16)         → 240×135×16    [33.2M MACs]
+    #   Layer 1 (16→16, s=2)                 → 120×68×16     [39.7M MACs]
+    #   Layer 2 (16→32, s=2)                 → 60×34×32      [29.2M MACs]
+    #   Layer 3 (32→64, s=2)                 → 30×17×64      [29.2M MACs]
+    #   AvgPool                              → 2×2×64        [无 MAC]
+    #   FC merged (256→522)                  → 512+10 split  [0.13M MACs]
+    #
+    # 每个 Layer 内部:
+    #   Block1.Conv1     K=3, s=2, Cout=Cin*2 (Layer 1 例外: Cout=Cin)
+    #   Block1.Conv2     K=3, s=1, Cout=Cin   (Cin = Conv1 的输出通道)
+    #   Block2.DownSample K=1, s=2, Cout=Cin*2 (Layer 1 例外)
+    # 软件层将 Block1.Conv2 输出与 Block2.DownSample 输出相加 (硬件不支持 SDP 残差通路, 各 conv 独立跑).
+    #
+    # AvgPool 没硬件, 跳过. FC 视为 1×1 conv. 注: stride=4 的 Patch embed 必须配合 `--s2d`
+    # 跑 (line_buffer 原生只支持 stride 1/2).
+
+    # ---- Patch embed: 4×4 stride=4, Cin=4 → Cout=16 ----
+    ("Patch K=4 C4C16  960x540 s4 p0",      "conv",   4,  16, 4, 960, 540, 4, 0, 0),  # → 240×135
+
+    # ---- Layer 1 (16→16, 不翻倍) ----
+    ("L1.B1.C1 K=3 C16C16 240x135 s2 p1",   "conv",  16,  16, 3, 240, 135, 2, 0, 1),  # → 120×68
+    ("L1.B1.C2 K=3 C16C16 120x68  s1 p1",   "conv",  16,  16, 3, 120,  68, 1, 0, 1),
+    ("L1.B2.ds K=1 C16C16 240x135 s2 p0",   "conv",  16,  16, 1, 240, 135, 2, 0, 0),
+
+    # ---- Layer 2 (16→32, 翻倍) ----
+    ("L2.B1.C1 K=3 C16C32 120x68  s2 p1",   "conv",  16,  32, 3, 120,  68, 2, 0, 1),  # → 60×34
+    ("L2.B1.C2 K=3 C32C32 60x34   s1 p1",   "conv",  32,  32, 3,  60,  34, 1, 0, 1),
+    ("L2.B2.ds K=1 C16C32 120x68  s2 p0",   "conv",  16,  32, 1, 120,  68, 2, 0, 0),
+
+    # ---- Layer 3 (32→64, 翻倍) ----
+    ("L3.B1.C1 K=3 C32C64 60x34   s2 p1",   "conv",  32,  64, 3,  60,  34, 2, 0, 1),  # → 30×17
+    ("L3.B1.C2 K=3 C64C64 30x17   s1 p1",   "conv",  64,  64, 3,  30,  17, 1, 0, 1),
+    ("L3.B2.ds K=1 C32C64 60x34   s2 p0",   "conv",  32,  64, 1,  60,  34, 2, 0, 0),
+
+    # ---- FC merged: AvgPool 后 2×2×64 flatten=256 维, 输出 522 (= 512+10 拆分) ----
+    ("FC C256C522 1x1",                     "conv", 256, 522, 1,   1,   1, 1, 0, 0),
+]
+
 
 # ---------------------------------------------------------------------------
 # 生成单个 case 数据到 cases/caseNN/
@@ -103,13 +145,12 @@ def estimate_case_timeout_ns(c_in, c_out, k, h_in, w_in, stride, pad):
 
 
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad,
-                   ky_fold=False, kx_fold=False, s2d=False):
+                   ky_fold=False, s2d=False):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
     # J-1: gen_isa_test.py 的 --streaming 默认 True，无需显式传
     fold_flag = ""
     if ky_fold: fold_flag += " --ky-fold"
-    if kx_fold: fold_flag += " --kx-fold"
     if s2d:     fold_flag += " --s2d"
     gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" "
                f"--num_cin {c_in} --num_cout {c_out} --k {k} "
@@ -199,25 +240,65 @@ def parse_sim_log(text):
 # ---------------------------------------------------------------------------
 # 报告生成
 # ---------------------------------------------------------------------------
-def write_report(results, label=""):
+def write_report(results, case_opts=None, label=""):
+    """
+    case_opts: dict[idx -> str], 描述编译器对该层做的优化标记 ("-"/"s2d"/"ky"/"s2d+ky"/...).
+               None 时一律显示 "-".
+    """
     lines = []
     def L(s=""): lines.append(s)
 
-    SEP = "=" * 140
-    SUB = "-" * 140
+    # name 格式 "K=3 C8C8 48x48 s=1|conv" —— 拆掉历史遗留的 mode 后缀, 只留 case 名
+    def split_name(r):
+        if "|" in r["name"]:
+            return r["name"].rsplit("|", 1)[0]
+        return r["name"]
+
+    def opt_of(r):
+        if case_opts is None:
+            return "-"
+        return case_opts.get(r["idx"], "-")
+
+    # 动态 case 列宽：取所有 case name 的最长长度 (修 case 名超过固定 27 时, 后续
+    # 列被推右导致 Mode/Res/Cycles 列错位的问题)
+    case_w = max([len(split_name(r)) for r in results] + [len("Case")])
+    opt_w  = max([len(opt_of(r))     for r in results] + [len("Opt"), 6])
+
+    # 聚合统计 (用于 Cyc% / Wst% / TOTAL 行)
+    total_cycles  = sum(r['cycles']  for r in results)
+    # waste = (1 - mac_util) × cycles, 单位 = cycle-equiv (×256 在分子分母都出现, 抵消)
+    case_waste    = {r['idx']: (1.0 - r['mac_util']/100.0) * r['cycles'] for r in results}
+    total_waste   = sum(case_waste.values())
+    avg_mac_pct   = 100.0 * (total_cycles - total_waste) / max(total_cycles, 1)
+    sum_ifb_r     = sum(r['ifb_r']   for r in results)
+    sum_ofb_w     = sum(r['ofb_w']   for r in results)
+    sum_arf_w     = sum(r['arf_w']   for r in results)
+    sum_arf_r     = sum(r['arf_r']   for r in results)
+    sum_parf_f    = sum(r['parf_f']  for r in results)
+    sum_parf_d    = sum(r['parf_d']  for r in results)
+    avg_ratio     = (sum_arf_r / sum_arf_w) if sum_arf_w > 0 else 0.0
+
+    # ---- Summary 表 ----
+    # 所有计数列统一 11 位宽 (够放 9,999,999 = 9 字符带逗号, 再留 2 余量)
+    # Opt 列: 编译器对该层做的特殊处理标记 (- / s2d / ky / s2d+ky / ...). 单一 conv mode
+    # 已经退化, 这一列改为显示编译器优化, 比 'conv' 重复值更有信息量.
+    hdr = (f"  {'Case':<{case_w}} {'Opt':^{opt_w}} {'Res':^5} "
+           f"{'Cycles':>11} {'Cyc%':>6} {'MAC%':>6} {'Wst%':>6}  "
+           f"{'IFB_R':>11} {'WB_R':>9} {'OFB_W':>11}  "
+           f"{'ARF_W':>11} {'ARF_R':>11} {'Ratio':>6}  "
+           f"{'PARF_F':>11} {'PARF_D':>11}")
+
+    # SEP/SUB 宽度根据 header 实际长度算 (避免短了导致表格切到一半)
+    bar_w = max(len(hdr), 140)
+    SEP = "=" * bar_w
+    SUB = "-" * bar_w
+
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     L(SEP)
     L(f"  FLUX CNN Regression (batch + streaming)  {label}")
     L(f"  Generated: {now}")
     L(SEP)
     L()
-
-    # ---- Summary 表 ----
-    # 所有计数列统一 11 位宽 (够放 9,999,999 = 9 字符带逗号, 再留 2 余量)
-    hdr = (f"  {'Case':<27} {'Mode':^6} {'Res':^5} {'Cycles':>11} {'MAC%':>6}  "
-           f"{'IFB_R':>11} {'WB_R':>9} {'OFB_W':>11}  "
-           f"{'ARF_W':>11} {'ARF_R':>11} {'Ratio':>6}  "
-           f"{'PARF_F':>11} {'PARF_D':>11}")
     L(hdr)
     L(SUB)
     all_pass = True
@@ -225,21 +306,32 @@ def write_report(results, label=""):
         status = "PASS" if r["passed"] else "FAIL"
         if not r["passed"]:
             all_pass = False
-        # name 格式 "K=3 C8C8 48x48 s=1|batch" —— 拆 mode
-        if "|" in r["name"]:
-            cname, mode = r["name"].rsplit("|", 1)
-        else:
-            cname, mode = r["name"], "?"
-        ratio = (r['arf_r'] / r['arf_w']) if r['arf_w'] > 0 else 0.0
-        row = (f"  {cname:<27} {mode:^6} {status:^5} {r['cycles']:>11,} "
-               f"{r['mac_util']:>5.1f}%  "
+        cname   = split_name(r)
+        opt     = opt_of(r)
+        ratio   = (r['arf_r'] / r['arf_w']) if r['arf_w'] > 0 else 0.0
+        cyc_pct = 100.0 * r['cycles'] / max(total_cycles, 1)
+        wst_pct = (100.0 * case_waste[r['idx']] / total_waste) if total_waste > 0 else 0.0
+        row = (f"  {cname:<{case_w}} {opt:^{opt_w}} {status:^5} "
+               f"{r['cycles']:>11,} {cyc_pct:>5.1f}% {r['mac_util']:>5.1f}% {wst_pct:>5.1f}%  "
                f"{r['ifb_r']:>11,} {'-':>9} {r['ofb_w']:>11,}  "
                f"{r['arf_w']:>11,} {r['arf_r']:>11,} {ratio:>5.2f}x  "
                f"{r['parf_f']:>11,} {r['parf_d']:>11,}")
         L(row)
     L(SUB)
+    # ---- TOTAL 总结行 (cycle-weighted MAC%, 各 SRAM 访问总和) ----
+    total_row = (f"  {'TOTAL':<{case_w}} {'':<{opt_w}} {'':<5} "
+                 f"{total_cycles:>11,} {'100.0%':>6} {avg_mac_pct:>5.1f}% {'100.0%':>6}  "
+                 f"{sum_ifb_r:>11,} {'-':>9} {sum_ofb_w:>11,}  "
+                 f"{sum_arf_w:>11,} {sum_arf_r:>11,} {avg_ratio:>5.2f}x  "
+                 f"{sum_parf_f:>11,} {sum_parf_d:>11,}")
+    L(total_row)
+    L(SUB)
+    L("  Opt: 编译器对该层做的特殊处理. -=baseline; s2d=Space-to-Depth (stride>=2 抽样折到 cin);")
+    L("       ky=Ky-fold (Cin<16 时 ky 折到 cin, 输入 y 偏移复制); 多个用 + 拼.")
     L("  MAC%: useful_mac_ops / peak_mac_ops; useful = H_out×W_out×K²×Cin×Cout (pre-fold原始 conv);")
-    L("        peak = cycles×NUM_COL×NUM_PE. fold pad + Kx tail partial 都会扣掉利用率。")
+    L("        peak = cycles×NUM_COL×NUM_PE. Cout<16 (PE 列空转) + Ky-fold pad 都会扣利用率。")
+    L("  Cyc%: 该 case cycles 占总 cycles 比例。 Wst%: 该 case MAC 浪费占总浪费比例 (定位瓶颈层)")
+    L("  TOTAL.MAC% = cycle-weighted (Σ useful / Σ peak); TOTAL.Ratio = Σ ARF_R / Σ ARF_W")
     L("  ARF_W=ARF写(=IFB读扣除 pad)；ARF_R=ARF读到 MAC；Ratio=ARF_R/ARF_W (>1 表示 kx 滑窗复用)")
     L("  IFB_R/OFB_W=SRAM 访问次数；PARF_F/PARF_D=psum 累加写/读")
     L()
@@ -255,7 +347,7 @@ def write_report(results, label=""):
         L("  Handshake PROFILE — 各 V/R 接口 {fire / stall / idle} 占总 cycle %")
         L(SEP)
         L()
-        hdr = (f"  {'Case':<27} {'Cycles':>11}  "
+        hdr = (f"  {'Case':<{case_w}} {'Cycles':>11}  "
                f"{'act F/S/I':>22}  "
                f"{'wgt F/S/I':>22}  "
                f"{'psum F/S/I':>22}  "
@@ -265,17 +357,14 @@ def write_report(results, label=""):
         for r in results:
             if 'act_fire' not in r:
                 continue
-            if "|" in r["name"]:
-                cname, _ = r["name"].rsplit("|", 1)
-            else:
-                cname = r["name"]
+            cname = split_name(r)
             cy = max(r['cycles'], 1)
             def fsi(prefix):
                 f = 100.0 * r[f'{prefix}_fire']  / cy
                 s = 100.0 * r[f'{prefix}_stall'] / cy
                 i = 100.0 * r[f'{prefix}_idle']  / cy
                 return f"{f:>5.1f}/{s:>5.1f}/{i:>5.1f}"
-            row = (f"  {cname:<27} {r['cycles']:>11,}  "
+            row = (f"  {cname:<{case_w}} {r['cycles']:>11,}  "
                    f"{fsi('act'):>22}  "
                    f"{fsi('wgt'):>22}  "
                    f"{fsi('psum'):>22}  "
@@ -310,7 +399,8 @@ def main():
     global OUTPUT_FILE
     parser = argparse.ArgumentParser()
     parser.add_argument("--label", default="", help="Report label")
-    parser.add_argument("--out",   default=OUTPUT_FILE, help="Output file")
+    parser.add_argument("--out",   default=None,
+                        help="Output file (默认: regression_report_<timestamp>.txt)")
     parser.add_argument("--only",  default="all",
                         choices=["all"],
                         help="(legacy option, J-1 起只有 conv 一种) default: all")
@@ -320,12 +410,14 @@ def main():
                         help="vsim watchdog 超时 (ns)；0=按每 case 尺寸自动估算")
     parser.add_argument("--fold", action="store_true",
                         help="对所有 K>1 且 Cin<16 的 case 启用 Ky fold")
-    parser.add_argument("--kx-fold", action="store_true",
-                        help="对所有 K>1 且 Cout<16 的 case 启用 Kx fold (可与 --fold 叠加)")
     parser.add_argument("--s2d", action="store_true",
                         help="对所有 stride>=2 且 K>=stride 的 case 启用 Space-to-Depth (可与 fold 叠加)")
     args = parser.parse_args()
-    OUTPUT_FILE = args.out
+    if args.out is not None:
+        OUTPUT_FILE = args.out
+    else:
+        ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        OUTPUT_FILE = os.path.join(SIM_DIR, f"regression_report_{ts}.txt")
 
     cases = [c for c in CASES if args.only == "all" or c[1] == args.only]
     if args.case is not None:
@@ -342,30 +434,30 @@ def main():
 
     # Step 1: 生成每 case 数据到 cases/caseNN/
     print(f"\n[Step 1] 生成 {n_cases} 个 case 数据 ...")
+    case_opts = {}   # idx -> opt 字符串 (供 report Opt 列展示)
     for i, case in enumerate(cases):
-        # case 里 c_in 是第 3 个字段 (idx 2), k 是第 5 个 (idx 4)
+        # case 里 c_in 是第 3 个字段, k 是第 5 个, stride 是第 8 个
         _, _, c_in_v, _, k_v, _, _, stride_v, _, _ = case
-        # case 里 c_out 是第 4 个字段 (idx 3)
-        _, _, _, c_out_v, _, _, _, _, _, _ = case
         # 转换条件:
-        #   S2D : stride>=2 AND K>=stride (S2D 后 stride=1, Cin'=stride²·Cin)
+        #   S2D : stride>=2 AND K>=stride AND Cin<PE_H (=16)
+        #     Cin>=16 时 PE 行已经填满, S2D 反而引入内核 pad 浪费 (K%stride!=0 时);
+        #     只在 Cin<16 时启用, 让 stride² × Cin 把 PE 行填上去, 是真正的优化场景.
         #   Ky-fold: K>1 AND Cin<16 (S2D 后 Cin' 通常 ≥16, Ky-fold 自动跳过)
-        #   Kx-fold: K>1 AND Cout<16
-        use_s2d = args.s2d and (stride_v >= 2) and (k_v >= stride_v)
+        use_s2d = args.s2d and (stride_v >= 2) and (k_v >= stride_v) and (c_in_v < 16)
         # S2D 后 Cin' = stride²·Cin, 重新判断 fold 触发条件
         c_in_eff = (stride_v * stride_v * c_in_v) if use_s2d else c_in_v
         k_eff    = ((k_v + stride_v - 1) // stride_v) if use_s2d else k_v
-        use_ky = args.fold    and (k_eff > 1) and (c_in_eff < 16)
-        use_kx = args.kx_fold and (k_eff > 1) and (c_out_v  < 16)
+        use_ky = args.fold and (k_eff > 1) and (c_in_eff < 16)
         gen_info, err = gen_case_files(i, *case,
-                                       ky_fold=use_ky, kx_fold=use_kx, s2d=use_s2d)
+                                       ky_fold=use_ky, s2d=use_s2d)
         if err:
             print(f"  case {i} ({case[0]}) gen ERROR: {err}")
             sys.exit(1)
-        fold_mark = ""
-        if use_s2d: fold_mark += "[s2d]"
-        if use_ky:  fold_mark += "[ky]"
-        if use_kx:  fold_mark += "[kx]"
+        opt_tags = []
+        if use_s2d: opt_tags.append("s2d")
+        if use_ky:  opt_tags.append("ky")
+        case_opts[i] = "+".join(opt_tags) if opt_tags else "-"
+        fold_mark = f"[{case_opts[i]}]" if opt_tags else ""
         print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']} {fold_mark}")
 
     # 把 case0 的 sim_params.f 复制到 SIM_DIR/ 给 vsim 启动参数用（-gSRAM_DEPTH，-sva 等）
@@ -418,7 +510,7 @@ def main():
         print(f"  [{r['idx']:>2}] {status}  cycles={r['cycles']:>9,}  "
               f"MAC={r['mac_util']:>5.1f}%  {r['name']}")
 
-    all_pass = write_report(results, label=args.label)
+    all_pass = write_report(results, case_opts=case_opts, label=args.label)
 
     print(f"\n报告已写入: {OUTPUT_FILE}")
     print(f"总体结论  : {'All PASS [OK]' if all_pass else 'Some FAILED [!!]'}")

@@ -15,7 +15,6 @@ core_top
 ├── u_wgt_buffer         (wgt_buffer)          weight + bias 供给
 ├── u_mac_array          (mac_array)           16×16 PE
 ├── u_parf_accum         (parf_accum)          PSUM 累加
-├── u_psum_reshape       (psum_reshape)        Kx-fold cout 归约
 ├── u_ofb_writer         (ofb_writer)          SDP + OFB 写
 ├── u_dfe                (dfe)                 DDR → desc_fifo
 ├── u_idma / u_wdma / u_odma (DMA ×3)

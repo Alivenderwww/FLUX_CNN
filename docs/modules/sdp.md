@@ -58,4 +58,4 @@ Single Data Processor。把 16 路 int32 psum 量化成 16 路 int8 输出。Per
 
 ## 在 core_top 中的位置
 
-`u_sdp` 例化在 `u_ofb_writer` 内部。上游接 `psum_reshape` 的 `out_vec`，下游 `ofm_data` 进 `ofb_writer` 的 OFB 写数据通路。所有 cfg 信号从 `cfg_regs` 直连。
+`u_sdp` 例化在 `u_ofb_writer` 内部。上游接 `parf_accum` 的 `acc_out_vec`，下游 `ofm_data` 进 `ofb_writer` 的 OFB 写数据通路。所有 cfg 信号从 `cfg_regs` 直连。

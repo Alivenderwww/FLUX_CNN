@@ -1,6 +1,6 @@
 # parf_col
 
-PARF（Partial-sum Register File）的单列 SRAM 存储。`parf_accum` 内部例化 `NUM_COL=16` 个 `parf_col`，每列独立读写地址和写使能，使 Kx-fold 可以让不同列组按不同偏移写 psum。
+PARF（Partial-sum Register File）的单列 SRAM 存储。`parf_accum` 内部例化 `NUM_COL=16` 个 `parf_col`，每列各自一块 SRAM。当前所有列共享 wr_addr / we / rd_addr，只是 wdata 切片不同——拆成 per-col 子模块是为后续给每列做独立寻址留扩展空间。
 
 ## 参数
 
@@ -41,10 +41,9 @@ PARF（Partial-sum Register File）的单列 SRAM 存储。`parf_accum` 内部�
 
 ## 在 parf_accum 中的位置
 
-`parf_accum` 例化 16 个 `parf_col` 实例（generate for 循环），并对每列分别生成：
-- 每列的 `we_col[c]`：基于 fill_fire 和该列的 `wr_addr_col[c]` 是否在合法范围内 `[0, cur_valid_w_fill)`
-- 每列的 `wr_addr_col[c]`：`wr_addr - col_group[c] × cfg_fold_col_shift`，其中 col_group 由 cfg_fold_cout_orig 决定
-- 共用的 `rd_addr`：drain 阶段的读地址
-- 共用的 `wdata`：mac_array 输出的 psum 切片
-
-每列的 `old_at_wr[c]` 拼成 16-列宽总线送回 `parf_accum`，再分发给 `mac_array` 做 acc_seed。
+`parf_accum` 例化 16 个 `parf_col` 实例（generate for 循环）：
+- `we`：所有列共享 `fill_fire`
+- `wr_addr / rd_addr`：所有列共享，由外壳 fill / drain 计数器生成
+- `wdata`：每列从 `psum_in_vec` 切自己那 32 bit 段
+- `rdata`：每列输出 32 bit，拼成 `acc_out_vec` 总线
+- `old_at_wr`：每列输出 32 bit，拼成 `old_psum_at_wr` 送回 `mac_array` 做 acc_seed

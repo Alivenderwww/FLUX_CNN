@@ -20,7 +20,6 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/mac_array.sv \
     ../../RTL/parf_col.sv \
     ../../RTL/parf_accum.sv \
-    ../../RTL/psum_reshape.sv \
     ../../RTL/line_buffer.sv \
     ../../RTL/wgt_buffer.sv \
     ../../RTL/ofb_writer.sv \

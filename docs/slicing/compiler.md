@@ -123,6 +123,5 @@ TB 在 `tb_core_dma.sv::load_config` 里读 config.txt，按 key 调 `axi_lite_w
 
 - 用 `--ky-fold` 时编译器先计算 `cin_fake = groups_y × Cin`，再用这个虚拟 Cin 算 `cin_slices = ⌈cin_fake / 16⌉`（一般正好等于 1）
 - 用 `--s2d` 时编译器先用 `Cin_new = stride² × Cin` 当作新的 Cin，再算 `cin_slices = ⌈Cin_new / 16⌉`（可能 > 1）
-- 用 `--kx-fold` 时编译器算 `cout_fake = groups_x × Cout`，对应的虚拟 cout 还是落在 16 列里，`cout_slices` 不变（fold 后 cout_fake = 16）
 
 简言之，fold / S2D 是把"小通道"补成大通道；如果补完仍然 > 16，剩下的部分由切片机制承担。

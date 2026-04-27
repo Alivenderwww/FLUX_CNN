@@ -22,7 +22,6 @@
 - `cfg_cin_slices / cfg_cout_slices`
 - `cfg_ifb_base / cfg_ifb_ring_words / cfg_ifb_row_step / cfg_tile_in_step / cfg_iss_step / cfg_ifb_ky_step / cfg_tile_pix_step`：IFB 的物理地址参数
 - `cfg_arf_reuse_en`：是否启用滑窗复用模式（仅 stride=1 && K>1 时为 1）
-- `cfg_fold_cout_groups / cfg_fold_col_shift`：Kx-fold 的 iss_pos 扩展参数
 
 ### IFB 读端口
 
@@ -86,10 +85,9 @@ evt_iss_yout_wrap = evt_iss_cs_wrap && yout_is_last
 ## 派生量
 
 ```
-cur_valid_w_orig = (tile == last) ? last_valid_w : tile_w
-cur_valid_w      = cur_valid_w_orig + (groups_x - 1) × col_shift     // Kx-fold 扩展
-cur_fill_len     = cur_valid_w + cfg_k - 1                            // reuse_en=1 FILL 长度
-                                                                       // 编译器保证 cur_fill_len ≤ ARF_DEPTH
+cur_valid_w  = (tile == last) ? last_valid_w : tile_w
+cur_fill_len = cur_valid_w + cfg_k - 1   // reuse_en=1 FILL 长度
+                                          // 编译器保证 cur_fill_len ≤ ARF_DEPTH
 ```
 
 ## Padding 判定

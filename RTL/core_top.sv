@@ -162,9 +162,6 @@ module core_top #(
     logic [ADDR_W-1:0] cfg_ifb_ky_step;
     logic [15:0]       cfg_tile_pix_step;
     logic              cfg_arf_reuse_en;
-    logic [5:0]        cfg_fold_cout_orig;
-    logic [4:0]        cfg_fold_cout_groups;
-    logic [3:0]        cfg_fold_col_shift;
     logic [5:0]        cfg_sdp_shift;
     logic              cfg_sdp_relu_en;
 
@@ -254,9 +251,6 @@ module core_top #(
         .ifb_ky_step(cfg_ifb_ky_step),
         .tile_pix_step(cfg_tile_pix_step),
         .arf_reuse_en(cfg_arf_reuse_en),
-        .fold_cout_orig(cfg_fold_cout_orig),
-        .fold_cout_groups(cfg_fold_cout_groups),
-        .fold_col_shift(cfg_fold_col_shift),
         .sdp_shift(cfg_sdp_shift), .sdp_relu_en(cfg_sdp_relu_en),
         .h_in_total(cfg_h_in_total),
         .ifb_strip_rows(cfg_ifb_strip_rows),
@@ -409,9 +403,6 @@ module core_top #(
     // parf_accum → ofb_writer (累加结果流)
     logic                       acc_out_valid, acc_out_ready;
     logic signed [NUM_COL*PSUM_WIDTH-1:0] acc_out_vec;
-    // parf raw 输出 (每列独立 psum) → psum_reshape → acc_out_vec (给 ofb_writer)
-    logic                       parf_raw_valid;
-    logic signed [NUM_COL*PSUM_WIDTH-1:0] parf_raw_vec;
 
     // =========================================================================
     // 4. line_buffer
@@ -438,8 +429,6 @@ module core_top #(
         .cfg_k            (cfg_k),
         .cfg_ky           (cfg_ky),
         .cfg_stride       (cfg_stride),
-        .cfg_fold_cout_groups (cfg_fold_cout_groups),
-        .cfg_fold_col_shift   (cfg_fold_col_shift),
         .cfg_cin_slices   (cfg_cin_slices),
         .cfg_cout_slices  (cfg_cout_slices),
         .cfg_tile_w       (cfg_tile_w),
@@ -501,8 +490,6 @@ module core_top #(
         .cfg_total_wrf       (cfg_total_wrf),
         .cfg_rounds_per_cins (cfg_rounds_per_cins),
         .cfg_round_len_last  (cfg_round_len_last),
-        .cfg_fold_cout_groups(cfg_fold_cout_groups),
-        .cfg_fold_col_shift  (cfg_fold_col_shift),
         .cfg_wb_base         (cfg_wb_base),
         .cfg_wb_cout_step    (cfg_wb_cout_step),
         .wb_re            (wb_re),
@@ -561,30 +548,14 @@ module core_top #(
         .cfg_num_tiles    (cfg_num_tiles),
         .cfg_cin_slices   (cfg_cin_slices),
         .cfg_kk           (cfg_kk),
-        .cfg_fold_cout_orig    (cfg_fold_cout_orig),
-        .cfg_fold_cout_groups  (cfg_fold_cout_groups),
-        .cfg_fold_col_shift (cfg_fold_col_shift),
         .psum_in_valid    (psum_out_valid),
         .psum_in_vec      (psum_out_vec),
         .psum_in_ready    (psum_in_ready),
-        .acc_out_valid    (parf_raw_valid),
-        .acc_out_vec      (parf_raw_vec),
+        .acc_out_valid    (acc_out_valid),
+        .acc_out_vec      (acc_out_vec),
         .acc_out_ready    (acc_out_ready),
         .is_first_round_fill_out(is_first_round_fill_wire),
         .old_psum_at_wr         (old_psum_wire)
-    );
-
-    // psum_reshape: Kx-fold 时把 cout_groups 组按 co 累加; 无 fold 时直通
-    psum_reshape #(
-        .NUM_COL   (NUM_COL),
-        .PSUM_WIDTH(PSUM_WIDTH)
-    ) u_psum_reshape (
-        .cfg_cout_orig   (cfg_fold_cout_orig),
-        .cfg_cout_groups (cfg_fold_cout_groups),
-        .in_valid        (parf_raw_valid),
-        .in_vec          (parf_raw_vec),
-        .out_valid       (acc_out_valid),
-        .out_vec         (acc_out_vec)
     );
 
     // =========================================================================

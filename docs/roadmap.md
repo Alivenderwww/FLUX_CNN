@@ -22,8 +22,8 @@
 ### PE 利用率优化
 - K=1 layer TILE_W 均衡（消除 parf_accum 短尾 drain_stall）
 - Ky-fold（Cin<16 时把 Ky 折到 cin_fake，编译器侧）
-- Kx-fold（Cout<16 时把 Kx 折到 cout_fake，systolic psum shift；含 parf_col 拆分 + psum_reshape 归约）
 - Space-to-Depth（stride≥2 时把 4 相位折到 cin，编译器侧重排无复制）
+- parf_accum 拆 per-col（每列独立 SRAM，外壳共享 wr_addr/we）
 
 ### 工具链
 - 多 case 单 vsim 回归
@@ -59,9 +59,9 @@ combined_ch[c] = residual_en ? (psum_ch[c] + residual_ch[c]) : psum_ch[c];
 - 每列独占一个输入通道 + 一个输出通道，关闭广播
 - `DW_MODE` 把 K² 个 tap 展平到 16 PE 的工作
 
-### Kx systolic tail 跨 tile 重叠
+### Kx 维度复用（Cout 小时复用空闲列）
 
-Stem K=8 stride=2 fold 路径里测得 ~7% util gap 来自 Kx-fold 的 head + tail 列 mask（每 tile 4 partial 拍）。把当前 tile 的 tail 拍和下一 tile 的 head 拍时间叠合（让 group 0 提前算下一 tile、group 1 还在补当前 tile 末尾）可消掉这部分。需要 PARF 同时存两 tile 的 psum、wgt_buffer 给两组提供不同 (kx_v, ky_local) 序列、line_buffer iss_pos 跨 tile 连续推进。
+当前 Cout < 16 时空闲 PE 列直接空转。要让那些列也产出 MAC，需要把 Kx 维分组到列上：每个列组负责同一 cout 的不同 kx 贡献，drain 时再合并。需要 `parf_accum` 加每列 wr_addr 偏移 + we mask、新加 `psum_reshape` 列归约级、`line_buffer / wgt_buffer` 的 iss_pos / x_cnt 扩展尾部。当前架构选择不做（保持简洁），如果后续目标网络出现大量 Cout 小的层再考虑加回。
 
 ---
 

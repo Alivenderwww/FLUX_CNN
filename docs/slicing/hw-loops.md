@@ -20,7 +20,7 @@ yout (整图行)
 
 1. **cs 在 yout 内**，不是最外层。这样 OFB 写出顺序天然是 NHWC（一行 yout 内连续写 cout_slices 个 16-cout 段），ODMA 直接按 NHWC gather 搬到 DDR。
 2. **cins 在 tile 内**。一个 tile 处理时，先跑完所有 cin 切片对该 tile 的贡献，每片把 `K² × cur_valid_w` 个 MAC 累加进 PARF；cins=last 时 tile 的 PARF 就完整了，触发 drain。
-3. **ky / kx / iss_pos 是最内层 3 重**，每拍走 1 步。Kx-fold 启用时 iss_pos 还会扩展 `(groups_x-1) × col_shift` 拍。
+3. **ky / kx / iss_pos 是最内层 3 重**，每拍走 1 步。
 
 每层循环的 wrap 事件都从最内层 fire（`act_fire` / `wgt_fire` / `acc_fire`）一级一级往上传：内层 wrap 触发外层 +1。
 

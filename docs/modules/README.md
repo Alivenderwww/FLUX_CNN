@@ -22,7 +22,6 @@
   - [mac_pe](mac_pe.md) — 单 PE
 - [parf_accum](parf_accum.md) — PSUM 累加器外壳
   - [parf_col](parf_col.md) — 单列 PSUM 存储
-- [psum_reshape](psum_reshape.md) — Kx-fold cout 归约
 - [ofb_writer](ofb_writer.md) — SDP + OFB 写
   - [sdp](sdp.md) — int32→int8 量化（mult/shift/relu/clip）
 
@@ -41,8 +40,8 @@
 
 ## 阅读建议
 
-控制流：从 `core_top` 入手，看 `sequencer` 如何按 descriptor 分配 start pulse；时钟内每拍数据流向看 `mac_array → parf_accum → psum_reshape → ofb_writer` 这条主线。
+控制流：从 `core_top` 入手，看 `sequencer` 如何按 descriptor 分配 start pulse；时钟内每拍数据流向看 `mac_array → parf_accum → ofb_writer` 这条主线。
 
 Streaming 行级反压：`idma ↔ line_buffer` 用 `rows_consumed / rows_available`，`ofb_writer ↔ odma` 用 `row_done_pulse / rows_drained`。
 
-Fold 涉及的模块：Ky-fold 在 `gen_isa_test.py` 编译期完成，HW 不感知；Kx-fold 影响 `line_buffer`（iss_pos 扩展）、`wgt_buffer`（x_cnt 扩展）、`parf_accum`（每列 wr_addr 偏移 + we mask）、`psum_reshape`（drain 时 cout 归约）。
+Fold / S2D 全在 `gen_isa_test.py` 编译期完成，HW 完全无感（Cout 小的情况硬件不复用，对应 PE 列空转）。`parf_accum` 内部把 PARF 拆成 16 个独立 `parf_col`（每列单独 SRAM），但所有列共享 wr_addr/we。

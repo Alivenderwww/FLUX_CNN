@@ -24,7 +24,6 @@
 - `cfg_rounds_per_cins`：当 kk × cin_slices > WRF_DEPTH 时把 round 切片
 - `cfg_round_len_last`：最后一 round 的长度（其余 round 都是 32）
 - `cfg_wb_base / cfg_wb_cout_step`：WB 起点和跨 cs 步长
-- `cfg_fold_cout_groups / cfg_fold_col_shift`：Kx-fold 的 x_cnt 扩展参数
 
 ### WB 读端口
 
@@ -177,10 +176,6 @@ COMPUTE:     bias_vec[c] = bias_rf[cs_cnt][c]   组合读
 ```
 
 `bias_rf` 数据路径但有复位（清 0），保证 bias_en=0 场景下残留 X 不污染 mac_array 的 acc_seed 通路。
-
-## Kx-fold 影响
-
-`cur_valid_w` 在 Kx-fold 时扩到 `cur_valid_w_orig + (groups_x-1) × col_shift`，`x_cnt` 跑这个扩展长度（和 line_buffer 的 iss_pos 范围一致，保证两侧握手 fire 数对齐）。
 
 ## 在 core_top 中的位置
 

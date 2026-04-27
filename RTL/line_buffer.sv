@@ -49,12 +49,9 @@ module line_buffer #(
     // ---- cfg ----
     input  logic [15:0]                          cfg_h_out,
     input  logic [15:0]                          cfg_w_in,
-    input  logic [3:0]                           cfg_k,   // = Kx (可能是虚拟 Kx = kxper)
+    input  logic [3:0]                           cfg_k,   // Kx (Ky-fold 时 = kyper)
     input  logic [3:0]                           cfg_ky,  // Ky (无 fold 时 = cfg_k)
     input  logic [2:0]                           cfg_stride,
-    // Kx-fold: 扩展 iss_pos 到 cur_valid_w + (groups-1)*col_shift, 覆盖 systolic 尾部
-    input  logic [4:0]                           cfg_fold_cout_groups,
-    input  logic [3:0]                           cfg_fold_col_shift,
     input  logic [5:0]                           cfg_cin_slices,
     input  logic [5:0]                           cfg_cout_slices,
     input  logic [5:0]                           cfg_tile_w,
@@ -157,14 +154,8 @@ module line_buffer #(
     // =========================================================================
     // 派生量 + 边界
     // =========================================================================
-    logic [5:0] cur_valid_w_orig;
     logic [5:0] cur_valid_w;
-    logic [8:0] cur_valid_w_9;
-    assign cur_valid_w_orig = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
-    // Kx-fold: iss_pos 扩展到 cur_valid_w_orig + (groups-1)*col_shift
-    assign cur_valid_w_9   = {3'd0, cur_valid_w_orig} +
-                             (cfg_fold_cout_groups - 5'd1) * cfg_fold_col_shift;
-    assign cur_valid_w     = cur_valid_w_9[5:0];
+    assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
 
     // FILL 长度：仅 reuse_en=1 下有意义；= cur_valid_w + K - 1（滑动窗口覆盖 kx 全范围）
     // 编译器必须保证 cur_fill_len ≤ ARF_DEPTH（tile_w ≤ 33-K）

@@ -8,9 +8,8 @@
 cd toolchain
 python run_regression.py                      # 无 fold 基线, 22 case
 python run_regression.py --fold               # Ky-fold 启用
-python run_regression.py --fold --kx-fold     # Ky + Kx fold
 python run_regression.py --s2d                # Space-to-Depth (stride>=2 case)
-python run_regression.py --fold --kx-fold --s2d   # 三个一起
+python run_regression.py --fold --s2d         # 两个叠加
 
 # 只跑 name 含指定子串的 case
 python run_regression.py --case "C8C8"
@@ -37,15 +36,15 @@ python gen_isa_test.py \
     --num_cin 8 --num_cout 8 \
     --stride 1 --pad 1 --shift 0
 
-# 带 fold
+# 带 Ky-fold
 python gen_isa_test.py --k 8 --h_in 960 --w_in 540 \
     --num_cin 4 --num_cout 8 --stride 2 --pad 4 \
-    --ky-fold --kx-fold
+    --ky-fold
 
 # 带 S2D (stride>=2)
 python gen_isa_test.py --k 8 --h_in 960 --w_in 540 \
     --num_cin 4 --num_cout 8 --stride 2 --pad 4 \
-    --s2d --kx-fold
+    --s2d
 
 # 跑仿真 (--out-dir 默认 ../sim/tb_core_dma)
 cd ../sim/tb_core_dma
@@ -71,7 +70,7 @@ task load_config(string case_dir);
     case (key)
         "K"              : axi_lite_write(ADDR_K,              val);
         "KY"             : axi_lite_write(ADDR_KY,             val);
-        "FOLD_COUT_ORIG" : axi_lite_write(ADDR_FOLD_COUT_ORIG, val);
+        "STRIDE"         : axi_lite_write(ADDR_STRIDE,         val);
         ...
     endcase
 endtask
@@ -149,7 +148,7 @@ vlog -sv ... \
     ../../RTL/DMA/dfe.sv ../../RTL/desc_fifo.sv \
     ../../RTL/sequencer.sv ../../RTL/cfg_regs.sv \
     ../../RTL/mac_pe.sv ../../RTL/mac_col.sv ../../RTL/mac_array.sv \
-    ../../RTL/parf_col.sv ../../RTL/parf_accum.sv ../../RTL/psum_reshape.sv \
+    ../../RTL/parf_col.sv ../../RTL/parf_accum.sv \
     ../../RTL/line_buffer.sv ../../RTL/wgt_buffer.sv ../../RTL/ofb_writer.sv \
     ../../RTL/core_top.sv \
     ../tb_axi_m_mux/axi_slave_mem.sv \

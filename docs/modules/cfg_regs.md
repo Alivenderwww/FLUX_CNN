@@ -32,7 +32,7 @@
 
 ### cfg 输出
 
-输出接到 line_buffer / wgt_buffer / parf_accum / psum_reshape / ofb_writer / sequencer / DMA 等下游。每个寄存器单独走 always_ff 写入 + assign 直通输出。
+输出接到 line_buffer / wgt_buffer / parf_accum / ofb_writer / sequencer / DMA 等下游。每个寄存器单独走 always_ff 写入 + assign 直通输出。
 
 ## 寄存器映射
 
@@ -50,7 +50,6 @@
 | `0x188..0x198` | SDP（新） | SDP_MULT/ZP_OUT/CLIP_MIN/CLIP_MAX/ROUND_EN |
 | `0x1A0..0x1B4` | NHWC 派生 | IFB_RING_WORDS/OFB_ROW_WORDS/OFB_RING_WORDS/IFB_ISS_STEP/IFB_KY_STEP/TILE_PIX_STEP |
 | `0x1B8` | ARF_REUSE_EN | bit[0]=1 时 stride=1&&K>1 启用滑窗复用 |
-| `0x1BC..0x1C4` | Kx-fold | FOLD_COUT_ORIG/FOLD_COUT_GROUPS/FOLD_COL_SHIFT |
 | `0x200..0x224` | DMA 参数 | IDMA_SRC_BASE/BYTE_LEN, WDMA_*, ODMA_* |
 
 ## 写入逻辑
@@ -105,5 +104,5 @@ status_word = {20'd0,
 
 实例 `u_cfg`：
 - 上游：`u_csr_bridge`（`axi_lite_csr` 桥接的 AXI-Lite slave 端口）解码后的 `reg_w_*` / `reg_r_*` 信号
-- 下游：cfg 总线分散到所有 core 内部模块（line_buffer / wgt_buffer / parf_accum / psum_reshape / ofb_writer / sequencer / dfe / 三个 DMA）
+- 下游：cfg 总线分散到所有 core 内部模块（line_buffer / wgt_buffer / parf_accum / ofb_writer / sequencer / dfe / 三个 DMA）
 - start pulse → sequencer 内部 FSM 触发

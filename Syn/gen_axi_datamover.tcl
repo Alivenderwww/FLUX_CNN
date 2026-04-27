@@ -72,12 +72,14 @@ set_property -dict {
     CONFIG.c_addr_width              32
     CONFIG.c_m_axi_mm2s_addr_width   32
     CONFIG.c_m_axi_mm2s_data_width   128
+    CONFIG.c_m_axi_mm2s_id_width     2
     CONFIG.c_m_axis_mm2s_tdata_width 128
     CONFIG.c_mm2s_btt_used           23
     CONFIG.c_include_mm2s_dre        true
     CONFIG.c_mm2s_burst_size         16
     CONFIG.c_m_axi_s2mm_addr_width   32
     CONFIG.c_m_axi_s2mm_data_width   128
+    CONFIG.c_m_axi_s2mm_id_width     2
     CONFIG.c_s_axis_s2mm_tdata_width 128
     CONFIG.c_s2mm_btt_used           23
     CONFIG.c_include_s2mm_dre        true

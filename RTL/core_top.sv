@@ -611,12 +611,21 @@ module core_top #(
     assign done = ow_done;
 
     // =========================================================================
-    // 10. DMA 引擎 (IDMA / WDMA / ODMA) + axi_m_mux
-    //     M[0]=IDMA, M[1]=WDMA, M[2]=ODMA, M[3]=reserved
+    // 10. DMA 引擎 (idma_dm / wdma_dm / odma_dm) + AXI DataMover + axi_m_mux
+    //
+    //   idma_dm + wdma_dm 共享 axi_dm 的 MM2S 通道, 经 mm2s_arb 串行仲裁.
+    //   odma_dm 独占 axi_dm 的 S2MM 通道.
+    //   axi_dm 对外暴露 2 个 AXI4 master (mm2s 读 / s2mm 写), 经 axi_m_mux 与
+    //   DFE 一起聚合到外部 1 个 AXI4 master 接口.
+    //
+    //   M[0] = axi_dm.MM2S read  (AR/R), AW/W/B tied 0
+    //   M[1] = axi_dm.S2MM write (AW/W/B), AR/R tied 0
+    //   M[2] = unused (was old WDMA), all tied
+    //   M[3] = DFE (read only), AW/W/B tied 0
     // =========================================================================
     localparam int N_MST = 2**AXI_M_WIDTH;
 
-    // Master-side 打包信号（给 axi_m_mux）
+    // Master-side 打包信号 (给 axi_m_mux)
     logic [N_MST-1:0] [AXI_M_ID-1:0]      m_awid;
     logic [N_MST-1:0] [BUS_ADDR_W-1:0]    m_awaddr;
     logic [N_MST-1:0] [7:0]               m_awlen;
@@ -645,7 +654,43 @@ module core_top #(
     logic [N_MST-1:0]                     m_rvalid;
     logic [N_MST-1:0]                     m_rready;
 
-    // M[3] = DFE (read only; AW/W/B 通道 tie 0)
+    // ---- M[0] 写通道 / M[1] 读通道 / M[2] 全部 / M[3] 写通道 tie 0 ----
+    // M[0] = MM2S (read only)
+    assign m_awid   [0] = '0;
+    assign m_awaddr [0] = '0;
+    assign m_awlen  [0] = '0;
+    assign m_awburst[0] = 2'b01;
+    assign m_awvalid[0] = 1'b0;
+    assign m_wdata  [0] = '0;
+    assign m_wstrb  [0] = '0;
+    assign m_wlast  [0] = 1'b0;
+    assign m_wvalid [0] = 1'b0;
+    assign m_bready [0] = 1'b1;
+    // M[1] = S2MM (write only)
+    assign m_arid   [1] = '0;
+    assign m_araddr [1] = '0;
+    assign m_arlen  [1] = '0;
+    assign m_arburst[1] = 2'b01;
+    assign m_arvalid[1] = 1'b0;
+    assign m_rready [1] = 1'b1;
+    // M[2] unused (DataMover 把原 wdma 的 master 槽合并掉了)
+    assign m_awid   [2] = '0;
+    assign m_awaddr [2] = '0;
+    assign m_awlen  [2] = '0;
+    assign m_awburst[2] = 2'b01;
+    assign m_awvalid[2] = 1'b0;
+    assign m_wdata  [2] = '0;
+    assign m_wstrb  [2] = '0;
+    assign m_wlast  [2] = 1'b0;
+    assign m_wvalid [2] = 1'b0;
+    assign m_bready [2] = 1'b1;
+    assign m_arid   [2] = '0;
+    assign m_araddr [2] = '0;
+    assign m_arlen  [2] = '0;
+    assign m_arburst[2] = 2'b01;
+    assign m_arvalid[2] = 1'b0;
+    assign m_rready [2] = 1'b1;
+    // M[3] = DFE (read only)
     assign m_awid   [3] = '0;
     assign m_awaddr [3] = '0;
     assign m_awlen  [3] = '0;
@@ -674,59 +719,116 @@ module core_top #(
         .fifo_wdata(desc_fifo_wdata), .fifo_we(desc_fifo_we), .fifo_full(desc_fifo_full)
     );
 
-    // IDMA (M[0])
-    idma #(
-        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .M_ID(AXI_M_ID),
+    // =========================================================================
+    // axi_dm IP cmd/data/sts wires
+    // =========================================================================
+    logic                       arb_mm2s_cmd_tvalid, arb_mm2s_cmd_tready;
+    logic [71:0]                arb_mm2s_cmd_tdata;
+    logic                       arb_mm2s_data_tvalid, arb_mm2s_data_tready;
+    logic [BUS_DATA_W-1:0]      arb_mm2s_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    arb_mm2s_data_tkeep;
+    logic                       arb_mm2s_data_tlast;
+    logic                       arb_mm2s_sts_tvalid, arb_mm2s_sts_tready;
+    logic [7:0]                 arb_mm2s_sts_tdata;
+    logic                       odma_s2mm_cmd_tvalid, odma_s2mm_cmd_tready;
+    logic [71:0]                odma_s2mm_cmd_tdata;
+    logic                       odma_s2mm_data_tvalid, odma_s2mm_data_tready;
+    logic [BUS_DATA_W-1:0]      odma_s2mm_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    odma_s2mm_data_tkeep;
+    logic                       odma_s2mm_data_tlast;
+    logic                       odma_s2mm_sts_tvalid, odma_s2mm_sts_tready;
+    logic [7:0]                 odma_s2mm_sts_tdata;
+
+    // idma_dm <→ mm2s_arb 之间的 cmd/data/sts
+    logic                       idma_cmd_tvalid, idma_cmd_tready;
+    logic [71:0]                idma_cmd_tdata;
+    logic                       idma_data_tvalid, idma_data_tready;
+    logic [BUS_DATA_W-1:0]      idma_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    idma_data_tkeep;
+    logic                       idma_data_tlast;
+    logic                       idma_sts_tvalid, idma_sts_tready;
+    logic [7:0]                 idma_sts_tdata;
+    logic                       idma_err_w;
+    // wdma_dm <→ mm2s_arb
+    logic                       wdma_cmd_tvalid, wdma_cmd_tready;
+    logic [71:0]                wdma_cmd_tdata;
+    logic                       wdma_data_tvalid, wdma_data_tready;
+    logic [BUS_DATA_W-1:0]      wdma_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    wdma_data_tkeep;
+    logic                       wdma_data_tlast;
+    logic                       wdma_sts_tvalid, wdma_sts_tready;
+    logic [7:0]                 wdma_sts_tdata;
+    logic                       wdma_err_w;
+    logic                       odma_err_w;
+
+    // =========================================================================
+    // idma_dm
+    // =========================================================================
+    idma_dm #(
+        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_idma (
         .clk(clk), .rst_n(rst_n),
-        .start(seq_start_idma_pulse), .done(idma_done), .busy(idma_busy),
+        .start(seq_start_idma_pulse), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
         .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
         .cfg_h_in_total    (cfg_h_in_total),
         .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
-        .cfg_ifb_ring_words(cfg_ifb_ring_words),
         .cfg_ifb_ky_step   (cfg_ifb_ky_step),
+        .cfg_ifb_ring_words(cfg_ifb_ring_words),
         .rows_consumed     (rows_consumed),
         .rows_available    (rows_available),
-        .M_AWID(m_awid[0]), .M_AWADDR(m_awaddr[0]), .M_AWLEN(m_awlen[0]),
-        .M_AWBURST(m_awburst[0]), .M_AWVALID(m_awvalid[0]), .M_AWREADY(m_awready[0]),
-        .M_WDATA(m_wdata[0]), .M_WSTRB(m_wstrb[0]), .M_WLAST(m_wlast[0]),
-        .M_WVALID(m_wvalid[0]), .M_WREADY(m_wready[0]),
-        .M_BID(m_bid[0]), .M_BRESP(m_bresp[0]), .M_BVALID(m_bvalid[0]), .M_BREADY(m_bready[0]),
-        .M_ARID(m_arid[0]), .M_ARADDR(m_araddr[0]), .M_ARLEN(m_arlen[0]),
-        .M_ARBURST(m_arburst[0]), .M_ARVALID(m_arvalid[0]), .M_ARREADY(m_arready[0]),
-        .M_RID(m_rid[0]), .M_RDATA(m_rdata[0]), .M_RRESP(m_rresp[0]),
-        .M_RLAST(m_rlast[0]), .M_RVALID(m_rvalid[0]), .M_RREADY(m_rready[0]),
+        .mm2s_cmd_tvalid (idma_cmd_tvalid),  .mm2s_cmd_tready (idma_cmd_tready),  .mm2s_cmd_tdata  (idma_cmd_tdata),
+        .mm2s_data_tvalid(idma_data_tvalid), .mm2s_data_tready(idma_data_tready),
+        .mm2s_data_tdata (idma_data_tdata),  .mm2s_data_tkeep (idma_data_tkeep),  .mm2s_data_tlast (idma_data_tlast),
+        .mm2s_sts_tvalid (idma_sts_tvalid),  .mm2s_sts_tready (idma_sts_tready),  .mm2s_sts_tdata  (idma_sts_tdata),
         .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata)
     );
 
-    // WDMA (M[1])
-    wdma #(
-        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .WB_DATA_W(WB_WIDTH), .M_ID(AXI_M_ID),
+    // =========================================================================
+    // wdma_dm
+    // =========================================================================
+    wdma_dm #(
+        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .WB_DATA_W(WB_WIDTH),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_wdma (
         .clk(clk), .rst_n(rst_n),
-        .start(seq_start_wdma_pulse), .done(wdma_done), .busy(wdma_busy),
+        .start(seq_start_wdma_pulse), .done(wdma_done), .busy(wdma_busy), .err(wdma_err_w),
         .src_base(dma_wdma_src_base), .byte_len(dma_wdma_byte_len),
-        .M_AWID(m_awid[1]), .M_AWADDR(m_awaddr[1]), .M_AWLEN(m_awlen[1]),
-        .M_AWBURST(m_awburst[1]), .M_AWVALID(m_awvalid[1]), .M_AWREADY(m_awready[1]),
-        .M_WDATA(m_wdata[1]), .M_WSTRB(m_wstrb[1]), .M_WLAST(m_wlast[1]),
-        .M_WVALID(m_wvalid[1]), .M_WREADY(m_wready[1]),
-        .M_BID(m_bid[1]), .M_BRESP(m_bresp[1]), .M_BVALID(m_bvalid[1]), .M_BREADY(m_bready[1]),
-        .M_ARID(m_arid[1]), .M_ARADDR(m_araddr[1]), .M_ARLEN(m_arlen[1]),
-        .M_ARBURST(m_arburst[1]), .M_ARVALID(m_arvalid[1]), .M_ARREADY(m_arready[1]),
-        .M_RID(m_rid[1]), .M_RDATA(m_rdata[1]), .M_RRESP(m_rresp[1]),
-        .M_RLAST(m_rlast[1]), .M_RVALID(m_rvalid[1]), .M_RREADY(m_rready[1]),
+        .mm2s_cmd_tvalid (wdma_cmd_tvalid),  .mm2s_cmd_tready (wdma_cmd_tready),  .mm2s_cmd_tdata  (wdma_cmd_tdata),
+        .mm2s_data_tvalid(wdma_data_tvalid), .mm2s_data_tready(wdma_data_tready),
+        .mm2s_data_tdata (wdma_data_tdata),  .mm2s_data_tkeep (wdma_data_tkeep),  .mm2s_data_tlast (wdma_data_tlast),
+        .mm2s_sts_tvalid (wdma_sts_tvalid),  .mm2s_sts_tready (wdma_sts_tready),  .mm2s_sts_tdata  (wdma_sts_tdata),
         .wb_we(wdma_wb_we), .wb_waddr(wdma_wb_waddr), .wb_wdata(wdma_wb_wdata)
     );
 
-    // ODMA (M[2])
-    odma #(
-        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .M_ID(AXI_M_ID),
+    // =========================================================================
+    // mm2s_arb (idma + wdma → 单条 axi_dm.MM2S)
+    // =========================================================================
+    mm2s_arb #(.DATA_W(BUS_DATA_W)) u_mm2s_arb (
+        .clk(clk), .rst_n(rst_n),
+        .idma_cmd_tvalid (idma_cmd_tvalid),  .idma_cmd_tready (idma_cmd_tready),  .idma_cmd_tdata  (idma_cmd_tdata),
+        .idma_data_tvalid(idma_data_tvalid), .idma_data_tready(idma_data_tready),
+        .idma_data_tdata (idma_data_tdata),  .idma_data_tkeep (idma_data_tkeep),  .idma_data_tlast (idma_data_tlast),
+        .idma_sts_tvalid (idma_sts_tvalid),  .idma_sts_tready (idma_sts_tready),  .idma_sts_tdata  (idma_sts_tdata),
+        .wdma_cmd_tvalid (wdma_cmd_tvalid),  .wdma_cmd_tready (wdma_cmd_tready),  .wdma_cmd_tdata  (wdma_cmd_tdata),
+        .wdma_data_tvalid(wdma_data_tvalid), .wdma_data_tready(wdma_data_tready),
+        .wdma_data_tdata (wdma_data_tdata),  .wdma_data_tkeep (wdma_data_tkeep),  .wdma_data_tlast (wdma_data_tlast),
+        .wdma_sts_tvalid (wdma_sts_tvalid),  .wdma_sts_tready (wdma_sts_tready),  .wdma_sts_tdata  (wdma_sts_tdata),
+        .mm2s_cmd_tvalid (arb_mm2s_cmd_tvalid),  .mm2s_cmd_tready (arb_mm2s_cmd_tready),  .mm2s_cmd_tdata  (arb_mm2s_cmd_tdata),
+        .mm2s_data_tvalid(arb_mm2s_data_tvalid), .mm2s_data_tready(arb_mm2s_data_tready),
+        .mm2s_data_tdata (arb_mm2s_data_tdata),  .mm2s_data_tkeep (arb_mm2s_data_tkeep),  .mm2s_data_tlast (arb_mm2s_data_tlast),
+        .mm2s_sts_tvalid (arb_mm2s_sts_tvalid),  .mm2s_sts_tready (arb_mm2s_sts_tready),  .mm2s_sts_tdata  (arb_mm2s_sts_tdata)
+    );
+
+    // =========================================================================
+    // odma_dm
+    // =========================================================================
+    odma_dm #(
+        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_odma (
         .clk(clk), .rst_n(rst_n),
-        .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy),
+        .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
         .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
         .cfg_h_out_total       (cfg_h_out),
         .cfg_w_out             (cfg_w_out),
@@ -736,16 +838,96 @@ module core_top #(
         .cfg_ofb_ring_words    (cfg_ofb_ring_words),
         .row_done_pulse        (row_done_pulse),
         .rows_drained          (rows_drained),
-        .M_AWID(m_awid[2]), .M_AWADDR(m_awaddr[2]), .M_AWLEN(m_awlen[2]),
-        .M_AWBURST(m_awburst[2]), .M_AWVALID(m_awvalid[2]), .M_AWREADY(m_awready[2]),
-        .M_WDATA(m_wdata[2]), .M_WSTRB(m_wstrb[2]), .M_WLAST(m_wlast[2]),
-        .M_WVALID(m_wvalid[2]), .M_WREADY(m_wready[2]),
-        .M_BID(m_bid[2]), .M_BRESP(m_bresp[2]), .M_BVALID(m_bvalid[2]), .M_BREADY(m_bready[2]),
-        .M_ARID(m_arid[2]), .M_ARADDR(m_araddr[2]), .M_ARLEN(m_arlen[2]),
-        .M_ARBURST(m_arburst[2]), .M_ARVALID(m_arvalid[2]), .M_ARREADY(m_arready[2]),
-        .M_RID(m_rid[2]), .M_RDATA(m_rdata[2]), .M_RRESP(m_rresp[2]),
-        .M_RLAST(m_rlast[2]), .M_RVALID(m_rvalid[2]), .M_RREADY(m_rready[2]),
+        .s2mm_cmd_tvalid (odma_s2mm_cmd_tvalid),  .s2mm_cmd_tready (odma_s2mm_cmd_tready),  .s2mm_cmd_tdata  (odma_s2mm_cmd_tdata),
+        .s2mm_data_tvalid(odma_s2mm_data_tvalid), .s2mm_data_tready(odma_s2mm_data_tready),
+        .s2mm_data_tdata (odma_s2mm_data_tdata),  .s2mm_data_tkeep (odma_s2mm_data_tkeep),  .s2mm_data_tlast (odma_s2mm_data_tlast),
+        .s2mm_sts_tvalid (odma_s2mm_sts_tvalid),  .s2mm_sts_tready (odma_s2mm_sts_tready),  .s2mm_sts_tdata  (odma_s2mm_sts_tdata),
         .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata)
+    );
+
+    // =========================================================================
+    // axi_dm IP (Xilinx AXI DataMover): MM2S + S2MM
+    //   MM2S 内部 read master 接 m_axi[0]; S2MM 内部 write master 接 m_axi[1].
+    //   axi_dm 端口名照 Vivado 生成的 axi_dm.veo (BUS_DATA_W=128 时 tkeep=16-bit).
+    // =========================================================================
+    axi_dm u_axi_dm (
+        // ---- 时钟 / 复位 (mm2s + s2mm + 各自 cmdsts 全部用同一时钟) ----
+        .m_axi_mm2s_aclk            (clk),
+        .m_axi_mm2s_aresetn         (rst_n),
+        .mm2s_err                   (),
+        .m_axis_mm2s_cmdsts_aclk    (clk),
+        .m_axis_mm2s_cmdsts_aresetn (rst_n),
+        // ---- MM2S cmd / data / sts (来自 mm2s_arb) ----
+        .s_axis_mm2s_cmd_tvalid     (arb_mm2s_cmd_tvalid),
+        .s_axis_mm2s_cmd_tready     (arb_mm2s_cmd_tready),
+        .s_axis_mm2s_cmd_tdata      (arb_mm2s_cmd_tdata),
+        .m_axis_mm2s_sts_tvalid     (arb_mm2s_sts_tvalid),
+        .m_axis_mm2s_sts_tready     (arb_mm2s_sts_tready),
+        .m_axis_mm2s_sts_tdata      (arb_mm2s_sts_tdata),
+        .m_axis_mm2s_sts_tkeep      (),
+        .m_axis_mm2s_sts_tlast      (),
+        // ---- MM2S 内部 AXI4 read master → m_axi[0] ----
+        .m_axi_mm2s_arid            (m_arid   [0]),
+        .m_axi_mm2s_araddr          (m_araddr [0]),
+        .m_axi_mm2s_arlen           (m_arlen  [0]),
+        .m_axi_mm2s_arsize          (),
+        .m_axi_mm2s_arburst         (m_arburst[0]),
+        .m_axi_mm2s_arprot          (),
+        .m_axi_mm2s_arcache         (),
+        .m_axi_mm2s_aruser          (),
+        .m_axi_mm2s_arvalid         (m_arvalid[0]),
+        .m_axi_mm2s_arready         (m_arready[0]),
+        .m_axi_mm2s_rdata           (m_rdata  [0]),
+        .m_axi_mm2s_rresp           (m_rresp  [0]),
+        .m_axi_mm2s_rlast           (m_rlast  [0]),
+        .m_axi_mm2s_rvalid          (m_rvalid [0]),
+        .m_axi_mm2s_rready          (m_rready [0]),
+        // ---- MM2S 数据流出 → mm2s_arb ----
+        .m_axis_mm2s_tdata          (arb_mm2s_data_tdata),
+        .m_axis_mm2s_tkeep          (arb_mm2s_data_tkeep),
+        .m_axis_mm2s_tlast          (arb_mm2s_data_tlast),
+        .m_axis_mm2s_tvalid         (arb_mm2s_data_tvalid),
+        .m_axis_mm2s_tready         (arb_mm2s_data_tready),
+        // ---- S2MM 时钟 / 复位 ----
+        .m_axi_s2mm_aclk            (clk),
+        .m_axi_s2mm_aresetn         (rst_n),
+        .s2mm_err                   (),
+        .m_axis_s2mm_cmdsts_awclk   (clk),
+        .m_axis_s2mm_cmdsts_aresetn (rst_n),
+        // ---- S2MM cmd / data / sts (来自 odma_dm) ----
+        .s_axis_s2mm_cmd_tvalid     (odma_s2mm_cmd_tvalid),
+        .s_axis_s2mm_cmd_tready     (odma_s2mm_cmd_tready),
+        .s_axis_s2mm_cmd_tdata      (odma_s2mm_cmd_tdata),
+        .m_axis_s2mm_sts_tvalid     (odma_s2mm_sts_tvalid),
+        .m_axis_s2mm_sts_tready     (odma_s2mm_sts_tready),
+        .m_axis_s2mm_sts_tdata      (odma_s2mm_sts_tdata),
+        .m_axis_s2mm_sts_tkeep      (),
+        .m_axis_s2mm_sts_tlast      (),
+        // ---- S2MM 内部 AXI4 write master → m_axi[1] ----
+        .m_axi_s2mm_awid            (m_awid   [1]),
+        .m_axi_s2mm_awaddr          (m_awaddr [1]),
+        .m_axi_s2mm_awlen           (m_awlen  [1]),
+        .m_axi_s2mm_awsize          (),
+        .m_axi_s2mm_awburst         (m_awburst[1]),
+        .m_axi_s2mm_awprot          (),
+        .m_axi_s2mm_awcache         (),
+        .m_axi_s2mm_awuser          (),
+        .m_axi_s2mm_awvalid         (m_awvalid[1]),
+        .m_axi_s2mm_awready         (m_awready[1]),
+        .m_axi_s2mm_wdata           (m_wdata  [1]),
+        .m_axi_s2mm_wstrb           (m_wstrb  [1]),
+        .m_axi_s2mm_wlast           (m_wlast  [1]),
+        .m_axi_s2mm_wvalid          (m_wvalid [1]),
+        .m_axi_s2mm_wready          (m_wready [1]),
+        .m_axi_s2mm_bresp           (m_bresp  [1]),
+        .m_axi_s2mm_bvalid          (m_bvalid [1]),
+        .m_axi_s2mm_bready          (m_bready [1]),
+        // ---- S2MM 数据流入 (来自 odma_dm) ----
+        .s_axis_s2mm_tdata          (odma_s2mm_data_tdata),
+        .s_axis_s2mm_tkeep          (odma_s2mm_data_tkeep),
+        .s_axis_s2mm_tlast          (odma_s2mm_data_tlast),
+        .s_axis_s2mm_tvalid         (odma_s2mm_data_tvalid),
+        .s_axis_s2mm_tready         (odma_s2mm_data_tready)
     );
 
     // N→1 AXI M 合并

@@ -21,6 +21,16 @@ Syn/*.backup.log
 Syn/*.jou
 Syn/syn_run*.log
 
+# Vivado simlib + IP managed runtime (1GB+, 可由脚本重生成)
+Syn/sim_libs/
+Syn/modelsim.ini
+Syn/ip_managed/
+Syn/ip_managed_summary.txt
+Syn/ip_sim_export/
+Syn/ip_user_files/
+Syn/.Xil/
+Syn/.cxl.modelsim.version
+
 # 根目录下误生成的仿真数据文件（应在 sim/tb_core_isa/ 下运行 Python 脚本）
 /ifb.txt
 /wb.txt

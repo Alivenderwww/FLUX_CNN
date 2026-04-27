@@ -28,10 +28,12 @@
 ## DMA / AXI
 
 - [dfe](dfe.md) — descriptor fetch engine
-- [idma](idma.md) — DDR → IFB streaming DMA
-- [wdma](wdma.md) — DDR → WB DMA（128→2048 打包）
-- [odma](odma.md) — OFB → DDR streaming DMA
-- [axi_m_mux](axi_m_mux.md) — 4 → 1 AXI master 聚合
+- `idma_dm` / `wdma_dm` / `odma_dm` — 通过 Xilinx AXI DataMover IP (mm2s/s2mm)
+  搬运的 DMA wrapper. cfg 接口与原 idma/wdma/odma 一致, 只是 AXI4 master
+  转交给 axi_dm IP. 详见 RTL 文件头注释
+- `mm2s_arb` — idma_dm + wdma_dm 共享 axi_dm.MM2S 通道时的串行仲裁器
+- [axi_m_mux](axi_m_mux.md) — 4 → 1 AXI master 聚合 (现 M[0]=axi_dm.mm2s,
+  M[1]=axi_dm.s2mm, M[2]=unused, M[3]=DFE)
 
 ## Storage primitives
 

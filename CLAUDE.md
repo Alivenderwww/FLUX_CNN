@@ -9,8 +9,11 @@ FLUX_CNN：SystemVerilog CNN 加速器，16×16 int8 MAC 阵列（256 MAC）。�
 1. **Core pipeline**（5 模块 + 共享 `cfg_regs`，valid-ready 握手，无中心 FSM）
    `line_buffer → mac_array → parf_accum → ofb_writer`；`wgt_buffer` 侧路供 WRF。
    `parf_accum` 内部由 `parf_col` × NUM_COL 组成（每列独立 SRAM，外壳共享 wr_addr/we）。
-2. **DMA 子系统**（`idma / wdma / odma` + `axi_m_mux` + `axi_lite_csr`）
-   外部看是 1 个 AXI4 Master + 1 个 AXI-Lite Slave，内部 3 DMA 聚合。
+2. **DMA 子系统**（`idma_dm / wdma_dm / odma_dm` + `mm2s_arb` + Xilinx `axi_dm`
+   IP + `axi_m_mux` + `axi_lite_csr`）外部看是 1 个 AXI4 Master + 1 个 AXI-Lite
+   Slave。idma_dm/wdma_dm 共享 axi_dm 的 MM2S 通道（mm2s_arb 串行仲裁），odma_dm
+   占 S2MM 通道。axi_dm IP 由 `Syn/gen_axi_datamover.tcl` 生成 (Vivado 2023.1).
+   ModelSim 仿真前需先跑 `Syn/compile_simlib.tcl` 一次性编译 Vivado simlib.
 
 **运行模式**：统一为 **streaming row-ring**。原 batch 模式是 ring 容量覆盖整图的退化情形。支持任意 Cin/Cout（多 slice 切片）、任意 H×W（strip 粒度 ring）。
 
@@ -21,7 +24,9 @@ FLUX_CNN：SystemVerilog CNN 加速器，16×16 int8 MAC 阵列（256 MAC）。�
 ## 仿真目录
 
 - `sim/tb_core_dma/` — 端到端 descriptor-driven 测试（走 AXI-Lite 配 + AXI4 M 搬 IFB/WB/ODMA + DFE 拉 descriptor list）
-- `sim/tb_axi_lite_csr/` `sim/tb_axi_m_mux/` `sim/tb_idma/` `sim/tb_wdma/` `sim/tb_odma/` — AXI/DMA 子模块单测
+- `sim/tb_axi_lite_csr/` `sim/tb_axi_m_mux/` — AXI 子模块单测
+- `sim/tb_axi_dm_smoke/` — axi_dm IP 跨语言 elab smoke
+- `sim/tb_idma_dm/` — idma_dm + axi_dm DDR→IFB 联合自测
 
 ## 常用命令
 
@@ -49,7 +54,7 @@ python models/run_model.py --model mnist_allconv --image-dir models/images/mnist
 
 - **SystemVerilog IEEE 1800**；无 packages；packed struct + enum
 - 核心参数：`NUM_COL=NUM_PE=16` / `WRF=ARF=PARF=32` / `DATA=8` / `PSUM=32` / `SRAM=8192` / `ADDR_W=20`
-- AXI：内部 `BUS_DATA_W=128`，外部 1 主口（mux 聚合 IDMA/WDMA/ODMA）+ CSR `32` 位 slave
+- AXI：内部 `BUS_DATA_W=128`，外部 1 主口 (axi_m_mux 聚合 axi_dm.MM2S/S2MM + DFE) + CSR `32` 位 slave
 - `gen_isa_test.py` 是 derived 值的 source of truth；`hw_files.derive_layer_cfg()` 共享 cfg 派生
 - Commit prefix 用中文：`Feat:` / `Perf:` / `Docs:` / `Fix:` / `Refactor:`
 - RTL 风格规范详见 `RTL代码编写原则.md`（4 大原则 + 例外清单）
@@ -58,7 +63,7 @@ python models/run_model.py --model mnist_allconv --image-dir models/images/mnist
 ## 文档导航
 
 - `README.md` — 顶层叙述 + 性能表
-- `docs/modules/` — 每个 RTL 模块的时序与数据流（按文件名查找：line_buffer / mac_array / parf_accum / cfg_regs / sequencer / idma / wdma / odma / dfe / core_top / ... 等）
+- `docs/modules/` — 每个 RTL 模块的时序与数据流（按文件名查找：line_buffer / mac_array / parf_accum / cfg_regs / sequencer / dfe / core_top / ... 等; idma_dm/wdma_dm/odma_dm/mm2s_arb 见 RTL 文件头注释）
 - `docs/slicing/` — Cin/Cout > 16 时编译器、cfg 寄存器、硬件循环嵌套的切片机制
 - `docs/pe-fold.md` — Ky-fold + Space-to-Depth 数学推导 + 实现位置
 - `docs/simulation.md` — TB 机制、回归流程、CASE_RESULT / CASE_PROFILE 输出格式

@@ -18,18 +18,27 @@
 // 命令字 (与 idma_dm/wdma_dm 一致, EOF=1):
 //   {4'b0, TAG_ODMA, dst_addr[31:0], DRR=0, EOF=1, DSA=0, TYPE=INCR, BTT}
 //
-// 状态机:
+// 状态机 (cmd 流水化, 利用 DataMover 内部 cmd FIFO):
 //   S_IDLE → start → S_WAIT
-//   S_WAIT → has_work → S_CMD
-//   S_CMD → cmd_fire → S_PREFETCH (1 cycle, OFB SRAM 读延迟)
+//   S_WAIT → has_work_to_issue → S_CMD; all_issued → S_DRAIN
+//   S_CMD → cmd_fire → S_PREFETCH (tready 自动反压: cmd FIFO 满会卡住)
 //   S_PREFETCH → S_TX
-//   S_TX → tlast_fire → S_STS_WAIT
-//   S_STS_WAIT → sts_fire → all_done? S_DONE : S_WAIT
+//   S_TX → tlast_fire → S_WAIT (立刻准备下一条 cmd, 不等 sts)
+//   S_DRAIN → all_drained → S_DONE
 //
-// 关键: r_rows_drained / r_done 在 sts_fire 时推进, 不在 tlast_fire. 因为
-// DataMover S2MM 的 store-and-forward 模式下 tlast 表示"我们送完了流", 而
-// status fire 才表示"DataMover 写到 DDR 拿到 BRESP". layer_done = odma.done
-// 必须等到 DDR commit, 否则 TB 校验 DDR mem 时尾部还是 stale (0).
+// 两个独立 counter:
+//   rows_issued  : 在 cmd_fire 推进; 表示已下发到 DataMover cmd FIFO 的行数,
+//                   决定下一条 cmd 用什么地址 + 还要不要发更多 cmd.
+//   r_rows_drained : 在 sts_fire 推进; 表示 DataMover 已拿到 DDR BRESP 的行数,
+//                   决定 OFB ring 反压 (rows_consumed/rows_drained 给 ofb_writer)
+//                   + layer_done 何时拉起.
+//
+// 两者之差 = in-flight cmd 数, 但**我们不数它** —— DataMover 的
+// s_axis_s2mm_cmd_tready 自动反压 (cmd FIFO 默认深度 4), 我们只管发, FIFO 满
+// 自动卡 cmd_fire 即可.
+//
+// 性能要点: tlast_fire 后 1 cycle 就能再发新 cmd, 不像旧版要等 ~10 cy 拿 sts.
+// 对每行计算时间短的 K=1 ds 层有显著加速.
 // =============================================================================
 
 module odma_dm #(
@@ -95,11 +104,11 @@ module odma_dm #(
     // =========================================================================
     typedef enum logic [2:0] {
         S_IDLE     = 3'd0,
-        S_WAIT     = 3'd1,    // 等 row_done_pulse 攒够 1 行
-        S_CMD      = 3'd2,    // 发 S2MM cmd
+        S_WAIT     = 3'd1,    // 等 row_done_pulse 攒够 1 行 / 流水间隙
+        S_CMD      = 3'd2,    // 发 S2MM cmd (tready 自动反压 cmd FIFO 满)
         S_PREFETCH = 3'd3,    // 1 拍 OFB 读延迟
         S_TX       = 3'd4,    // 送 stream beats
-        S_STS_WAIT = 3'd5,    // 等 DataMover 拿到 BRESP 回 sts
+        S_DRAIN    = 3'd5,    // 所有 cmd 已发, 等剩余 sts 全部回来
         S_DONE     = 3'd6
     } state_t;
     state_t state, state_next;
@@ -107,10 +116,11 @@ module odma_dm #(
     // =========================================================================
     // 寄存器
     // =========================================================================
-    logic [ADDR_W-1:0]       cur_addr;             // 当前行 DDR 起点
-    logic [15:0]             row_beats_left;       // 当前行剩余 beats
-    logic [15:0]             r_rows_produced;
-    logic [15:0]             r_rows_drained;
+    logic [ADDR_W-1:0]       cur_addr;             // 当前要 issue 的下一条 cmd 的 DDR 起点
+    logic [15:0]             row_beats_left;       // 当前 streaming row 剩余 beats
+    logic [15:0]             r_rows_produced;      // 来自 ofb_writer 的 row_done_pulse 计数
+    logic [15:0]             r_rows_issued;        // cmd_fire 计数 (cmd 流水线最前端)
+    logic [15:0]             r_rows_drained;       // sts_fire 计数 (cmd 流水线最末端 = DDR commit)
     logic [SRAM_ADDR_W-1:0]  rd_ptr;
     logic [15:0]             x_rd_cnt;
     logic [5:0]              cs_rd_cnt;
@@ -131,10 +141,17 @@ module odma_dm #(
     assign tlast_fire = data_fire && s2mm_data_tlast;
     assign sts_fire   = s2mm_sts_tvalid  && s2mm_sts_tready;
 
-    logic streaming_has_work;
-    assign streaming_has_work = (r_rows_produced != r_rows_drained);
+    // has_work_to_issue: ofb_writer 已攒够的行数 > 我们已下发的 cmd 数, 且
+    //                    还没把整图所有行都下发完.
+    logic has_work_to_issue;
+    assign has_work_to_issue = (r_rows_produced != r_rows_issued) &&
+                               (r_rows_issued < cfg_h_out_total);
 
-    // 在 sts_fire 拍判定 (此时 r_rows_drained 还是旧值, 这条 cmd 是当前正要算上的)
+    logic all_issued;
+    assign all_issued = (r_rows_issued >= cfg_h_out_total);
+
+    // 全图 commit 完: 在 sts_fire 拍判定 (此刻 r_rows_drained 是旧值, 这条 sts
+    // 当前正要算上)
     logic streaming_all_done;
     assign streaming_all_done = sts_fire &&
                                 (r_rows_drained == cfg_h_out_total - 16'd1);
@@ -204,14 +221,12 @@ module odma_dm #(
         state_next = state;
         case (state)
             S_IDLE     : if (start)                     state_next = S_WAIT;
-            S_WAIT     : if (streaming_has_work)        state_next = S_CMD;
+            S_WAIT     : if      (has_work_to_issue)    state_next = S_CMD;
+                         else if (all_issued)           state_next = S_DRAIN;
             S_CMD      : if (cmd_fire)                  state_next = S_PREFETCH;
             S_PREFETCH :                                state_next = S_TX;
-            S_TX       : if (tlast_fire)                state_next = S_STS_WAIT;
-            S_STS_WAIT : if (sts_fire) begin
-                if (streaming_all_done)                 state_next = S_DONE;
-                else                                    state_next = S_WAIT;
-            end
+            S_TX       : if (tlast_fire)                state_next = S_WAIT;
+            S_DRAIN    : if (streaming_all_done)        state_next = S_DONE;
             S_DONE     : if (start)                     state_next = S_WAIT;
             default    :                                state_next = S_IDLE;
         endcase
@@ -232,18 +247,24 @@ module odma_dm #(
         else                         r_rows_produced <= r_rows_produced;
     end
 
-    // r_rows_drained: 每行 sts_fire 推进 (= DDR 写已 commit)
+    // r_rows_issued: cmd_fire 推进 (cmd 已下发到 DataMover cmd FIFO)
+    always_ff @(posedge clk) begin
+        if      (start)        r_rows_issued <= 16'd0;
+        else if (cmd_fire)     r_rows_issued <= r_rows_issued + 16'd1;
+        else                   r_rows_issued <= r_rows_issued;
+    end
+
+    // r_rows_drained: sts_fire 推进 (= DDR 写已 commit)
     always_ff @(posedge clk) begin
         if      (start)        r_rows_drained <= 16'd0;
         else if (sts_fire)     r_rows_drained <= r_rows_drained + 16'd1;
         else                   r_rows_drained <= r_rows_drained;
     end
 
-    // cur_addr: 每行 tlast_fire 跨行 (与流的进度同步, 不依赖 sts; 因为 cur_addr
-    // 提供给下一条 cmd, 而下一条 cmd 在 sts_fire 之后才发, 不会冲突)
+    // cur_addr: 给 cmd 用 → 在 cmd_fire 推进 (跟 r_rows_issued 同步)
     always_ff @(posedge clk) begin
         if      (start)        cur_addr <= dst_base;
-        else if (tlast_fire)   cur_addr <= cur_addr + cfg_ddr_ofm_row_stride;
+        else if (cmd_fire)     cur_addr <= cur_addr + cfg_ddr_ofm_row_stride;
         else                   cur_addr <= cur_addr;
     end
 

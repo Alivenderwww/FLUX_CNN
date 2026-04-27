@@ -1,14 +1,16 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// idma_dm.sv  --  Input DMA via Xilinx AXI DataMover MM2S
+// idma_ctrl.sv  --  Input DMA cmd controller for Xilinx AXI DataMover MM2S
 //
-// 对外接口 (cfg / rows_consumed / IFB SRAM 写端) 与原 idma.sv 完全一致, 但内部
-// 不直接驱动 AXI4 read master, 而是通过 axi_dm 实例的 MM2S 通道完成搬运:
+// 这个模块本身**不是** DataMover, 是 DataMover MM2S 通道的指令控制端:
+// 给 axi_dm 发 (addr, btt, ...) 命令, 收数据流写到 IFB SRAM. AXI4 master
+// 由 axi_dm 实例驱动, 不在这里. cfg / rows_consumed / IFB 写端口接口与上一代
+// idma.sv 兼容.
 //
-//     idma_dm.cmd ─→ axi_dm.s_axis_mm2s_cmd       (72-bit cmd word)
-//     idma_dm.data ←─ axi_dm.m_axis_mm2s          (data stream)
-//     idma_dm.sts ←─ axi_dm.m_axis_mm2s_sts       (status, 8-bit)
+//     idma_ctrl.cmd ─→ axi_dm.s_axis_mm2s_cmd       (72-bit cmd word)
+//     idma_ctrl.data ←─ axi_dm.m_axis_mm2s          (data stream)
+//     idma_ctrl.sts ←─ axi_dm.m_axis_mm2s_sts       (status, 8-bit)
 //
 // AXI4 总线 (m_axi_mm2s_*) 由外部 axi_dm 实例直接驱动到 DDR.
 //
@@ -33,7 +35,7 @@
 // (cur_addr / rows_written / wr_ptr) 由 start 初始化.
 // =============================================================================
 
-module idma_dm #(
+module idma_ctrl #(
     parameter int ADDR_W      = 32,
     parameter int DATA_W      = 128,
     parameter int SRAM_ADDR_W = 13,

@@ -26,9 +26,9 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/AXI4/axi_arbiter.sv \
     ../../RTL/AXI4/axi_m_mux.sv \
     ../../RTL/AXI4/axi_lite_csr.sv \
-    ../../RTL/DMA/idma_dm.sv \
-    ../../RTL/DMA/wdma_dm.sv \
-    ../../RTL/DMA/odma_dm.sv \
+    ../../RTL/DMA/idma_ctrl.sv \
+    ../../RTL/DMA/wdma_ctrl.sv \
+    ../../RTL/DMA/odma_ctrl.sv \
     ../../RTL/DMA/mm2s_arb.sv \
     ../../RTL/DMA/dfe.sv \
     ../../RTL/desc_fifo.sv \

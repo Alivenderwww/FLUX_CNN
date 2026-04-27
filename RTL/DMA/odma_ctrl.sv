@@ -1,10 +1,11 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// odma_dm.sv  --  Output DMA via Xilinx AXI DataMover S2MM
+// odma_ctrl.sv  --  Output DMA cmd controller for Xilinx AXI DataMover S2MM
 //
-// 替换原 odma.sv 的 AXI4 write master 实现, 改用 DataMover S2MM. 对外接口
-// (cfg / row_done_pulse / OFB SRAM 读端 / rows_drained) 与原 odma 兼容.
+// DataMover S2MM 通道的指令控制端 (本身不是 DataMover): 给 axi_dm 发 cmd,
+// 把 OFB SRAM 数据按 NHWC gather 推到 axi_dm 的 stream 输入. 对外接口与上一代
+// odma.sv 兼容 (cfg / row_done_pulse / OFB 读端 / rows_drained).
 //
 // 设计:
 //   - 每输出行 1 条 S2MM cmd, BTT = w_out × cout_slices × 16 字节
@@ -15,7 +16,7 @@
 //   - stream tlast 在该行最后一拍拉起; tlast_fire → r_rows_drained++ → 释放 OFB
 //   - DataMover S2MM 内部处理 AW/W/B + AXI burst 切分, 我们只发 stream
 //
-// 命令字 (与 idma_dm/wdma_dm 一致, EOF=1):
+// 命令字 (与 idma_ctrl/wdma_ctrl 一致, EOF=1):
 //   {4'b0, TAG_ODMA, dst_addr[31:0], DRR=0, EOF=1, DSA=0, TYPE=INCR, BTT}
 //
 // 状态机 (cmd 流水化, 利用 DataMover 内部 cmd FIFO):
@@ -41,7 +42,7 @@
 // 对每行计算时间短的 K=1 ds 层有显著加速.
 // =============================================================================
 
-module odma_dm #(
+module odma_ctrl #(
     parameter int ADDR_W      = 32,
     parameter int DATA_W      = 128,
     parameter int SRAM_ADDR_W = 13,

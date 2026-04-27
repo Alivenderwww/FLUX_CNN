@@ -1,5 +1,5 @@
 # =============================================================================
-# tb_idma_dm/run.tcl  --  idma_dm + axi_dm DataMover 联合自测
+# tb_idma_ctrl/run.tcl  --  idma_ctrl + axi_dm DataMover 联合自测
 # =============================================================================
 
 set XLNX_INI    {C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini}
@@ -22,9 +22,9 @@ vlog -work xil_defaultlib \
 vlog -sv -work work -mfcu \
     +incdir+../../RTL \
     ../../RTL/sram_model.sv \
-    ../../RTL/DMA/idma_dm.sv \
+    ../../RTL/DMA/idma_ctrl.sv \
     ../tb_axi_m_mux/axi_slave_mem.sv \
-    tb_idma_dm.sv
+    tb_idma_ctrl.sv
 
 vsim -c -voptargs="+acc" \
     -L xil_defaultlib \
@@ -36,7 +36,7 @@ vsim -c -voptargs="+acc" \
     -L lib_srl_fifo_v1_0_2 \
     -L blk_mem_gen_v8_4_6 \
     -L unisims_ver \
-    work.tb_idma_dm xil_defaultlib.glbl
+    work.tb_idma_ctrl xil_defaultlib.glbl
 
 run -all
 quit -f

@@ -77,6 +77,7 @@ set_property -dict {
     CONFIG.c_mm2s_btt_used           23
     CONFIG.c_include_mm2s_dre        true
     CONFIG.c_mm2s_burst_size         256
+    CONFIG.c_mm2s_include_sf         false
     CONFIG.c_m_axi_s2mm_addr_width   32
     CONFIG.c_m_axi_s2mm_data_width   128
     CONFIG.c_m_axi_s2mm_id_width     2
@@ -84,6 +85,7 @@ set_property -dict {
     CONFIG.c_s2mm_btt_used           23
     CONFIG.c_include_s2mm_dre        true
     CONFIG.c_s2mm_burst_size         256
+    CONFIG.c_s2mm_include_sf         false
 } [get_ips $IP_DM]
 
 # -----------------------------------------------------------------------------

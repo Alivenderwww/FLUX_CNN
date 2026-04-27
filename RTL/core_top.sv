@@ -611,10 +611,10 @@ module core_top #(
     assign done = ow_done;
 
     // =========================================================================
-    // 10. DMA 引擎 (idma_dm / wdma_dm / odma_dm) + AXI DataMover + axi_m_mux
+    // 10. DMA 引擎 (idma_ctrl / wdma_ctrl / odma_ctrl) + AXI DataMover + axi_m_mux
     //
-    //   idma_dm + wdma_dm 共享 axi_dm 的 MM2S 通道, 经 mm2s_arb 串行仲裁.
-    //   odma_dm 独占 axi_dm 的 S2MM 通道.
+    //   idma_ctrl + wdma_ctrl 共享 axi_dm 的 MM2S 通道, 经 mm2s_arb 串行仲裁.
+    //   odma_ctrl 独占 axi_dm 的 S2MM 通道.
     //   axi_dm 对外暴露 2 个 AXI4 master (mm2s 读 / s2mm 写), 经 axi_m_mux 与
     //   DFE 一起聚合到外部 1 个 AXI4 master 接口.
     //
@@ -739,7 +739,7 @@ module core_top #(
     logic                       odma_s2mm_sts_tvalid, odma_s2mm_sts_tready;
     logic [7:0]                 odma_s2mm_sts_tdata;
 
-    // idma_dm <→ mm2s_arb 之间的 cmd/data/sts
+    // idma_ctrl <→ mm2s_arb 之间的 cmd/data/sts
     logic                       idma_cmd_tvalid, idma_cmd_tready;
     logic [71:0]                idma_cmd_tdata;
     logic                       idma_data_tvalid, idma_data_tready;
@@ -749,7 +749,7 @@ module core_top #(
     logic                       idma_sts_tvalid, idma_sts_tready;
     logic [7:0]                 idma_sts_tdata;
     logic                       idma_err_w;
-    // wdma_dm <→ mm2s_arb
+    // wdma_ctrl <→ mm2s_arb
     logic                       wdma_cmd_tvalid, wdma_cmd_tready;
     logic [71:0]                wdma_cmd_tdata;
     logic                       wdma_data_tvalid, wdma_data_tready;
@@ -762,9 +762,9 @@ module core_top #(
     logic                       odma_err_w;
 
     // =========================================================================
-    // idma_dm
+    // idma_ctrl
     // =========================================================================
-    idma_dm #(
+    idma_ctrl #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_idma (
@@ -785,9 +785,9 @@ module core_top #(
     );
 
     // =========================================================================
-    // wdma_dm
+    // wdma_ctrl
     // =========================================================================
-    wdma_dm #(
+    wdma_ctrl #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .WB_DATA_W(WB_WIDTH),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_wdma (
@@ -821,9 +821,9 @@ module core_top #(
     );
 
     // =========================================================================
-    // odma_dm
+    // odma_ctrl
     // =========================================================================
-    odma_dm #(
+    odma_ctrl #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_odma (
@@ -894,7 +894,7 @@ module core_top #(
         .s2mm_err                   (),
         .m_axis_s2mm_cmdsts_awclk   (clk),
         .m_axis_s2mm_cmdsts_aresetn (rst_n),
-        // ---- S2MM cmd / data / sts (来自 odma_dm) ----
+        // ---- S2MM cmd / data / sts (来自 odma_ctrl) ----
         .s_axis_s2mm_cmd_tvalid     (odma_s2mm_cmd_tvalid),
         .s_axis_s2mm_cmd_tready     (odma_s2mm_cmd_tready),
         .s_axis_s2mm_cmd_tdata      (odma_s2mm_cmd_tdata),
@@ -922,7 +922,7 @@ module core_top #(
         .m_axi_s2mm_bresp           (m_bresp  [1]),
         .m_axi_s2mm_bvalid          (m_bvalid [1]),
         .m_axi_s2mm_bready          (m_bready [1]),
-        // ---- S2MM 数据流入 (来自 odma_dm) ----
+        // ---- S2MM 数据流入 (来自 odma_ctrl) ----
         .s_axis_s2mm_tdata          (odma_s2mm_data_tdata),
         .s_axis_s2mm_tkeep          (odma_s2mm_data_tkeep),
         .s_axis_s2mm_tlast          (odma_s2mm_data_tlast),

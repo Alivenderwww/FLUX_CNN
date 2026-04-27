@@ -144,7 +144,7 @@ vlog -sv ... \
     ../../RTL/AXI4/axi_arbiter.sv \
     ../../RTL/AXI4/axi_m_mux.sv \
     ../../RTL/AXI4/axi_lite_csr.sv \
-    ../../RTL/DMA/idma_dm.sv ../../RTL/DMA/wdma_dm.sv ../../RTL/DMA/odma_dm.sv \
+    ../../RTL/DMA/idma_ctrl.sv ../../RTL/DMA/wdma_ctrl.sv ../../RTL/DMA/odma_ctrl.sv \
     ../../RTL/DMA/mm2s_arb.sv \
     ../../RTL/DMA/dfe.sv ../../RTL/desc_fifo.sv \
     ../../RTL/sequencer.sv ../../RTL/cfg_regs.sv \
@@ -169,8 +169,8 @@ run -all
 cd sim/tb_axi_lite_csr && vsim -c -do run.tcl    # AXI-Lite CSR
 cd sim/tb_axi_m_mux    && vsim -c -do run.tcl    # AXI4 M mux
 cd sim/tb_axi_dm_smoke && vsim -c -do run.tcl    # axi_dm IP elab smoke
-cd sim/tb_idma_dm      && vsim -c -do run.tcl    # idma_dm + axi_dm DDR→IFB
+cd sim/tb_idma_ctrl      && vsim -c -do run.tcl    # idma_ctrl + axi_dm DDR→IFB
 ```
 
-DMA 子系统改用 Xilinx AXI DataMover IP 后, 单 DMA 单测合并: idma_dm 有
-独立 TB; wdma_dm / odma_dm 通过 tb_core_dma 的端到端回归覆盖.
+DMA 子系统改用 Xilinx AXI DataMover IP 后, 单 DMA 单测合并: idma_ctrl 有
+独立 TB; wdma_ctrl / odma_ctrl 通过 tb_core_dma 的端到端回归覆盖.

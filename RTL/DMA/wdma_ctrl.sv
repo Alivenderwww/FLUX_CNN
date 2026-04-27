@@ -1,16 +1,17 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// wdma_dm.sv  --  Weight DMA via Xilinx AXI DataMover MM2S
+// wdma_ctrl.sv  --  Weight DMA cmd controller for Xilinx AXI DataMover MM2S
 //
-// 替换原 wdma.sv 的 AXI4 read master 实现, 改用 DataMover MM2S. 对外接口与原
-// wdma 一致 (descriptor + WB SRAM 写端 + done/busy).
+// DataMover MM2S 通道的指令控制端 (本身不是 DataMover): 给 axi_dm 发 cmd,
+// 收数据流写到 WB SRAM. 对外接口与上一代 wdma.sv 兼容
+// (descriptor + WB SRAM 写端 + done/busy).
 //
-// 与 idma_dm 不同: WDMA 是 batch 一次性搬运, 不分行/不需 ring 反压.
+// 与 idma_ctrl 不同: WDMA 是 batch 一次性搬运, 不分行/不需 ring 反压.
 //   单条 cmd 覆盖整段 byte_len, BTT 字段直接填 byte_len.
 //   收 data stream, 每 16 beat 拼成 1 个 2048-bit WB 字写入 (与原 wdma 相同).
 //
-// 命令字格式与 idma_dm 一致 (EOF=1 让 tlast 在最后一拍拉起):
+// 命令字格式与 idma_ctrl 一致 (EOF=1 让 tlast 在最后一拍拉起):
 //   {4'b0, TAG_WDMA[3:0], src_base[31:0], 1'b0(DRR), 1'b1(EOF), 6'b0(DSA),
 //    1'b1(TYPE INCR), byte_len[22:0]}
 //
@@ -23,7 +24,7 @@
 // 第 16 beat 同拍组合 {data_tdata, word_buffer[2047:128]} 直接写 WB.
 // =============================================================================
 
-module wdma_dm #(
+module wdma_ctrl #(
     parameter int ADDR_W      = 32,
     parameter int DATA_W      = 128,
     parameter int WB_DATA_W   = 2048,

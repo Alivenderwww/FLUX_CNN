@@ -1,9 +1,9 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// tb_idma_dm.sv  --  idma_dm + axi_dm 联合自测
+// tb_idma_ctrl.sv  --  idma_ctrl + axi_dm 联合自测
 //
-// 目的: 验证 idma_dm 通过 axi_dm (Xilinx DataMover MM2S) 把 DDR 数据搬到 IFB
+// 目的: 验证 idma_ctrl 通过 axi_dm (Xilinx DataMover MM2S) 把 DDR 数据搬到 IFB
 // SRAM, 内容 bit-exact.
 //
 // 测试场景: 一次性整图搬运 (无 ring wrap, strip_rows = h_total)
@@ -19,7 +19,7 @@
 //   3. IFB[i] == DDR[i] for i = 0..31
 // =============================================================================
 
-module tb_idma_dm;
+module tb_idma_ctrl;
 
     localparam int ADDR_W      = 32;
     localparam int DATA_W      = 128;
@@ -37,7 +37,7 @@ module tb_idma_dm;
     logic rst_n = 1'b0;
     initial forever #5 clk = ~clk;
 
-    // ---- idma_dm <→ axi_dm (MM2S 内通道) ----
+    // ---- idma_ctrl <→ axi_dm (MM2S 内通道) ----
     logic        cmd_tvalid, cmd_tready;
     logic [71:0] cmd_tdata;
     logic        data_tvalid, data_tready;
@@ -75,7 +75,7 @@ module tb_idma_dm;
     logic [SRAM_ADDR_W-1:0] ifb_waddr;
     logic [DATA_W-1:0]     ifb_wdata;
 
-    // ---- idma_dm cfg/control ----
+    // ---- idma_ctrl cfg/control ----
     logic        idma_start;
     logic        idma_done;
     logic        idma_busy;
@@ -84,13 +84,13 @@ module tb_idma_dm;
     logic [15:0] rows_available;
 
     // =========================================================================
-    // DUT: idma_dm
+    // DUT: idma_ctrl
     // =========================================================================
-    idma_dm #(
+    idma_ctrl #(
         .ADDR_W      (ADDR_W),
         .DATA_W      (DATA_W),
         .SRAM_ADDR_W (SRAM_ADDR_W)
-    ) u_idma_dm (
+    ) u_idma_ctrl (
         .clk                (clk),
         .rst_n              (rst_n),
         .start              (idma_start),
@@ -246,7 +246,7 @@ module tb_idma_dm;
     );
 
     // =========================================================================
-    // IFB SRAM (写端口由 idma_dm 驱动, 读端口我们 TB 自己读)
+    // IFB SRAM (写端口由 idma_ctrl 驱动, 读端口我们 TB 自己读)
     // =========================================================================
     logic                  ifb_re;
     logic [SRAM_ADDR_W-1:0] ifb_raddr;
@@ -282,7 +282,7 @@ module tb_idma_dm;
         rst_n = 1'b1;
         repeat (5) @(posedge clk);
 
-        $display("[tb] start idma_dm");
+        $display("[tb] start idma_ctrl");
         idma_start = 1'b1;
         @(posedge clk);
         idma_start = 1'b0;
@@ -378,7 +378,7 @@ module tb_idma_dm;
         forever begin
             #500ns;
             $display("[dbg %0t] state=%0d cmd_fire=%0d ar_fire=%0d r_fire=%0d data_fire=%0d sts_fire=%0d busy=%b done=%b",
-                     $time, u_idma_dm.state, n_cmd_fire, n_ar_fire, n_r_fire,
+                     $time, u_idma_ctrl.state, n_cmd_fire, n_ar_fire, n_r_fire,
                      n_data_fire, n_sts_fire, idma_busy, idma_done);
         end
     end

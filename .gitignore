@@ -1,6 +1,8 @@
 sim/*/work
 sim/*/work_*
+sim/*/xil_defaultlib
 sim/*/modelsim.ini
+sim/*/vsim_full.log
 sim/*/sim_results.txt
 sim/*/transcript
 sim/*/vsim.wlf
@@ -30,6 +32,7 @@ Syn/ip_sim_export/
 Syn/ip_user_files/
 Syn/.Xil/
 Syn/.cxl.modelsim.version
+Syn/axi_dm_example/
 
 # 根目录下误生成的仿真数据文件（应在 sim/tb_core_isa/ 下运行 Python 脚本）
 /ifb.txt

@@ -24,25 +24,42 @@ def _out_path(out_dir, fname):
 # ---------------------------------------------------------------------------
 # 工具：SDP 软件模拟（硬件等价）
 # ---------------------------------------------------------------------------
-def sdp_sim(psum_i32, mult, shift, zp_out, clip_min, clip_max, round_en, relu_en):
+def _arith_rshift(val, shift):
+    """Signed (arithmetic) right shift (Python 自带 // 已是 arithmetic, 但为清晰显式写)."""
+    if shift <= 0:
+        return val
+    if val >= 0:
+        return val >> shift
+    return -((-val + (1 << shift) - 1) >> shift)
+
+
+def sdp_sim(psum_i32, mult, shift, zp_out, clip_min, clip_max, round_en, relu_en,
+            residual_en=False, shortcut_val=0, shortcut_mult=0, shortcut_shift=0):
     """
-    Per-tensor symmetric int8 SDP 硬件流水软件模拟。
-    输入 psum_i32 是 int32 累加器值（已含 bias），输出 8-bit（raw byte 位模式）。
+    Per-tensor symmetric int8 SDP 硬件流水软件模拟 (R.1 起含 bias add + residual).
+      psum_i32 = parf 输出 (含 bias 已加, 因为本函数被 conv 累加 + bias 后调用)
+      shortcut_val = 当前位置上一层 INT8 输出 (signed); residual_en=False 时不用
     """
-    prod = psum_i32 * mult                    # int64
+    # 主路径: × mult, round, >> shift, + zp_out
+    prod = psum_i32 * mult
     if round_en and shift > 0:
         prod += 1 << (shift - 1)
-    # Python 'signed right shift' for negative ints works as arithmetic
-    if prod >= 0:
-        q = prod >> shift
-    else:
-        q = -((-prod) >> shift) if (-prod) & ((1 << shift) - 1) == 0 else -(((-prod) >> shift) + 1)
+    q = _arith_rshift(prod, shift)
     q_zp = q + zp_out
-    if relu_en and q_zp < 0:
-        q_zp = 0
-    if q_zp < clip_min: q_zp = clip_min
-    if q_zp > clip_max: q_zp = clip_max
-    return q_zp & 0xFF
+
+    # R.1: shortcut rescale + residual add (residual_en=False 时归零)
+    if residual_en:
+        sc_prod    = shortcut_val * shortcut_mult           # signed INT24
+        sc_shifted = _arith_rshift(sc_prod, shortcut_shift)
+        summed     = q_zp + sc_shifted
+    else:
+        summed = q_zp
+
+    if relu_en and summed < 0:
+        summed = 0
+    if summed < clip_min: summed = clip_min
+    if summed > clip_max: summed = clip_max
+    return summed & 0xFF
 
 
 # ---------------------------------------------------------------------------
@@ -364,9 +381,12 @@ def compute_expected_ofm(
     ifm_arr, w_arr, bias_arr,
     sdp_mult, sdp_shift, sdp_zp_out, sdp_clip_min, sdp_clip_max,
     sdp_round_en, sdp_relu_en,
+    residual_en=False, shortcut_arr=None, shortcut_mult=0, shortcut_shift=0,
 ):
     """
-    模拟硬件一轮 Conv + SDP 量化流水。返回 [H_OUT][W_OUT][NUM_COUT] 8-bit int。
+    模拟硬件一轮 Conv + SDP 量化流水. 返回 [H_OUT][W_OUT][NUM_COUT] 8-bit int.
+    R.1: residual_en=True 时把 shortcut_arr[yout][px][cout] (INT8) 经 mult/shift
+         rescale 后加到 SDP 量化结果上, 再 ReLU/clip.
     """
     H_OUT = (H_IN + 2 * pad_top - K) // stride + 1    # 假设对称 pad
     W_OUT = (W_IN + 2 * pad_left - K) // stride + 1
@@ -383,9 +403,16 @@ def compute_expected_ofm(
                             for cin in range(NUM_CIN):
                                 psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
                         # pad: contributes 0
+                # shortcut: 取值 (sign-extend 当 INT8) 或 0
+                sc_val = 0
+                if residual_en and shortcut_arr is not None:
+                    raw = shortcut_arr[yout][px][cout] & 0xFF
+                    sc_val = raw - 256 if raw >= 128 else raw
                 ofm[yout][px][cout] = sdp_sim(
                     psum, sdp_mult, sdp_shift, sdp_zp_out,
-                    sdp_clip_min, sdp_clip_max, sdp_round_en, sdp_relu_en)
+                    sdp_clip_min, sdp_clip_max, sdp_round_en, sdp_relu_en,
+                    residual_en=residual_en, shortcut_val=sc_val,
+                    shortcut_mult=shortcut_mult, shortcut_shift=shortcut_shift)
     return ofm, H_OUT, W_OUT
 
 
@@ -644,8 +671,10 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
                 sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1,
                 case_name="",
                 ddr_ifb_base=None, ddr_wb_base=None,
-                ddr_ofb_base=None, ddr_desc_base=None,
-                skip_ifb_preload=0, skip_ofb_clear=0):
+                ddr_ofb_base=None, ddr_desc_base=None, ddr_rdma_base=None,
+                skip_ifb_preload=0, skip_ofb_clear=0,
+                residual_en=0, shortcut_mult=0, shortcut_shift=0,
+                rdma_words_total=None):
     """
     把 derive_layer_cfg 的结果转成 config.txt 用的有序 dict。
     包含 SDP 量化参数（F-1a/F-1b 补齐）。
@@ -662,7 +691,8 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         '_META_IFB_WORDS'   : cfg['ifb_words'],
         '_META_WB_WORDS'    : cfg['wb_words'],
         '_META_OFB_WORDS'   : cfg['ofb_words'],
-        '_META_RDMA_WORDS'  : cfg.get('rdma_words', 0),    # R.1: bias 装载量
+        '_META_RDMA_WORDS'  : (rdma_words_total if rdma_words_total is not None
+                                else cfg.get('rdma_words', 0)),
         '_META_SRAM_DEPTH'  : cfg['sram_depth'],
         '_META_NUM_CIN'     : cfg['NUM_CIN'],        # fold 后 cin_fake
         '_META_NUM_COUT'    : cfg['NUM_COUT'],       # fold 后 cout_fake
@@ -716,13 +746,14 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'IFB_KY_STEP'    : cfg['W_IN']   * cfg['cin_slices'],
         'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg['stride'],
         'ARF_REUSE_EN'   : 1 if cfg['arf_reuse_en'] else 0,
-        # --- R.1: residual / shortcut / bias / rdma ---
-        'RESIDUAL_EN'    : 0,                         # 默认关 (R.1, R.2 时残差 layer 设 1)
-        'SHORTCUT_MULT'  : 0,                         # 残差启用时填 INT16 mult
-        'SHORTCUT_SHIFT' : 0,
-        'BIAS_BASE'      : 0,                         # bias 在 Shortcut Bank word index 0 开始
-        # rdma_byte_len = bias section bytes (= rdma_words × 16 byte/word)
-        'RDMA_BYTE_LEN'  : cfg.get('rdma_words', 0) * 16,
+        # --- R.1/R.2: residual / shortcut / bias / rdma ---
+        'RESIDUAL_EN'    : 1 if residual_en else 0,
+        'SHORTCUT_MULT'  : shortcut_mult,                   # signed INT16
+        'SHORTCUT_SHIFT' : shortcut_shift,
+        'BIAS_BASE'      : 0,                                # bias 在 Shortcut Bank word index 0
+        # rdma_byte_len: 默认按 cfg 算 (bias only); residual 时由调用方传更大的 rdma_words_total
+        'RDMA_BYTE_LEN'  : (rdma_words_total if rdma_words_total is not None
+                            else cfg.get('rdma_words', 0)) * 16,
     }
     # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
     if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base

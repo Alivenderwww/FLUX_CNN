@@ -56,9 +56,10 @@ module bias_rf #(
     // FSM
     // =========================================================================
     typedef enum logic [1:0] {
-        S_IDLE  = 2'd0,    // 复位后或 start 前
-        S_LOAD  = 2'd1,    // 正在 prefetch (4 拍 SRAM 读)
-        S_READY = 2'd2     // RF 持有当前 r_loaded_cs 的 bias, 输出有效
+        S_IDLE   = 2'd0,    // 复位后或 start 前
+        S_LOAD   = 2'd1,    // 正在 prefetch (4 拍 SRAM 读)
+        S_SETTLE = 2'd2,    // 等最后一拍 sb_rdata 写到 rf (1 拍)
+        S_READY  = 2'd3     // RF 持有当前 r_loaded_cs 的 bias, 输出有效
     } state_t;
     state_t state, state_next;
 
@@ -95,10 +96,11 @@ module bias_rf #(
     always_comb begin
         state_next = state;
         case (state)
-            S_IDLE  : if (start)        state_next = S_LOAD;
-            S_LOAD  : if (load_done)    state_next = S_READY;
-            S_READY : if (cs_changed)   state_next = S_LOAD;
-            default :                   state_next = S_IDLE;
+            S_IDLE   : if (start)        state_next = S_LOAD;
+            S_LOAD   : if (load_done)    state_next = S_SETTLE;
+            S_SETTLE :                   state_next = S_READY;     // 1 拍等 rf[12..15] 写完
+            S_READY  : if (cs_changed)   state_next = S_LOAD;
+            default  :                   state_next = S_IDLE;
         endcase
     end
 

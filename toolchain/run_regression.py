@@ -126,6 +126,18 @@ CASES = [
     ("FC C256C522 1x1",                     "conv", 256, 522, 1,   1,   1, 1, 0, 0),
 ]
 
+# R.2 残差测试用例: 用 --residual 开关启用. 每个 layer 加随机 INT8 shortcut, 经 SDP
+# 后的 fusion 路径 (mult=1, shift=0 直加) 验证残差数据通路 + bit-exact 数值匹配.
+# 选几个有代表性的 shape:
+#   - 小 K=3 conv: 验证基本残差路径
+#   - K=1 stride=2 ds: 模拟 ResNet block 的 downsample 路径
+#   - 大 K=3 stride=1: 验证多 strip / ring wrap 场景
+RESIDUAL_CASES = [
+    ("Residual K=3 C16C16 30x30 s1 p1",   "conv", 16, 16, 3, 30, 30, 1, 0, 1),
+    ("Residual K=1 C16C16 30x30 s1 p0",   "conv", 16, 16, 1, 30, 30, 1, 0, 0),
+    ("Residual K=3 C16C32 60x34 s1 p1",   "conv", 16, 32, 3, 60, 34, 1, 0, 1),
+]
+
 
 # ---------------------------------------------------------------------------
 # 生成单个 case 数据到 cases/caseNN/
@@ -145,13 +157,14 @@ def estimate_case_timeout_ns(c_in, c_out, k, h_in, w_in, stride, pad):
 
 
 def gen_case_files(case_idx, name, mode, c_in, c_out, k, h_in, w_in, stride, shift, pad,
-                   ky_fold=False, s2d=False):
+                   ky_fold=False, s2d=False, residual=False):
     case_dir = os.path.join(SIM_DIR, "cases", f"case{case_idx:02d}")
     os.makedirs(case_dir, exist_ok=True)
     # J-1: gen_isa_test.py 的 --streaming 默认 True，无需显式传
     fold_flag = ""
-    if ky_fold: fold_flag += " --ky-fold"
-    if s2d:     fold_flag += " --s2d"
+    if ky_fold:   fold_flag += " --ky-fold"
+    if s2d:       fold_flag += " --s2d"
+    if residual:  fold_flag += " --residual"
     gen_cmd = (f"\"{PY}\" \"{GEN_SCRIPT}\" "
                f"--num_cin {c_in} --num_cout {c_out} --k {k} "
                f"--h_in {h_in} --w_in {w_in} --stride {stride} "
@@ -412,6 +425,8 @@ def main():
                         help="对所有 K>1 且 Cin<16 的 case 启用 Ky fold")
     parser.add_argument("--s2d", action="store_true",
                         help="对所有 stride>=2 且 K>=stride 的 case 启用 Space-to-Depth (可与 fold 叠加)")
+    parser.add_argument("--residual", action="store_true",
+                        help="R.2: 跑 RESIDUAL_CASES (启用 SDP 残差 fusion 路径), 不跑常规 CASES")
     args = parser.parse_args()
     if args.out is not None:
         OUTPUT_FILE = args.out
@@ -419,7 +434,8 @@ def main():
         ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         OUTPUT_FILE = os.path.join(SIM_DIR, f"regression_report_{ts}.txt")
 
-    cases = [c for c in CASES if args.only == "all" or c[1] == args.only]
+    case_pool = RESIDUAL_CASES if args.residual else CASES
+    cases = [c for c in case_pool if args.only == "all" or c[1] == args.only]
     if args.case is not None:
         cases = [c for c in cases if args.case in c[0]]
         if not cases:
@@ -449,13 +465,15 @@ def main():
         k_eff    = ((k_v + stride_v - 1) // stride_v) if use_s2d else k_v
         use_ky = args.fold and (k_eff > 1) and (c_in_eff < 16)
         gen_info, err = gen_case_files(i, *case,
-                                       ky_fold=use_ky, s2d=use_s2d)
+                                       ky_fold=use_ky, s2d=use_s2d,
+                                       residual=args.residual)
         if err:
             print(f"  case {i} ({case[0]}) gen ERROR: {err}")
             sys.exit(1)
         opt_tags = []
-        if use_s2d: opt_tags.append("s2d")
-        if use_ky:  opt_tags.append("ky")
+        if use_s2d:       opt_tags.append("s2d")
+        if use_ky:        opt_tags.append("ky")
+        if args.residual: opt_tags.append("res")
         case_opts[i] = "+".join(opt_tags) if opt_tags else "-"
         fold_mark = f"[{case_opts[i]}]" if opt_tags else ""
         print(f"  [{i+1}/{n_cases}] {case[0]}  → H_OUT={gen_info['h_out']} W_OUT={gen_info['w_out']} {fold_mark}")

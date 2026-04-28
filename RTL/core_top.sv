@@ -616,6 +616,7 @@ module core_top #(
         .cfg_sdp_clip_max (cfg_sdp_clip_max),
         .cfg_sdp_round_en (cfg_sdp_round_en),
         .cfg_ofb_ring_words(cfg_ofb_ring_words),
+        .cfg_ofb_row_words (cfg_ofb_row_words),
         .cfg_ofb_strip_rows(cfg_ofb_strip_rows),
         .rows_drained      (rows_drained),
         // R.1: SDP residual / bias / shortcut 接线

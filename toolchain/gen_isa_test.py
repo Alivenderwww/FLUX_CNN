@@ -46,6 +46,8 @@ def parse_args():
                    help='Cin<HW_PE 且 K>1 时启用 Ky 折叠: 把 Ky 维展开到 cin_fake, 提升 PE 空间利用率')
     p.add_argument('--s2d', action='store_true',
                    help='stride>=2 时启用 Space-to-Depth: 把 (kx%stride, ky%stride) 相位折到 cin, 等价 stride=1 conv. K 不被 stride 整除时内核补零.')
+    p.add_argument('--residual', action='store_true',
+                   help='R.2: 启用 SDP 残差 fusion. 生成随机 shortcut 张量, 经 mult=1/shift=0 (1:1 rescale) 加到 SDP 量化结果上.')
     p.add_argument('--out-dir',  default=DEFAULT_OUT_DIR,
                    help='output directory (default: ../sim/tb_core_dma/)')
     p.add_argument('--case-name', default="",
@@ -58,6 +60,7 @@ def generate_random(
     shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
     streaming=False, pad_top=0, pad_left=0, strip_rows=0,
     out_dir=DEFAULT_OUT_DIR, case_name="", ky_fold=False, s2d=False,
+    residual=False,
 ):
     """随机 ifm + weight + 兼容旧 SDP (mult=1, shift=N, clip[0,255], ReLU) 的测试生成。"""
     os.makedirs(out_dir, exist_ok=True)
@@ -123,6 +126,23 @@ def generate_random(
     sdp_mult, sdp_zp_out, sdp_clip_min, sdp_clip_max = 1, 0, 0, 255
     sdp_round_en, sdp_relu_en = 0, 1
 
+    # ---- R.2: residual shortcut tensor (随机, 小幅 [-16, 16])
+    #   shortcut_mult=1, shortcut_shift=0 → 1:1 直加, 简单测路径
+    shortcut_arr = None
+    shortcut_mult = 0
+    shortcut_shift = 0
+    if residual:
+        shortcut_mult  = 1
+        shortcut_shift = 0
+        shortcut_arr = [[[0] * NUM_COUT for _ in range(W_OUT)] for _ in range(H_OUT)]
+        for yout in range(H_OUT):
+            for px in range(W_OUT):
+                for cout in range(NUM_COUT):
+                    # 存为无符号 8-bit (硬件读 INT8 sign-extend), 范围 [-16, 16] mod 256
+                    v = random.randint(-16, 16)
+                    shortcut_arr[yout][px][cout] = v & 0xFF
+        print(f"Residual: ON, shortcut [{H_OUT}×{W_OUT}×{NUM_COUT}] random INT8 [-16,16]")
+
     # ---- 模拟硬件算 expected_ofm（bias=None）----
     #   注意 expected_ofm 用 *原始* conv 计算 (pre-S2D, pre-fold), bit-exact 对照.
     ofm_arr, _H, _W = hw_files.compute_expected_ofm(
@@ -130,7 +150,9 @@ def generate_random(
         ifm_arr, w_arr, bias_arr=None,
         sdp_mult=sdp_mult, sdp_shift=shift_amt, sdp_zp_out=sdp_zp_out,
         sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
-        sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en)
+        sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
+        residual_en=residual, shortcut_arr=shortcut_arr,
+        shortcut_mult=shortcut_mult, shortcut_shift=shortcut_shift)
     assert _H == H_OUT and _W == W_OUT
 
     # ---- S2D 变换 (软件层): stride>=2 时把 stride 维折到 cin
@@ -220,11 +242,13 @@ def generate_random(
         H_IN_hw = H_IN
         pad_top_hw = pad_top
 
-    # R.1: rdma_data.txt - bias section only (R.1 默认无 shortcut/residual)
-    #   bias_arr = None → 全 0 bias (跟 compute_expected_ofm 用 bias=None 一致,
-    #   保证 OFM bit-exact 匹配)
-    hw_files.write_rdma_data(out_dir, bias_arr=None, shortcut_arr=None,
-                              NUM_COUT=NUM_COUT, HW_COL=HW_COL)
+    # R.1/R.2: rdma_data.txt = bias 段 (zero) + 可选 shortcut 段
+    #   bias_arr = None → 全 0 bias (跟 compute_expected_ofm 用 bias=None 一致)
+    #   shortcut_arr 仅 residual=True 时非 None
+    n_rdma_lines, _ = hw_files.write_rdma_data(
+        out_dir, bias_arr=None, shortcut_arr=shortcut_arr,
+        NUM_COUT=NUM_COUT, HW_COL=HW_COL,
+        H_OUT=H_OUT, W_OUT=W_OUT)
 
     # 原始卷积维度 (给 TB 算 MAC util 用): 取 *S2D 之前* 的原始值, 与 fold/S2D 无关
     cfg['K_orig']        = K_pre_s2d
@@ -238,7 +262,11 @@ def generate_random(
                                      sdp_mult=sdp_mult, sdp_zp_out=sdp_zp_out,
                                      sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
                                      sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
-                                     case_name=case_name)
+                                     case_name=case_name,
+                                     residual_en=1 if residual else 0,
+                                     shortcut_mult=shortcut_mult,
+                                     shortcut_shift=shortcut_shift,
+                                     rdma_words_total=n_rdma_lines)
     hw_files.write_config(out_dir, cfg_dict)
 
     # fold 后 cin_slices/cout_slices 取 fold-aware 的值 (cfg 已更新)
@@ -273,4 +301,5 @@ if __name__ == '__main__':
         pad_top=pad_t, pad_left=pad_l,
         strip_rows=args.strip_rows,
         out_dir=args.out_dir, case_name=args.case_name,
-        ky_fold=args.ky_fold, s2d=args.s2d)
+        ky_fold=args.ky_fold, s2d=args.s2d,
+        residual=args.residual)

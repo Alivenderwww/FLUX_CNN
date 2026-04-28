@@ -61,6 +61,7 @@ module ofb_writer #(
     // (rows_written - rows_drained >= cfg_ofb_strip_rows) 时反压 acc_out_ready=0。
     // 整图装得下时 strip=H_OUT ring_words 覆盖整图, wrap 不触发 (退化 batch)。
     input  logic [ADDR_W-1:0]                    cfg_ofb_ring_words,  // 环大小 in words
+    input  logic [ADDR_W-1:0]                    cfg_ofb_row_words,   // W_OUT × cout_slices (R.2 shortcut 地址用)
     input  logic [5:0]                           cfg_ofb_strip_rows,
     input  logic [15:0]                          rows_drained,       // 来自 ODMA
 
@@ -180,21 +181,35 @@ module ofb_writer #(
     logic [ADDR_W-1:0]                    pipe_ofb_waddr;
     logic                                 pipe_evt_cs_wrap;
 
-    // sb_ptr: 非 wrap 的 Shortcut Bank shortcut 段 reading pointer
-    //   起点 = cfg_cout_slices × 4 (= 跳过 bias section)
-    //   每 acc_fire +1
-    logic [12:0] sb_ptr;
+    // sb_raddr: Shortcut Bank shortcut 段地址.
+    //
+    // 注意 OFB SRAM 与 Shortcut Bank 的字布局不同:
+    //   OFB    布局 = (yout, cs, x) [compute 顺序, ofb_ptr 简单 +1]
+    //   Shortcut 布局 = (yout, x, cs)  [DDR NHWC, rdma 线性写]
+    // 因此 shortcut 地址不能用 +1 增量, 必须按 (yout, x_abs, cs) 重新组合算:
+    //   sb_raddr = shortcut_base + yout × W_OUT × cs + x_abs × cs + cs_cnt
+    // 用现有 counter (yout_cnt / cs_cnt / tile_cnt / x_cnt) 组合得 x_abs.
     logic [12:0] shortcut_section_base;
-    assign shortcut_section_base = {{(13-8){1'b0}}, cfg_cout_slices, 2'b0};  // cs × 4
+    assign shortcut_section_base = {{(13-8){1'b0}}, cfg_cout_slices, 2'b0};  // cs × 4 = bias section size
 
+    logic [15:0] x_abs;
+    assign x_abs = {8'd0, tile_cnt} * {10'd0, cfg_tile_w} + {10'd0, x_cnt};
+
+    logic [19:0] sb_yout_off;            // yout × W_OUT × cs (= cfg_ofb_row_words)
+    logic [15:0] sb_x_off;               // x_abs × cout_slices (combinational)
+    assign sb_x_off = x_abs * {10'd0, cfg_cout_slices};
+
+    // yout 偏移用累加器 (避免大 mult)
     always_ff @(posedge clk) begin
-        if      (evt_start) sb_ptr <= shortcut_section_base;
-        else if (acc_fire)  sb_ptr <= sb_ptr + 13'd1;
+        if      (evt_start)             sb_yout_off <= '0;
+        else if (evt_fire_cs_wrap)      sb_yout_off <= sb_yout_off + cfg_ofb_row_words;
     end
 
-    // shortcut SRAM 读: 每 acc_fire 发一拍读 (residual_en=0 时也读, 反正不用; 简化)
     assign sb_re    = acc_fire;
-    assign sb_raddr = sb_ptr;
+    assign sb_raddr = shortcut_section_base
+                    + sb_yout_off[12:0]
+                    + sb_x_off[12:0]
+                    + {{(13-6){1'b0}}, cs_cnt};
 
     // Stage 0 → 1 latch
     always_ff @(posedge clk) begin

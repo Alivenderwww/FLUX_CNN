@@ -214,7 +214,7 @@ def compile_and_emit_conv2d(
     hw_files.write_config(out_dir, cfg_dict)
 
     n_desc, n_strips, strip_rows_eff = hw_files.write_descriptors(
-        out_dir, H_IN, W_IN, H_OUT, W_OUT, cfg['cin_slices'], cfg['cout_slices'],
+        out_dir, cfg_dict, H_IN, W_IN, H_OUT, W_OUT, cfg['cin_slices'], cfg['cout_slices'],
         pad_top=pad, pad_bot=pad, pad_left=pad, pad_right=pad,
         strip_rows=0, streaming=streaming)
 

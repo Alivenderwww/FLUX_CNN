@@ -436,15 +436,48 @@ def append_config(out_dir, kv_dict):
 # ---------------------------------------------------------------------------
 # Descriptor list
 # ---------------------------------------------------------------------------
-TYPE_NOP, TYPE_CONV, TYPE_BARRIER, TYPE_END = 0x0, 0x1, 0x2, 0xF
+TYPE_NOP, TYPE_CONV, TYPE_BARRIER, TYPE_CFG, TYPE_END = 0x0, 0x1, 0x2, 0x3, 0xF
 FLAG_IS_FIRST     = 1 << 0
 FLAG_IS_LAST      = 1 << 1
 FLAG_STREAMING_EN = 1 << 2
 
+# cfg_regs.sv address map (mirror RTL ADDR_* constants).
+# 仅 sequencer CFG_WRITE 路径可写的字段 (host AXI-Lite 路径只写 boot regs).
+CFG_ADDR_MAP = {
+    'H_OUT'              : 0x100, 'W_OUT'             : 0x104, 'W_IN'              : 0x108,
+    'K'                  : 0x10C, 'STRIDE'            : 0x110,
+    'CIN_SLICES'         : 0x114, 'COUT_SLICES'       : 0x118,
+    'TILE_W'             : 0x11C, 'NUM_TILES'         : 0x120, 'LAST_VALID_W'      : 0x124,
+    'TOTAL_WRF'          : 0x128, 'KY'                : 0x12C, 'KK'                : 0x130,
+    'ROUNDS_PER_CINS'    : 0x134, 'ROUND_LEN_LAST'    : 0x138,
+    'IFB_BASE'           : 0x13C, 'WB_BASE'           : 0x140, 'OFB_BASE'          : 0x144,
+    'IFB_ROW_STEP'       : 0x14C, 'WB_COUT_STEP'      : 0x154, 'TILE_IN_STEP'      : 0x15C,
+    'SDP_SHIFT'          : 0x160, 'SDP_RELU_EN'       : 0x164,
+    'H_IN_TOTAL'         : 0x168, 'IFB_STRIP_ROWS'    : 0x16C, 'OFB_STRIP_ROWS'    : 0x170,
+    'DDR_IFM_ROW_STRIDE' : 0x174, 'DDR_OFM_ROW_STRIDE': 0x178,
+    'SDP_MULT'           : 0x188, 'SDP_ZP_OUT'        : 0x18C,
+    'SDP_CLIP_MIN'       : 0x190, 'SDP_CLIP_MAX'      : 0x194, 'SDP_ROUND_EN'      : 0x198,
+    'IFB_RING_WORDS'     : 0x1A0, 'OFB_ROW_WORDS'     : 0x1A4, 'OFB_RING_WORDS'    : 0x1A8,
+    'IFB_ISS_STEP'       : 0x1AC, 'IFB_KY_STEP'       : 0x1B0,
+    'TILE_PIX_STEP'      : 0x1B4, 'ARF_REUSE_EN'      : 0x1B8,
+    'RESIDUAL_EN'        : 0x1BC, 'SHORTCUT_MULT'     : 0x1C0,
+    'SHORTCUT_SHIFT'     : 0x1C4, 'BIAS_BASE'         : 0x1C8,
+    'IDMA_SRC_BASE'      : 0x200, 'IDMA_BYTE_LEN'     : 0x204,
+    'WDMA_SRC_BASE'      : 0x210, 'WDMA_BYTE_LEN'     : 0x214,
+    'ODMA_DST_BASE'      : 0x220, 'ODMA_BYTE_LEN'     : 0x224,
+    'RDMA_SRC_BASE'      : 0x230, 'RDMA_BYTE_LEN'     : 0x234,
+}
+
+# 这些走 host AXI-Lite (csr_w 路径), 不进 CFG_WRITE descriptor:
+#   CTRL  = 0x000  (pulse, not register)
+#   DMA_MODE = 0x17C
+#   DESC_LIST_BASE = 0x180, DESC_COUNT = 0x184
+BOOT_REG_ADDRS = {0x000, 0x17C, 0x180, 0x184}
+
 
 def _pack_desc(type_, flags, pad_t, pad_b, pad_l, pad_r,
                strip_y_start, n_yout, ifb_off, ifb_len, ofb_off, ofb_len):
-    """256-bit descriptor → (beat0, beat1) 每 128-bit。"""
+    """CONV / NOP / BARRIER / END descriptor (256 bit) → (beat0, beat1) 每 128 bit。"""
     w0 = ((type_ & 0xF)      << 0 ) | \
          ((flags & 0xF)      << 4 ) | \
          ((pad_t & 0xF)      << 8 ) | \
@@ -462,18 +495,40 @@ def _pack_desc(type_, flags, pad_t, pad_b, pad_l, pad_r,
     return beat0, beat1
 
 
+def _pack_cfg_desc(reg_addr, reg_data):
+    """CFG_WRITE descriptor (256 bit). type=0x3, addr in word0[15:4], data in word1[31:0]."""
+    desc256 = (TYPE_CFG & 0xF) | ((reg_addr & 0xFFF) << 4) | ((reg_data & 0xFFFFFFFF) << 32)
+    beat0 = desc256 & ((1 << 128) - 1)
+    beat1 = (desc256 >> 128) & ((1 << 128) - 1)
+    return beat0, beat1
+
+
 def write_descriptors(
-    out_dir, H_IN, W_IN, H_OUT, W_OUT, cin_slices, cout_slices,
+    out_dir, cfg_dict,
+    H_IN, W_IN, H_OUT, W_OUT, cin_slices, cout_slices,
     pad_top, pad_bot, pad_left, pad_right,
     strip_rows=0, streaming=True,
 ):
     """
-    写 desc_list.hex + append DESC_COUNT/DESC_LIST_BASE 到 config.txt。
-    返回 n_desc（含 END）。
+    写 desc_list.hex: 先 CFG_WRITE 段 (从 cfg_dict 推每条 layer cfg 寄存器写),
+    再 CONV strips, 再 END。返回 (n_desc, n_strips, strip_rows_eff)。
 
-    J-1 起单一数据路径 = streaming；streaming 参数保留为兼容参数，始终写
-    FLAG_STREAMING_EN (硬件也恒按 streaming 处理)。
+    cfg_dict: hw_files.cfg_to_dict() 的输出, 含所有 cfg 字段 + META + 边界字段.
+              本函数会跳过 _META_* / boot regs / 非 CSR 字段 (PAD_TOP / PAD_LEFT 等).
     """
+    descs = []
+
+    # ---- CFG_WRITE 段: 把 cfg_dict 里所有 layer cfg 寄存器一条条 emit ----
+    for key, val in cfg_dict.items():
+        if key.startswith('_META_'):
+            continue
+        if key not in CFG_ADDR_MAP:
+            # boot regs (DESC_*, DMA_MODE, CTRL) 或非 CSR 字段 (PAD_TOP / PAD_LEFT)
+            continue
+        addr = CFG_ADDR_MAP[key]
+        descs.append(_pack_cfg_desc(addr, val & 0xFFFFFFFF))
+
+    # ---- CONV 段 ----
     strip_rows_eff = strip_rows if (strip_rows > 0 and strip_rows < H_OUT) else H_OUT
     n_strips = (H_OUT + strip_rows_eff - 1) // strip_rows_eff
 
@@ -485,7 +540,6 @@ def write_descriptors(
     ofb_bytes_per_slice = H_OUT * ofb_bytes_per_row
     ofb_total_bytes     = ofb_bytes_per_slice * cout_slices
 
-    descs = []
     for i in range(n_strips):
         strip_y_start = i * strip_rows_eff
         n_yout        = min(strip_rows_eff, H_OUT - strip_y_start)
@@ -502,7 +556,7 @@ def write_descriptors(
             ofb_off = strip_y_start * ofb_bytes_per_row
             ofb_len = n_yout * ofb_bytes_per_row * cout_slices
 
-        flags = FLAG_STREAMING_EN   # J-1: 恒 streaming
+        flags = FLAG_STREAMING_EN
         if is_first:  flags |= FLAG_IS_FIRST
         if is_last:   flags |= FLAG_IS_LAST
 
@@ -751,15 +805,24 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'SHORTCUT_MULT'  : shortcut_mult,                   # signed INT16
         'SHORTCUT_SHIFT' : shortcut_shift,
         'BIAS_BASE'      : 0,                                # bias 在 Shortcut Bank word index 0
-        # rdma_byte_len: 默认按 cfg 算 (bias only); residual 时由调用方传更大的 rdma_words_total
         'RDMA_BYTE_LEN'  : (rdma_words_total if rdma_words_total is not None
                             else cfg.get('rdma_words', 0)) * 16,
+        # --- DMA base/len (descriptor-driven, per-layer) ---
+        # 从前 TB 在 load_config 之外 axi_lite_write 这些; 现在走 CFG_WRITE descriptor.
+        'IDMA_SRC_BASE'  : (ddr_ifb_base  if ddr_ifb_base  is not None else 0),
+        'IDMA_BYTE_LEN'  : cfg['ifb_words'] * 16,
+        'WDMA_SRC_BASE'  : (ddr_wb_base   if ddr_wb_base   is not None else 0),
+        'WDMA_BYTE_LEN'  : cfg['wb_words'] * 256,            # WB 一行 = 2048 bit = 256 byte
+        'ODMA_DST_BASE'  : (ddr_ofb_base  if ddr_ofb_base  is not None else 0),
+        'ODMA_BYTE_LEN'  : cfg['ofb_words'] * 16,
+        'RDMA_SRC_BASE'  : (ddr_rdma_base if ddr_rdma_base is not None else 0),
     }
     # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
     if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base
     if ddr_wb_base   is not None: out['_META_DDR_WB_BASE']   = ddr_wb_base
     if ddr_ofb_base  is not None: out['_META_DDR_OFB_BASE']  = ddr_ofb_base
     if ddr_desc_base is not None: out['_META_DDR_DESC_BASE'] = ddr_desc_base
+    if ddr_rdma_base is not None: out['_META_DDR_RDMA_BASE'] = ddr_rdma_base
     out['_META_SKIP_IFB_PRELOAD'] = 1 if skip_ifb_preload else 0
     out['_META_SKIP_OFB_CLEAR']   = 1 if skip_ofb_clear   else 0
     return out

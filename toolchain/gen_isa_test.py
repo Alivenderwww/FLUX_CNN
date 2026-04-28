@@ -61,8 +61,21 @@ def generate_random(
     streaming=False, pad_top=0, pad_left=0, strip_rows=0,
     out_dir=DEFAULT_OUT_DIR, case_name="", ky_fold=False, s2d=False,
     residual=False,
+    # ---- chained-CASES overrides (run_regression in-process call) ----
+    ifm_arr_in=None,        # [H_IN][W_IN][NUM_CIN] int (skip random gen if 不为 None)
+    shortcut_arr_in=None,   # [H_OUT][W_OUT][NUM_COUT] int (residual 时, 优先于随机)
+    sdp_mult=None, sdp_zp_out=None,
+    sdp_clip_min=None, sdp_clip_max=None,
+    sdp_round_en=None, sdp_relu_en=None,
+    shortcut_mult=None, shortcut_shift=None,
+    ddr_ifb_base=None, ddr_wb_base=None,
+    ddr_ofb_base=None, ddr_desc_base=None, ddr_rdma_base=None,
+    skip_ifb_preload=False, skip_ofb_clear=False,
 ):
-    """随机 ifm + weight + 兼容旧 SDP (mult=1, shift=N, clip[0,255], ReLU) 的测试生成。"""
+    """随机 ifm + weight + SDP 量化的测试生成器。
+    单 case CLI 用法: 全 None override → 用 F-1a 默认 SDP 参数 (mult=1, clip[0,255], ReLU).
+    run_regression 链式调用: 传入 ifm_arr_in / shortcut_arr_in / sdp_*  覆盖默认.
+    """
     os.makedirs(out_dir, exist_ok=True)
     random.seed(seed)
 
@@ -97,15 +110,22 @@ def generate_random(
     print(f"SRAM   : IFB={cfg['ifb_words']}, WB={cfg['wb_words']}, OFB={cfg['ofb_words']} -> "
           f"SRAM_DEPTH={cfg['sram_depth']}")
 
-    # ---- 生成 random ifm_arr: [H_IN][W_IN][NUM_CIN] int (0..7, small) ----
-    ifm_arr = [[[0] * NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
-    for cins in range(cin_slices):
-        local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
-        for y in range(H_IN):
-            for x in range(W_IN):
-                for cin_local in range(local_cin):
-                    cin = cins * HW_PE + cin_local
-                    ifm_arr[y][x][cin] = random.randint(0, 7)
+    # ---- ifm_arr: 链式 case 用 ifm_arr_in (上一层 expected_ofm), 否则随机 ----
+    if ifm_arr_in is not None:
+        # 维度断言 (帮调试)
+        assert len(ifm_arr_in) == H_IN, f"ifm_arr_in H={len(ifm_arr_in)} vs H_IN={H_IN}"
+        assert len(ifm_arr_in[0]) == W_IN, f"ifm_arr_in W vs W_IN={W_IN}"
+        assert len(ifm_arr_in[0][0]) == NUM_CIN, f"ifm_arr_in C vs NUM_CIN={NUM_CIN}"
+        ifm_arr = ifm_arr_in
+    else:
+        ifm_arr = [[[0] * NUM_CIN for _ in range(W_IN)] for _ in range(H_IN)]
+        for cins in range(cin_slices):
+            local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
+            for y in range(H_IN):
+                for x in range(W_IN):
+                    for cin_local in range(local_cin):
+                        cin = cins * HW_PE + cin_local
+                        ifm_arr[y][x][cin] = random.randint(0, 7)
 
     # ---- 生成 random w_arr: [K][K][NUM_COUT][NUM_CIN] int (-3..3, small) ----
     w_arr = [[[[0] * NUM_CIN for _ in range(NUM_COUT)]
@@ -122,26 +142,43 @@ def generate_random(
                             cin = cins * HW_PE + cin_local
                             w_arr[ky][kx][cout][cin] = random.randint(-3, 3)
 
-    # ---- 兼容配置 (F-1a): mult=1, zp=0, clip=[0,255], round=0, relu=1 → 等价老 shift+ReLU+clip[0,255]
-    sdp_mult, sdp_zp_out, sdp_clip_min, sdp_clip_max = 1, 0, 0, 255
-    sdp_round_en, sdp_relu_en = 0, 1
+    # ---- SDP 参数: 优先 override, 否则 F-1a 默认 (mult=1, clip[0,255], ReLU on, no round)
+    if sdp_mult     is None: sdp_mult     = 1
+    if sdp_zp_out   is None: sdp_zp_out   = 0
+    if sdp_clip_min is None: sdp_clip_min = 0
+    if sdp_clip_max is None: sdp_clip_max = 255
+    if sdp_round_en is None: sdp_round_en = 0
+    if sdp_relu_en  is None: sdp_relu_en  = 1
 
-    # ---- R.2: residual shortcut tensor (随机, 小幅 [-16, 16])
-    #   shortcut_mult=1, shortcut_shift=0 → 1:1 直加, 简单测路径
+    # ---- shortcut tensor + 参数:
+    #   shortcut_arr_in 优先 (run_regression 链式: 上一层 ofm 当 shortcut)
+    #   residual && 无 shortcut_arr_in: 随机 [-16, 16] (单 case --residual CLI)
     shortcut_arr = None
-    shortcut_mult = 0
-    shortcut_shift = 0
-    if residual:
-        shortcut_mult  = 1
-        shortcut_shift = 0
+    if shortcut_arr_in is not None:
+        # 维度断言
+        assert len(shortcut_arr_in) == H_OUT, \
+            f"shortcut_arr_in H={len(shortcut_arr_in)} vs H_OUT={H_OUT}"
+        assert len(shortcut_arr_in[0]) == W_OUT
+        assert len(shortcut_arr_in[0][0]) == NUM_COUT
+        shortcut_arr = shortcut_arr_in
+        residual = True
+        if shortcut_mult  is None: shortcut_mult  = 1
+        if shortcut_shift is None: shortcut_shift = 0
+        print(f"Residual: ON (chained), shortcut [{H_OUT}×{W_OUT}×{NUM_COUT}], "
+              f"mult={shortcut_mult} shift={shortcut_shift}")
+    elif residual:
+        if shortcut_mult  is None: shortcut_mult  = 1
+        if shortcut_shift is None: shortcut_shift = 0
         shortcut_arr = [[[0] * NUM_COUT for _ in range(W_OUT)] for _ in range(H_OUT)]
         for yout in range(H_OUT):
             for px in range(W_OUT):
                 for cout in range(NUM_COUT):
-                    # 存为无符号 8-bit (硬件读 INT8 sign-extend), 范围 [-16, 16] mod 256
                     v = random.randint(-16, 16)
                     shortcut_arr[yout][px][cout] = v & 0xFF
-        print(f"Residual: ON, shortcut [{H_OUT}×{W_OUT}×{NUM_COUT}] random INT8 [-16,16]")
+        print(f"Residual: ON (random), shortcut [{H_OUT}×{W_OUT}×{NUM_COUT}] INT8 [-16,16]")
+    else:
+        if shortcut_mult  is None: shortcut_mult  = 0
+        if shortcut_shift is None: shortcut_shift = 0
 
     # ---- 模拟硬件算 expected_ofm（bias=None）----
     #   注意 expected_ofm 用 *原始* conv 计算 (pre-S2D, pre-fold), bit-exact 对照.
@@ -266,12 +303,19 @@ def generate_random(
                                      residual_en=1 if residual else 0,
                                      shortcut_mult=shortcut_mult,
                                      shortcut_shift=shortcut_shift,
-                                     rdma_words_total=n_rdma_lines)
+                                     rdma_words_total=n_rdma_lines,
+                                     ddr_ifb_base =ddr_ifb_base,
+                                     ddr_wb_base  =ddr_wb_base,
+                                     ddr_ofb_base =ddr_ofb_base,
+                                     ddr_desc_base=ddr_desc_base,
+                                     ddr_rdma_base=ddr_rdma_base,
+                                     skip_ifb_preload=1 if skip_ifb_preload else 0,
+                                     skip_ofb_clear  =1 if skip_ofb_clear   else 0)
     hw_files.write_config(out_dir, cfg_dict)
 
     # fold 后 cin_slices/cout_slices 取 fold-aware 的值 (cfg 已更新)
     n_desc, n_strips, strip_rows_eff = hw_files.write_descriptors(
-        out_dir, H_IN_hw, W_IN, H_OUT, W_OUT,
+        out_dir, cfg_dict, H_IN_hw, W_IN, H_OUT, W_OUT,
         cfg['cin_slices'], cfg['cout_slices'],
         pad_top=pad_top_hw, pad_bot=pad_top_hw, pad_left=pad_left, pad_right=pad_left,
         strip_rows=strip_rows, streaming=streaming)
@@ -285,6 +329,12 @@ def generate_random(
         num_cin=NUM_CIN, num_cout=NUM_COUT)
 
     print(f"Files  : ifb.txt  wb.txt  expected_ofm.txt  config.txt  sim_params.f  desc_list.hex")
+    # 链式调用需要 ofm_arr (作下层 ifm) + 输出维度
+    return {
+        'ofm_arr': ofm_arr,
+        'H_OUT'  : H_OUT,
+        'W_OUT'  : W_OUT,
+    }
 
 
 if __name__ == '__main__':

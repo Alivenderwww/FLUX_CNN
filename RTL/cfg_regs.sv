@@ -3,16 +3,26 @@
 // =============================================================================
 // cfg_regs.sv  --  Shared Configuration + DMA Descriptor Register Bank
 //
-// 通过 AXI-Lite decoded 端口（reg_w_en/addr/data + reg_r_addr/data）接受外部
-// 读写。Bridge 在 axi_lite_csr.sv 里；本模块只做 address decode + 寄存器组。
+// 写口分两条:
+//   1. csr_w_*  (AXI-Lite, host 写) -- 只接受 boot 寄存器:
+//                 CTRL (pulse), DESC_LIST_BASE, DESC_COUNT, DMA_MODE
+//   2. seq_w_*  (sequencer CFG_WRITE descriptor) -- 所有 layer cfg 字段
+//                 (H_OUT, K, IDMA_SRC_BASE, ... 共 ~50 个)
+//
+// host 流程: 写 DESC_LIST_BASE/DESC_COUNT → 写 CTRL[4]=1 拉 desc → 写 CTRL[5]=1
+//   sequencer 自己消费 CFG_WRITE descriptors 把 cfg 寄存器写齐, 再跑 CONV
+//   strips, 最后 END 触发 layer_done. host 完全不碰 layer cfg.
+//
+// 读口 (reg_r_addr/reg_r_data) 仍然 AXI-Lite, host poll STATUS 用.
+// Bridge 在 axi_lite_csr.sv 里.
 //
 // Register map（4 字节对齐）：
 //   0x000  CTRL              [4]=start_dfe    [5]=start_layer
-//   0x004  STATUS  (RO)      [0]=core_done    [1]=core_busy
+//   0x004  STATUS  (RO)      [0]=core_done(sticky, 写 start_layer 自清) [1]=core_busy
 //                             [2]=idma_busy   [3]=wdma_busy [4]=odma_busy
 //                             [5]=idma_done   [6]=wdma_done [7]=odma_done
 //                             [8]=dfe_busy    [9]=dfe_done
-//                             [10]=layer_busy [11]=layer_done
+//                             [10]=layer_busy [11]=layer_done(电平, 仅 S_END 那拍高)
 //   0x100  H_OUT             [15:0]
 //   0x104  W_OUT             [15:0]
 //   0x108  W_IN              [15:0]
@@ -80,16 +90,22 @@ module cfg_regs #(
     input  logic                     clk,
     input  logic                     rst_n,
 
-    // ---- AXI-Lite decoded 读写端口 ----
-    input  logic                     reg_w_en,
-    input  logic [ADDR_W-1:0]        reg_w_addr,
-    input  logic [DATA_W-1:0]        reg_w_data,
-    input  logic [DATA_W/8-1:0]      reg_w_strb,     // 暂时不解析，全 32-bit 写
+    // ---- AXI-Lite 写口: host → boot regs (CTRL/DESC_LIST_BASE/DESC_COUNT/DMA_MODE) ----
+    input  logic                     csr_w_en,
+    input  logic [ADDR_W-1:0]        csr_w_addr,
+    input  logic [DATA_W-1:0]        csr_w_data,
+    input  logic [DATA_W/8-1:0]      csr_w_strb,     // 暂时不解析，全 32-bit 写
+
+    // ---- 读口 (host poll STATUS / debug) ----
     input  logic [ADDR_W-1:0]        reg_r_addr,
     output logic [DATA_W-1:0]        reg_r_data,
 
+    // ---- Sequencer CFG_WRITE 写口: 所有 layer cfg 字段 ----
+    input  logic                     seq_w_en,
+    input  logic [ADDR_W-1:0]        seq_w_addr,
+    input  logic [DATA_W-1:0]        seq_w_data,
+
     // ---- Status 输入（来自 core 内部）----
-    input  logic                     core_done,
     input  logic                     idma_busy,
     input  logic                     wdma_busy,
     input  logic                     odma_busy,
@@ -104,6 +120,11 @@ module cfg_regs #(
     // ---- CTRL 输出：host 触发 DFE 拉 descriptor 和 Sequencer 启动 ----
     output logic                     start_dfe_pulse,    // CTRL[4] 写 1
     output logic                     start_layer_pulse,  // CTRL[5] 写 1
+
+    // ---- 整层完成 sticky 标志 (用于顶层 done 端口 / GIC IRQ / STATUS[0]) ----
+    //   layer_done 一上升 → set, start_layer_pulse 自清.
+    //   host 不需要 W1C, 写下一层 start 那拍就清掉了, 中断/poll 都简洁.
+    output logic                     core_done_sticky,
 
     // ---- 配置输出 ----
     output logic [15:0]              h_out,
@@ -240,18 +261,52 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_RDMA_BYTE_LEN    = 12'h234;
 
     // =========================================================================
-    // start pulse 生成：CTRL 写 1 → 当拍 pulse
+    // start pulse 生成 (csr_w only): CTRL 写 1 → 当拍 pulse
     // =========================================================================
-    assign start_dfe_pulse   = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[4];
-    assign start_layer_pulse = reg_w_en && (reg_w_addr == ADDR_CTRL) && reg_w_data[5];
+    assign start_dfe_pulse   = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[4];
+    assign start_layer_pulse = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[5];
+
+    // -------------------------------------------------------------------------
+    // core_done sticky: layer_done 上升沿 set, start_layer_pulse 清掉
+    //   - host poll: STATUS[0] = 1 表示有"未消费"的 done; 写 CTRL[5]=1 启下一层会自清
+    //   - GIC level IRQ: 拉到顶层 done 端口, 一直高直到 host 启下一层
+    // -------------------------------------------------------------------------
+    logic r_core_done_sticky, layer_done_d1;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            r_core_done_sticky <= 1'b0;
+            layer_done_d1      <= 1'b0;
+        end else begin
+            layer_done_d1 <= layer_done;
+            if      (start_layer_pulse)              r_core_done_sticky <= 1'b0;
+            else if (layer_done && !layer_done_d1)   r_core_done_sticky <= 1'b1;
+        end
+    end
+    assign core_done_sticky = r_core_done_sticky;
 
     // =========================================================================
-    // DMA_MODE 是控制路径，必须复位（§6.1）
+    // DMA_MODE 是控制路径 (boot reg, csr_w only), 必须复位（§6.1）
     // =========================================================================
     logic [1:0] r_dma_mode_ctrl;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                    r_dma_mode_ctrl <= 2'b00;
-        else if (reg_w_en && reg_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= reg_w_data[1:0];
+        else if (csr_w_en && csr_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= csr_w_data[1:0];
+    end
+
+    // =========================================================================
+    // Boot 寄存器 (csr_w only): DESC_LIST_BASE / DESC_COUNT
+    //   host 写完这两个 + CTRL 触发后, sequencer 自动消费 desc list 改 layer cfg.
+    // =========================================================================
+    logic [31:0]             r_desc_list_base;
+    logic [15:0]             r_desc_count;
+    always_ff @(posedge clk) begin
+        if (csr_w_en) begin
+            case (csr_w_addr)
+                ADDR_DESC_LIST_BASE  : r_desc_list_base  <= csr_w_data[31:0];
+                ADDR_DESC_COUNT      : r_desc_count      <= csr_w_data[15:0];
+                default              : ;
+            endcase
+        end
     end
 
     // =========================================================================
@@ -298,8 +353,7 @@ module cfg_regs #(
     logic [23:0]             r_wdma_byte_len;
     logic [31:0]             r_odma_dst_base;
     logic [23:0]             r_odma_byte_len;
-    logic [31:0]             r_desc_list_base;
-    logic [15:0]             r_desc_count;
+    // r_desc_list_base / r_desc_count 已在上方 boot 块声明 (csr_w 写)
     logic signed [31:0]      r_sdp_mult;
     logic signed [8:0]       r_sdp_zp_out;
     logic signed [8:0]       r_sdp_clip_min;
@@ -313,66 +367,65 @@ module cfg_regs #(
     logic [31:0]             r_rdma_src_base;
     logic [23:0]             r_rdma_byte_len;
 
-    // 寄存器 bank 写入（§4.1 例外 2：共享 reg_w_en 门控 + addr 解码，
-    // 所有寄存器写在同一 always_ff 内，未命中时所有寄存器隐式保持）。
+    // Layer cfg 寄存器 bank (seq_w only, sequencer 消费 CFG_WRITE descriptor 写入).
+    //   §4.1 例外 2: 共享 seq_w_en 门控 + addr 解码, 所有 layer cfg 寄存器写在同一
+    //   always_ff 内, 未命中时所有寄存器隐式保持。数据路径 §6 不复位。
     always_ff @(posedge clk) begin
-        if (reg_w_en) begin
-            case (reg_w_addr)
-                ADDR_H_OUT           : r_h_out           <= reg_w_data[15:0];
-                ADDR_W_OUT           : r_w_out           <= reg_w_data[15:0];
-                ADDR_W_IN            : r_w_in            <= reg_w_data[15:0];
-                ADDR_K               : r_k               <= reg_w_data[3:0];
-                ADDR_STRIDE          : r_stride          <= reg_w_data[2:0];
-                ADDR_CIN_SLICES      : r_cin_slices      <= reg_w_data[5:0];
-                ADDR_COUT_SLICES     : r_cout_slices     <= reg_w_data[5:0];
-                ADDR_TILE_W          : r_tile_w          <= reg_w_data[5:0];
-                ADDR_NUM_TILES       : r_num_tiles       <= reg_w_data[7:0];
-                ADDR_LAST_VALID_W    : r_last_valid_w    <= reg_w_data[5:0];
-                ADDR_TOTAL_WRF       : r_total_wrf       <= reg_w_data[9:0];
-                ADDR_KY              : r_ky              <= reg_w_data[3:0];
-                ADDR_KK              : r_kk              <= reg_w_data[9:0];
-                ADDR_ROUNDS_PER_CINS : r_rounds_per_cins <= reg_w_data[2:0];
-                ADDR_ROUND_LEN_LAST  : r_round_len_last  <= reg_w_data[5:0];
-                ADDR_IFB_BASE        : r_ifb_base        <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_WB_BASE         : r_wb_base         <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_OFB_BASE        : r_ofb_base        <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IFB_ROW_STEP    : r_ifb_row_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_WB_COUT_STEP    : r_wb_cout_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_TILE_IN_STEP    : r_tile_in_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IFB_RING_WORDS  : r_ifb_ring_words  <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_OFB_ROW_WORDS   : r_ofb_row_words   <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_OFB_RING_WORDS  : r_ofb_ring_words  <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IFB_ISS_STEP    : r_ifb_iss_step    <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IFB_KY_STEP     : r_ifb_ky_step     <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_TILE_PIX_STEP   : r_tile_pix_step   <= reg_w_data[15:0];
-                ADDR_ARF_REUSE_EN    : r_arf_reuse_en    <= reg_w_data[0];
-                ADDR_SDP_SHIFT       : r_sdp_shift       <= reg_w_data[5:0];
-                ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= reg_w_data[0];
-                ADDR_H_IN_TOTAL      : r_h_in_total      <= reg_w_data[15:0];
-                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= reg_w_data[7:0];
-                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= reg_w_data[5:0];
-                ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= reg_w_data[CORE_ADDR_W-1:0];
-                ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= reg_w_data[31:0];
-                ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= reg_w_data[23:0];
-                ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= reg_w_data[31:0];
-                ADDR_WDMA_BYTE_LEN   : r_wdma_byte_len   <= reg_w_data[23:0];
-                ADDR_ODMA_DST_BASE   : r_odma_dst_base   <= reg_w_data[31:0];
-                ADDR_ODMA_BYTE_LEN   : r_odma_byte_len   <= reg_w_data[23:0];
-                ADDR_DESC_LIST_BASE  : r_desc_list_base  <= reg_w_data[31:0];
-                ADDR_DESC_COUNT      : r_desc_count      <= reg_w_data[15:0];
-                ADDR_SDP_MULT        : r_sdp_mult        <= $signed(reg_w_data[31:0]);
-                ADDR_SDP_ZP_OUT      : r_sdp_zp_out      <= $signed(reg_w_data[8:0]);
-                ADDR_SDP_CLIP_MIN    : r_sdp_clip_min    <= $signed(reg_w_data[8:0]);
-                ADDR_SDP_CLIP_MAX    : r_sdp_clip_max    <= $signed(reg_w_data[8:0]);
-                ADDR_SDP_ROUND_EN    : r_sdp_round_en    <= reg_w_data[0];
-                ADDR_RESIDUAL_EN     : r_residual_en     <= reg_w_data[0];
-                ADDR_SHORTCUT_MULT   : r_shortcut_mult   <= $signed(reg_w_data[15:0]);
-                ADDR_SHORTCUT_SHIFT  : r_shortcut_shift  <= reg_w_data[4:0];
-                ADDR_BIAS_BASE       : r_bias_base       <= reg_w_data[12:0];
-                ADDR_RDMA_SRC_BASE   : r_rdma_src_base   <= reg_w_data[31:0];
-                ADDR_RDMA_BYTE_LEN   : r_rdma_byte_len   <= reg_w_data[23:0];
-                default              : ;   // CTRL / STATUS / DMA_MODE / 未使用地址
+        if (seq_w_en) begin
+            case (seq_w_addr)
+                ADDR_H_OUT           : r_h_out           <= seq_w_data[15:0];
+                ADDR_W_OUT           : r_w_out           <= seq_w_data[15:0];
+                ADDR_W_IN            : r_w_in            <= seq_w_data[15:0];
+                ADDR_K               : r_k               <= seq_w_data[3:0];
+                ADDR_STRIDE          : r_stride          <= seq_w_data[2:0];
+                ADDR_CIN_SLICES      : r_cin_slices      <= seq_w_data[5:0];
+                ADDR_COUT_SLICES     : r_cout_slices     <= seq_w_data[5:0];
+                ADDR_TILE_W          : r_tile_w          <= seq_w_data[5:0];
+                ADDR_NUM_TILES       : r_num_tiles       <= seq_w_data[7:0];
+                ADDR_LAST_VALID_W    : r_last_valid_w    <= seq_w_data[5:0];
+                ADDR_TOTAL_WRF       : r_total_wrf       <= seq_w_data[9:0];
+                ADDR_KY              : r_ky              <= seq_w_data[3:0];
+                ADDR_KK              : r_kk              <= seq_w_data[9:0];
+                ADDR_ROUNDS_PER_CINS : r_rounds_per_cins <= seq_w_data[2:0];
+                ADDR_ROUND_LEN_LAST  : r_round_len_last  <= seq_w_data[5:0];
+                ADDR_IFB_BASE        : r_ifb_base        <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_WB_BASE         : r_wb_base         <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_OFB_BASE        : r_ofb_base        <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_ROW_STEP    : r_ifb_row_step    <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_WB_COUT_STEP    : r_wb_cout_step    <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_TILE_IN_STEP    : r_tile_in_step    <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_RING_WORDS  : r_ifb_ring_words  <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_OFB_ROW_WORDS   : r_ofb_row_words   <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_OFB_RING_WORDS  : r_ofb_ring_words  <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_ISS_STEP    : r_ifb_iss_step    <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_IFB_KY_STEP     : r_ifb_ky_step     <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_TILE_PIX_STEP   : r_tile_pix_step   <= seq_w_data[15:0];
+                ADDR_ARF_REUSE_EN    : r_arf_reuse_en    <= seq_w_data[0];
+                ADDR_SDP_SHIFT       : r_sdp_shift       <= seq_w_data[5:0];
+                ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= seq_w_data[0];
+                ADDR_H_IN_TOTAL      : r_h_in_total      <= seq_w_data[15:0];
+                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[7:0];
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[5:0];
+                ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
+                ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= seq_w_data[31:0];
+                ADDR_IDMA_BYTE_LEN   : r_idma_byte_len   <= seq_w_data[23:0];
+                ADDR_WDMA_SRC_BASE   : r_wdma_src_base   <= seq_w_data[31:0];
+                ADDR_WDMA_BYTE_LEN   : r_wdma_byte_len   <= seq_w_data[23:0];
+                ADDR_ODMA_DST_BASE   : r_odma_dst_base   <= seq_w_data[31:0];
+                ADDR_ODMA_BYTE_LEN   : r_odma_byte_len   <= seq_w_data[23:0];
+                ADDR_SDP_MULT        : r_sdp_mult        <= $signed(seq_w_data[31:0]);
+                ADDR_SDP_ZP_OUT      : r_sdp_zp_out      <= $signed(seq_w_data[8:0]);
+                ADDR_SDP_CLIP_MIN    : r_sdp_clip_min    <= $signed(seq_w_data[8:0]);
+                ADDR_SDP_CLIP_MAX    : r_sdp_clip_max    <= $signed(seq_w_data[8:0]);
+                ADDR_SDP_ROUND_EN    : r_sdp_round_en    <= seq_w_data[0];
+                ADDR_RESIDUAL_EN     : r_residual_en     <= seq_w_data[0];
+                ADDR_SHORTCUT_MULT   : r_shortcut_mult   <= $signed(seq_w_data[15:0]);
+                ADDR_SHORTCUT_SHIFT  : r_shortcut_shift  <= seq_w_data[4:0];
+                ADDR_BIAS_BASE       : r_bias_base       <= seq_w_data[12:0];
+                ADDR_RDMA_SRC_BASE   : r_rdma_src_base   <= seq_w_data[31:0];
+                ADDR_RDMA_BYTE_LEN   : r_rdma_byte_len   <= seq_w_data[23:0];
+                default              : ;   // 未使用地址
             endcase
         end
     end
@@ -440,11 +493,13 @@ module cfg_regs #(
     // 读 mux：按 reg_r_addr 选择返回数据（组合）
     // =========================================================================
     logic [DATA_W-1:0] status_word;
+    // STATUS[0] = sticky core_done (host poll: 1 = 上一层完成且未启下一层)
+    // STATUS[11] = layer_done (instantaneous level; 仅 sequencer S_END 那 1-2 拍高)
     assign status_word = {20'd0,
                           layer_done, layer_busy, dfe_done, dfe_busy,
                           odma_done,  wdma_done,  idma_done,
                           odma_busy,  wdma_busy,  idma_busy,
-                          layer_busy, core_done};
+                          layer_busy, r_core_done_sticky};
 
     always_comb begin
         case (reg_r_addr)

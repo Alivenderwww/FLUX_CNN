@@ -292,52 +292,11 @@ module tb_core_dma;
             count = $sscanf(line, "%s = %d", key, val);
             if (count < 2) continue;
             case (key)
-                "H_OUT"          : begin axi_lite_write(ADDR_H_OUT, val); h_out_cfg = val; end
-                "W_OUT"          : begin axi_lite_write(ADDR_W_OUT, val); w_out_cfg = val; end
-                "W_IN"           : axi_lite_write(ADDR_W_IN,            val);
-                "K"              : axi_lite_write(ADDR_K,               val);
-                "KY"             : axi_lite_write(ADDR_KY,              val);
-                "STRIDE"         : axi_lite_write(ADDR_STRIDE,          val);
-                "CIN_SLICES"     : axi_lite_write(ADDR_CIN_SLICES,      val);
-                "COUT_SLICES"    : axi_lite_write(ADDR_COUT_SLICES,     val);
-                "TILE_W"         : axi_lite_write(ADDR_TILE_W,          val);
-                "TOTAL_WRF"      : axi_lite_write(ADDR_TOTAL_WRF,       val);
-                "KK"             : axi_lite_write(ADDR_KK,              val);
-                "ROUNDS_PER_CINS": axi_lite_write(ADDR_ROUNDS_PER_CINS, val);
-                "ROUND_LEN_LAST" : axi_lite_write(ADDR_ROUND_LEN_LAST,  val);
-                "IFB_BASE"       : axi_lite_write(ADDR_IFB_BASE_R,      val);
-                "WB_BASE"        : axi_lite_write(ADDR_WB_BASE_R,       val);
-                "OFB_BASE"       : axi_lite_write(ADDR_OFB_BASE_R,      val);
-                "IFB_ROW_STEP"   : axi_lite_write(ADDR_IFB_ROW_STEP,    val);
-                "WB_COUT_STEP"   : axi_lite_write(ADDR_WB_COUT_STEP,    val);
-                "IFB_RING_WORDS" : axi_lite_write(ADDR_IFB_RING_WORDS,  val);
-                "OFB_ROW_WORDS"  : axi_lite_write(ADDR_OFB_ROW_WORDS,   val);
-                "OFB_RING_WORDS" : axi_lite_write(ADDR_OFB_RING_WORDS,  val);
-                "IFB_ISS_STEP"   : axi_lite_write(ADDR_IFB_ISS_STEP,    val);
-                "IFB_KY_STEP"    : axi_lite_write(ADDR_IFB_KY_STEP,    val);
-                "TILE_PIX_STEP"  : axi_lite_write(ADDR_TILE_PIX_STEP,  val);
-                "ARF_REUSE_EN"   : axi_lite_write(ADDR_ARF_REUSE_EN,   val);
-                // R.1: residual / shortcut / bias cfg
-                "RESIDUAL_EN"    : axi_lite_write(ADDR_RESIDUAL_EN,    val);
-                "SHORTCUT_MULT"  : axi_lite_write(ADDR_SHORTCUT_MULT,  val);
-                "SHORTCUT_SHIFT" : axi_lite_write(ADDR_SHORTCUT_SHIFT, val);
-                "BIAS_BASE"      : axi_lite_write(ADDR_BIAS_BASE,      val);
-                "RDMA_BYTE_LEN"  : axi_lite_write(ADDR_RDMA_BYTE_LEN,  val);
-                "NUM_TILES"      : axi_lite_write(ADDR_NUM_TILES,       val);
-                "LAST_VALID_W"   : axi_lite_write(ADDR_LAST_VALID_W,    val);
-                "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
-                "SDP_SHIFT"      : axi_lite_write(ADDR_SDP_SHIFT,       val);
-                "SDP_RELU_EN"    : axi_lite_write(ADDR_SDP_RELU_EN,     val);
-                "SDP_MULT"       : axi_lite_write(ADDR_SDP_MULT,        val);
-                "SDP_ZP_OUT"     : axi_lite_write(ADDR_SDP_ZP_OUT,      val);
-                "SDP_CLIP_MIN"   : axi_lite_write(ADDR_SDP_CLIP_MIN,    val);
-                "SDP_CLIP_MAX"   : axi_lite_write(ADDR_SDP_CLIP_MAX,    val);
-                "SDP_ROUND_EN"   : axi_lite_write(ADDR_SDP_ROUND_EN,    val);
-                "H_IN_TOTAL"     : axi_lite_write(ADDR_H_IN_TOTAL,      val);
-                "IFB_STRIP_ROWS" : axi_lite_write(ADDR_IFB_STRIP_ROWS,  val);
-                "OFB_STRIP_ROWS" : axi_lite_write(ADDR_OFB_STRIP_ROWS,  val);
-                "DDR_IFM_ROW_STRIDE" : axi_lite_write(ADDR_DDR_IFM_ROW_STR, val);
-                "DDR_OFM_ROW_STRIDE" : axi_lite_write(ADDR_DDR_OFM_ROW_STR, val);
+                // Layer cfg 字段全部走 CFG_WRITE descriptor (sequencer 写 cfg_regs);
+                // TB 此处只用 H_OUT/W_OUT 作 META 给比对/perf 用, 不再 axi_lite_write.
+                "H_OUT"          : h_out_cfg = val;
+                "W_OUT"          : w_out_cfg = val;
+                // ---- Boot regs: host 仍走 AXI-Lite (CTRL/DESC_LIST_BASE/DESC_COUNT/DMA_MODE) ----
                 "DMA_MODE"       : begin
                                       axi_lite_write(ADDR_DMA_MODE,     val);
                                       dma_mode_cfg = val[1:0];
@@ -449,11 +408,17 @@ module tb_core_dma;
         int snap_wrf_writes;
         longint delta_cycles, delta_mac_fire, delta_wrf_writes;
         longint useful_mac;
+        // 真机墙钟时间: 从 host 启动 setup (load_config 第一笔 axi_lite_write)
+        // 到 host 可从 DDR 读最终 OFB (layer_done = 1) 的总耗时.
+        // 包含 host AXI-Lite 写 boot regs + DFE 拉 desc + sequencer CFG_WRITE
+        // 写 cfg + CONV 计算 + ODMA flush 全部. = host 对单层的实际响应延迟.
+        longint snap_start_time, wall_ns;
 
         case_dir = (c < 10) ? $sformatf("cases/case0%0d", c)
                             : $sformatf("cases/case%0d",  c);
 
-        // 快照 perf
+        // 快照 perf + 墙钟起点
+        snap_start_time  = $time;
         snap_core_cycles = core_cycles;
         snap_mac_fire    = u_core.u_mac_array.mac_fire_cnt;
         snap_act_fire   = u_core.u_mac_array.hs_act_fire;
@@ -505,15 +470,8 @@ module tb_core_dma;
         if (!skip_ofb_clear_cfg)
             $readmemh($sformatf("%s/expected_ofm.txt", case_dir), exp_arr);
 
-        // DMA base (layer-level)
-        axi_lite_write(ADDR_IDMA_SRC_BASE, ddr_ifb_base_cfg);
-        axi_lite_write(ADDR_IDMA_BYTE_LEN, ifb_bytes);
-        axi_lite_write(ADDR_WDMA_SRC_BASE, ddr_wb_base_cfg);
-        axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
-        axi_lite_write(ADDR_ODMA_DST_BASE, ddr_ofb_base_cfg);
-        axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
-        axi_lite_write(ADDR_RDMA_SRC_BASE, ddr_rdma_base_cfg);
-        // RDMA_BYTE_LEN 在 load_config 里已经按 cfg 写过；这里不重复
+        // ---- Boot regs: layer cfg (IDMA/WDMA/ODMA/RDMA bases & lens) 全走 CFG_WRITE
+        //      descriptor, 这里只写"启动 DFE 必需"的 boot regs ----
         axi_lite_write(ADDR_DESC_LIST_BASE, ddr_desc_base_cfg);
         // DESC_COUNT 已由 load_config 写入
 
@@ -529,6 +487,8 @@ module tb_core_dma;
         wait (u_core.layer_busy == 1'b1);
         wait (u_core.layer_done == 1'b1);
         @(posedge clk);
+        // 墙钟终点: layer_done 拉高这一拍 = ODMA 已把 OFB flush 进 DDR, host 此刻可读最终数据
+        wall_ns = $time - snap_start_time;
 
         // 比对 DDR OFB vs expected；中间层无 expected_ofm → 不比对
         mismatch_cnt = 0;
@@ -561,8 +521,10 @@ module tb_core_dma;
                    * longint'(k_orig_cfg) * longint'(k_orig_cfg)
                    * longint'(num_cin_orig_cfg) * longint'(num_cout_orig_cfg);
         // 单 case 结果（一行精简）+ 若干关键指标给 run_regression parser 用
+        //   wall_ns: host 视角端到端延迟 (boot AXI-Lite 写 → DFE 拉 desc → CFG_WRITE
+        //            消化 → CONV → ODMA flush → host 可读 DDR), 真机部署关心.
         if (mismatch_cnt == 0) begin
-            $display("CASE_RESULT %0d PASS  cycles=%0d  mac_fire=%0d  mac_util=%.2f%%  arf_w=%0d  arf_r=%0d  parf_f=%0d  parf_d=%0d  ifb_r=%0d  wb_r=%0d  ofb_w=%0d  name=%s",
+            $display("CASE_RESULT %0d PASS  cycles=%0d  mac_fire=%0d  mac_util=%.2f%%  arf_w=%0d  arf_r=%0d  parf_f=%0d  parf_d=%0d  ifb_r=%0d  wb_r=%0d  ofb_w=%0d  wall_ns=%0d  name=%s",
                      c, delta_cycles, delta_mac_fire,
                      (real'(useful_mac) / (real'(delta_cycles) * real'(NUM_COL * NUM_PE))) * 100.0,
                      u_core.u_line_buffer.arf_write_cnt - snap_arf_w,
@@ -572,6 +534,7 @@ module tb_core_dma;
                      ifb_re_cnt - snap_ifb_re,
                      wb_re_cnt  - snap_wb_re,
                      ofb_we_cnt - snap_ofb_we,
+                     wall_ns,
                      case_name_cfg);
             // PROFILE: 4 个核心 V/R 接口的 {fire, stall, idle} 原始计数
             //   接口含义:

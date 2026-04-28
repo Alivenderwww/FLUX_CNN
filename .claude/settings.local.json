@@ -11,7 +11,9 @@
       "Bash(rm -rf work)",
       "Bash(python gen_isa_test.py --k 3 --h_in 68 --w_in 120 --stride 1 --num_cin 8 --num_cout 8 --shift 0)",
       "Bash(python gen_isa_test.py --k 7 --h_in 68 --w_in 120 --num_cin 8 --num_cout 8 --stride 1 --shift 2)",
-      "Bash(vsim -c -do run.tcl)"
+      "Bash(vsim -c -do run.tcl)",
+      "Bash(rm -rf work xil_defaultlib transcript modelsim.ini)",
+      "Bash(C:/modeltech64_2020.4/win64/vlog.exe -sv -mfcu -lint -work work ../../RTL/bias_rf.sv)"
     ]
   }
 }

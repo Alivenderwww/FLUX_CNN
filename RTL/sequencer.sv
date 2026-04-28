@@ -6,8 +6,11 @@
 // 从 desc_fifo pop 一条 descriptor，解析字段，发 start pulse 给核流水 +
 // IDMA + ODMA（WDMA 只在 is_first 时发），输出 strip-level cfg 覆盖。
 //
-// Descriptor 字段布局（little-endian word 0 在低位，见 docs §2.1）：
-//   word 0 [3:0]    type           0=NOP 1=CONV 2=BARRIER F=END
+// Descriptor type:
+//   0=NOP  1=CONV  2=BARRIER  3=CFG_WRITE  F=END
+//
+// CONV/NOP/BARRIER/END 字段布局（little-endian word 0 在低位）：
+//   word 0 [3:0]    type
 //   word 0 [7:4]    flags          {rsvd, streaming_en, is_last, is_first}
 //   word 0 [11:8]   pad_top
 //   word 0 [15:12]  pad_bot
@@ -20,6 +23,13 @@
 //   word 4 [19:0]   ofb_ddr_offset (bytes, 相对 cfg_odma_dst_base)
 //   word 5 [23:0]   ofb_byte_len
 //   word 6..7       rsvd
+//
+// CFG_WRITE 字段:
+//   word 0 [3:0]    type = 0x3
+//   word 0 [15:4]   cfg_reg_addr (12 bit, cfg_regs ADDR_W)
+//   word 1 [31:0]   cfg_reg_data (32 bit, 直接写到目标寄存器)
+//   word 2..7       rsvd
+// CFG_WRITE 在 S_FETCH 状态由 sequencer 一拍消化, 不进 PRELOAD/DISPATCH 流水.
 //
 // 方案 E：wgt_buffer 只在 flags.is_first 时启动（layer 粒度），后续 strip
 // 不再重启，核流水 valid-ready 握手自然对齐。WDMA 类似，只在 is_first 时发
@@ -73,7 +83,12 @@ module sequencer (
     input  logic                idma_strip_done,
     input  logic                odma_strip_done,
     input  logic                wdma_done,
-    input  logic                rdma_done
+    input  logic                rdma_done,
+
+    // ---- CFG_WRITE 输出 → cfg_regs.seq_w_* ----
+    output logic                cfg_w_en,
+    output logic [11:0]         cfg_w_addr,
+    output logic [31:0]         cfg_w_data
 );
 
     // =========================================================================
@@ -82,6 +97,7 @@ module sequencer (
     localparam logic [3:0] TYPE_NOP     = 4'h0;
     localparam logic [3:0] TYPE_CONV    = 4'h1;
     localparam logic [3:0] TYPE_BARRIER = 4'h2;
+    localparam logic [3:0] TYPE_CFG     = 4'h3;
     localparam logic [3:0] TYPE_END     = 4'hF;
 
     // =========================================================================
@@ -131,6 +147,12 @@ module sequencer (
     assign hd_ofb_ddr_offset = fifo_rd_data[147:128]; // word 4 [19:0]
     assign hd_ofb_byte_len   = fifo_rd_data[183:160]; // word 5 [23:0]
 
+    // CFG_WRITE 字段 (跟 CONV 共享 type[3:0], 其余字段互不冲突)
+    logic [11:0]  hd_cfg_addr;
+    logic [31:0]  hd_cfg_data;
+    assign hd_cfg_addr = fifo_rd_data[15:4];          // word 0 [15:4]
+    assign hd_cfg_data = fifo_rd_data[63:32];         // word 1 [31:0]
+
     // =========================================================================
     // Latched descriptor 字段（FETCH 成功后保存）
     // =========================================================================
@@ -160,6 +182,7 @@ module sequencer (
             S_FETCH: if (fetch_ok) begin
                          unique case (hd_type)
                              TYPE_NOP    : state_next = S_FETCH;
+                             TYPE_CFG    : state_next = S_FETCH;  // 1 拍写 cfg_regs, 继续 pop
                              TYPE_CONV   : state_next = hd_is_first ? S_PRELOAD : S_DISPATCH;
                              TYPE_BARRIER: state_next = S_BARRIER;
                              TYPE_END    : state_next = S_END;
@@ -183,6 +206,15 @@ module sequencer (
         if (!rst_n) state <= S_IDLE;
         else        state <= state_next;
     end
+
+    // =========================================================================
+    // CFG_WRITE: 1 拍把 cfg_addr/cfg_data 推到 cfg_regs (seq_w_*).
+    //   FETCH 成功 + type==CFG → cfg_w_en=1, 当拍 cfg_regs 完成寄存器写入,
+    //   下一拍 sequencer 仍在 S_FETCH 处理下一条 desc.
+    // =========================================================================
+    assign cfg_w_en   = fetch_ok && (hd_type == TYPE_CFG);
+    assign cfg_w_addr = hd_cfg_addr;
+    assign cfg_w_data = hd_cfg_data;
 
     // =========================================================================
     // Descriptor latch（FETCH 成功且 type==CONV 时）

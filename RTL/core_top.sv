@@ -188,6 +188,8 @@ module core_top #(
     logic              idma_busy, idma_done, wdma_busy, wdma_done, odma_busy, odma_done;
     logic              rdma_busy, rdma_done;
     logic              dfe_busy, dfe_done, layer_busy, layer_done;
+    logic              ow_done, row_done_pulse;   // ofb_writer → sequencer/ODMA, 跨模块前置声明
+    logic              cfg_core_done_sticky;       // cfg_regs sticky → 顶层 done 端口
 
     // R.1: residual / shortcut / bias cfg
     logic              cfg_residual_en;
@@ -228,22 +230,30 @@ module core_top #(
     logic              desc_fifo_we, desc_fifo_re;
     logic              desc_fifo_full, desc_fifo_empty;
 
+    // Sequencer CFG_WRITE → cfg_regs seq_w_* (descriptor-driven layer cfg writes)
+    logic                  seq_cfg_w_en;
+    logic [CSR_ADDR_W-1:0] seq_cfg_w_addr;
+    logic [CSR_DATA_W-1:0] seq_cfg_w_data;
+
     cfg_regs #(
         .ADDR_W(CSR_ADDR_W),
         .DATA_W(CSR_DATA_W),
         .CORE_ADDR_W(ADDR_W)
     ) u_cfg (
         .clk(clk), .rst_n(rst_n),
-        .reg_w_en(reg_w_en), .reg_w_addr(reg_w_addr),
-        .reg_w_data(reg_w_data), .reg_w_strb(reg_w_strb),
+        // AXI-Lite 写口 (boot regs only): CTRL / DESC_LIST_BASE / DESC_COUNT / DMA_MODE
+        .csr_w_en(reg_w_en), .csr_w_addr(reg_w_addr),
+        .csr_w_data(reg_w_data), .csr_w_strb(reg_w_strb),
+        // Sequencer 写口 (layer cfg): 由 CFG_WRITE descriptor 驱动
+        .seq_w_en(seq_cfg_w_en), .seq_w_addr(seq_cfg_w_addr), .seq_w_data(seq_cfg_w_data),
         .reg_r_addr(reg_r_addr), .reg_r_data(reg_r_data),
-        .core_done(done),
         .idma_busy(idma_busy), .wdma_busy(wdma_busy), .odma_busy(odma_busy),
         .idma_done(idma_done), .wdma_done(wdma_done), .odma_done(odma_done),
         .dfe_busy(dfe_busy), .dfe_done(dfe_done),
         .layer_busy(layer_busy), .layer_done(layer_done),
         .start_dfe_pulse(cfg_start_dfe_pulse),
         .start_layer_pulse(cfg_start_layer_pulse),
+        .core_done_sticky(cfg_core_done_sticky),
         .h_out(cfg_h_out), .w_out(cfg_w_out), .w_in(cfg_w_in),
         .k(cfg_k), .ky(cfg_ky), .stride(cfg_stride),
         .cin_slices(cfg_cin_slices), .cout_slices(cfg_cout_slices),
@@ -286,7 +296,8 @@ module core_top #(
     // =========================================================================
     // 1b. Descriptor FIFO + Sequencer (Phase C-1)
     // =========================================================================
-    desc_fifo #(.DEPTH(32), .WIDTH(256)) u_desc_fifo (
+    // DEPTH=128: 一层 ~50 CFG_WRITE + 1 CONV + 1 END < 64; 留 2× 头量给单 burst pre-fetch
+    desc_fifo #(.DEPTH(128), .WIDTH(256)) u_desc_fifo (
         .clk(clk), .rst_n(rst_n),
         .wr_en  (desc_fifo_we),
         .wr_data(desc_fifo_wdata),
@@ -322,11 +333,15 @@ module core_top #(
         .start_odma_pulse      (seq_start_odma_pulse),
         .start_wdma_pulse      (seq_start_wdma_pulse),
         .start_rdma_pulse      (seq_start_rdma_pulse),
-        .core_strip_done       (done),
+        .core_strip_done       (ow_done),
         .idma_strip_done       (idma_done),
         .odma_strip_done       (odma_done),
         .wdma_done             (wdma_done),
-        .rdma_done             (rdma_done)
+        .rdma_done             (rdma_done),
+        // CFG_WRITE → cfg_regs.seq_w_*
+        .cfg_w_en              (seq_cfg_w_en),
+        .cfg_w_addr            (seq_cfg_w_addr),
+        .cfg_w_data            (seq_cfg_w_data)
     );
 
     // =========================================================================
@@ -578,8 +593,7 @@ module core_top #(
     //    streaming 下 row_done_pulse → ODMA，ODMA 的 rows_drained 反馈回来做
     //    OFB ring 反压
     // =========================================================================
-    logic ow_done;
-    logic row_done_pulse;
+    // ow_done / row_done_pulse 已在顶部声明 (跨模块需在 sequencer 之前可见)
     logic [15:0] rows_written;   // debug only
     logic [15:0] rows_drained;
 
@@ -698,8 +712,11 @@ module core_top #(
 
     // =========================================================================
     // 9. done
+    //   接 cfg_regs 内部的 sticky 寄存器: layer_done 上升沿 set, 写 CTRL[5] 启
+    //   下一层时自清. 高电平期间表示"上一层做完但 host 还没启下一层", 接 GIC
+    //   level-triggered IRQ 不会丢、不会反复触发, host 软件无需 W1C.
     // =========================================================================
-    assign done = ow_done;
+    assign done = cfg_core_done_sticky;
 
     // =========================================================================
     // 10. DMA 引擎 (idma_ctrl / wdma_ctrl / odma_ctrl) + AXI DataMover + axi_m_mux

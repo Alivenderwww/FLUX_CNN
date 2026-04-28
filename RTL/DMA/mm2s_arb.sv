@@ -1,29 +1,20 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// mm2s_arb.sv  --  AXI DataMover MM2S 通道仲裁器 (idma_ctrl + wdma_ctrl 共用)
+// mm2s_arb.sv  --  AXI DataMover MM2S 通道仲裁器 (3 路: idma + wdma + rdma)
 //
-// Pipelined 版本: 利用 DataMover 内部 cmd FIFO (默认深度 4) 让两路上游可以多
-// cmd in-flight, 提高 K=1 ds 这类 "短 row + per-cmd pipeline depth 暴露" 场景
-// 的吞吐. 旧的 strict-serial 版本每发一条 cmd 要跑完 cmd→data→sts 才能发下一
-// 条, 浪费了 DataMover 的流水能力.
+// Pipelined: 利用 DataMover 内部 cmd FIFO 让多 cmd in-flight. cmd 严格按入序
+// 处理, 因此 data / sts 的目的端 (owner) 只需用 FIFO 跟踪 cmd 入序即可.
 //
-// 仲裁:
-//   - 当 idma + wdma 同时 cmd_tvalid, idma 优先 (流式负载更敏感; wdma 是一次
-//     性预加载, 等几拍无所谓)
-//   - cmd_tready 由下游 axi_dm 自动反压 (cmd FIFO 满会拉低), 加上本模块的
-//     owner FIFO 满也反压, 永不溢出
+// 仲裁优先级 (高→低): idma > rdma > wdma
+//   - idma: 流式输入, 实时性最敏感
+//   - rdma: 残差/bias 加载, layer 启动期一次性 (只有 1 条 cmd)
+//   - wdma: 权重加载, layer 启动期一次性
+// rdma + wdma 都是 batch, 但 rdma 需要在 layer compute 开始前完成 (bias_rf
+// 依赖), 略优先于 wdma.
 //
-// data / sts demux: 用 2 个独立 owner FIFO 跟踪 in-flight cmd 的 owner 顺序.
-// DataMover 严格按 cmd 顺序输出 data + sts, 所以两个 FIFO 都按 cmd 顺序排队,
-// 但消费节奏不同:
-//   - data_owner_fifo: cmd_fire 时 push owner; data tlast_fire 时 pop
-//                       FIFO head = 当前 data 流路由到的 owner
-//   - sts_owner_fifo:  cmd_fire 时 push owner; sts_fire 时 pop
-//                       FIFO head = 当前 sts 路由到的 owner
-// 两者 push 同步 (cmd_fire 同拍 push 两个), pop 各自独立.
-//
-// FIFO 深度 8: 容纳 DataMover cmd FIFO 4 + 内部流水 ≤4 余量, 永不会成为瓶颈.
+// data / sts 各一个 owner FIFO (深度 8). owner 编码: 2'd0=idma, 2'd1=wdma,
+// 2'd2=rdma. push on cmd_fire, pop 各异步.
 // =============================================================================
 
 module mm2s_arb #(
@@ -59,6 +50,19 @@ module mm2s_arb #(
     input  logic                    wdma_sts_tready,
     output logic [7:0]              wdma_sts_tdata,
 
+    // ---- 端口 2: rdma_ctrl ----
+    input  logic                    rdma_cmd_tvalid,
+    output logic                    rdma_cmd_tready,
+    input  logic [71:0]             rdma_cmd_tdata,
+    output logic                    rdma_data_tvalid,
+    input  logic                    rdma_data_tready,
+    output logic [DATA_W-1:0]       rdma_data_tdata,
+    output logic [DATA_W/8-1:0]     rdma_data_tkeep,
+    output logic                    rdma_data_tlast,
+    output logic                    rdma_sts_tvalid,
+    input  logic                    rdma_sts_tready,
+    output logic [7:0]              rdma_sts_tdata,
+
     // ---- 上游: axi_dm.MM2S ----
     output logic                    mm2s_cmd_tvalid,
     input  logic                    mm2s_cmd_tready,
@@ -73,43 +77,52 @@ module mm2s_arb #(
     input  logic [7:0]              mm2s_sts_tdata
 );
 
+    localparam int OWN_W = 2;     // 0=idma, 1=wdma, 2=rdma
     localparam int PTR_W = $clog2(OFIFO_DEPTH);
     localparam int CNT_W = $clog2(OFIFO_DEPTH + 1);
 
     // =========================================================================
-    // CMD 仲裁: idma 优先, 同时 cmd_tvalid 时选 idma
+    // CMD 仲裁 (priority): idma > rdma > wdma
     // =========================================================================
-    logic cmd_owner;     // 0=idma, 1=wdma; combinational 选择
-    assign cmd_owner = idma_cmd_tvalid ? 1'b0 : 1'b1;
+    logic [OWN_W-1:0] cmd_owner;
+    always_comb begin
+        if      (idma_cmd_tvalid) cmd_owner = 2'd0;
+        else if (rdma_cmd_tvalid) cmd_owner = 2'd2;
+        else                       cmd_owner = 2'd1;     // wdma 默认
+    end
 
     logic any_cmd_tvalid;
-    assign any_cmd_tvalid = idma_cmd_tvalid | wdma_cmd_tvalid;
+    assign any_cmd_tvalid = idma_cmd_tvalid | wdma_cmd_tvalid | rdma_cmd_tvalid;
 
-    // owner FIFO 满时反压 cmd 发射
     logic data_full, sts_full;
 
-    assign mm2s_cmd_tdata  = (cmd_owner == 1'b0) ? idma_cmd_tdata : wdma_cmd_tdata;
+    always_comb begin
+        case (cmd_owner)
+            2'd0   : mm2s_cmd_tdata = idma_cmd_tdata;
+            2'd1   : mm2s_cmd_tdata = wdma_cmd_tdata;
+            2'd2   : mm2s_cmd_tdata = rdma_cmd_tdata;
+            default: mm2s_cmd_tdata = idma_cmd_tdata;
+        endcase
+    end
     assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && !sts_full;
 
     logic cmd_fire;
     assign cmd_fire = mm2s_cmd_tvalid && mm2s_cmd_tready;
 
-    assign idma_cmd_tready = idma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
-    assign wdma_cmd_tready = !idma_cmd_tvalid && wdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+    assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+    assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+    assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
 
     // =========================================================================
-    // owner FIFO × 2 (data / sts 各一个)
-    //   两者同时 push (cmd_fire 时), pop 各自异步:
-    //     data_fifo  pop on data_tlast_fire (= 当前 cmd 数据全部送完)
-    //     sts_fifo   pop on sts_fire        (= 当前 cmd commit 完)
-    //   sts 总在 data tlast 之后, 所以 sts_fifo 的占用 ≥ data_fifo (但深度同).
+    // owner FIFO × 2 (data / sts), each depth = OFIFO_DEPTH, width = OWN_W
     // =========================================================================
-    logic [OFIFO_DEPTH-1:0] data_mem, sts_mem;
-    logic [PTR_W-1:0]       data_wr, data_rd;
-    logic [PTR_W-1:0]       sts_wr,  sts_rd;
-    logic [CNT_W-1:0]       data_cnt, sts_cnt;
-    logic                   data_empty, sts_empty;
-    logic                   data_head, sts_head;
+    logic [OWN_W-1:0]  data_mem [0:OFIFO_DEPTH-1];
+    logic [OWN_W-1:0]  sts_mem  [0:OFIFO_DEPTH-1];
+    logic [PTR_W-1:0]  data_wr, data_rd;
+    logic [PTR_W-1:0]  sts_wr,  sts_rd;
+    logic [CNT_W-1:0]  data_cnt, sts_cnt;
+    logic              data_empty, sts_empty;
+    logic [OWN_W-1:0]  data_head, sts_head;
 
     assign data_empty = (data_cnt == '0);
     assign data_full  = (data_cnt == CNT_W'(OFIFO_DEPTH));
@@ -123,7 +136,6 @@ module mm2s_arb #(
     assign data_tlast_fire = mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast;
     assign sts_fire        = mm2s_sts_tvalid  && mm2s_sts_tready;
 
-    // ---- data_fifo ----
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             data_wr  <= '0;
@@ -143,7 +155,6 @@ module mm2s_arb #(
         end
     end
 
-    // ---- sts_fifo ----
     always_ff @(posedge clk) begin
         if (!rst_n) begin
             sts_wr  <= '0;
@@ -164,31 +175,51 @@ module mm2s_arb #(
     end
 
     // =========================================================================
-    // DATA 路由: mm2s_data → data_head 选中的 owner
+    // DATA demux (按 data_head)
     // =========================================================================
-    assign idma_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 1'b0);
+    assign idma_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 2'd0);
     assign idma_data_tdata  = mm2s_data_tdata;
     assign idma_data_tkeep  = mm2s_data_tkeep;
     assign idma_data_tlast  = mm2s_data_tlast;
 
-    assign wdma_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 1'b1);
+    assign wdma_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 2'd1);
     assign wdma_data_tdata  = mm2s_data_tdata;
     assign wdma_data_tkeep  = mm2s_data_tkeep;
     assign wdma_data_tlast  = mm2s_data_tlast;
 
-    assign mm2s_data_tready = !data_empty &&
-                              ((data_head == 1'b0) ? idma_data_tready : wdma_data_tready);
+    assign rdma_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 2'd2);
+    assign rdma_data_tdata  = mm2s_data_tdata;
+    assign rdma_data_tkeep  = mm2s_data_tkeep;
+    assign rdma_data_tlast  = mm2s_data_tlast;
+
+    always_comb begin
+        case (data_head)
+            2'd0   : mm2s_data_tready = !data_empty && idma_data_tready;
+            2'd1   : mm2s_data_tready = !data_empty && wdma_data_tready;
+            2'd2   : mm2s_data_tready = !data_empty && rdma_data_tready;
+            default: mm2s_data_tready = 1'b0;
+        endcase
+    end
 
     // =========================================================================
-    // STS 路由: mm2s_sts → sts_head 选中的 owner
+    // STS demux (按 sts_head)
     // =========================================================================
-    assign idma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 1'b0);
+    assign idma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 2'd0);
     assign idma_sts_tdata  = mm2s_sts_tdata;
 
-    assign wdma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 1'b1);
+    assign wdma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 2'd1);
     assign wdma_sts_tdata  = mm2s_sts_tdata;
 
-    assign mm2s_sts_tready = !sts_empty &&
-                             ((sts_head == 1'b0) ? idma_sts_tready : wdma_sts_tready);
+    assign rdma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 2'd2);
+    assign rdma_sts_tdata  = mm2s_sts_tdata;
+
+    always_comb begin
+        case (sts_head)
+            2'd0   : mm2s_sts_tready = !sts_empty && idma_sts_tready;
+            2'd1   : mm2s_sts_tready = !sts_empty && wdma_sts_tready;
+            2'd2   : mm2s_sts_tready = !sts_empty && rdma_sts_tready;
+            default: mm2s_sts_tready = 1'b0;
+        endcase
+    end
 
 endmodule

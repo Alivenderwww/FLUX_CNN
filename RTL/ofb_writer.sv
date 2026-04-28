@@ -64,6 +64,19 @@ module ofb_writer #(
     input  logic [5:0]                           cfg_ofb_strip_rows,
     input  logic [15:0]                          rows_drained,       // 来自 ODMA
 
+    // ---- R.1: SDP residual / shortcut / bias cfg ----
+    input  logic                                 cfg_residual_en,
+    input  logic signed [15:0]                   cfg_shortcut_mult,
+    input  logic [4:0]                           cfg_shortcut_shift,
+
+    // ---- R.1: bias 来自 bias_rf, shortcut 来自 Shortcut Bank ----
+    input  logic [NUM_COL*PSUM_WIDTH-1:0]        bias_in,            // bias_rf 输出
+    input  logic                                 bias_ready,         // bias_rf 当前 cs 已就绪
+    output logic [5:0]                           cs_cnt_out,         // 给 bias_rf 跟踪
+    output logic                                 sb_re,              // Shortcut Bank 读使能
+    output logic [$clog2(SRAM_DEPTH)-1:0]        sb_raddr,           // Shortcut Bank 读地址
+    input  logic [NUM_COL*DATA_WIDTH-1:0]        sb_rdata,           // Shortcut Bank 读数据 (1 拍延迟)
+
     // ---- upstream: parf_accum ----
     input  logic                                 acc_out_valid,
     input  logic signed [NUM_COL*PSUM_WIDTH-1:0] acc_out_vec,
@@ -110,9 +123,13 @@ module ofb_writer #(
     logic ring_full;
     assign ring_full = ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
 
+    // R.1: bias_rf 在 cs 切换时 4 拍 prefetch, bias_ready=0 期间不放行 acc_fire
     logic acc_fire;
-    assign acc_out_ready = (state == S_RUN) && !ring_full;
+    assign acc_out_ready = (state == S_RUN) && !ring_full && bias_ready;
     assign acc_fire      = acc_out_valid && acc_out_ready;
+
+    // 暴露 cs_cnt 给 bias_rf (driven by 内部 counter, declared 后)
+    assign cs_cnt_out = cs_cnt;
 
     logic x_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign x_is_last    = (x_cnt    == cur_valid_w       - 6'd1);
@@ -145,7 +162,60 @@ module ofb_writer #(
     end
 
     // =========================================================================
-    // SDP (组合)
+    // R.1: 1-cycle pipe register (Stage 0 → Stage 1)
+    //
+    // Shortcut Bank SRAM 同步读: 周期 N 发 sb_re, 周期 N+1 sb_rdata 有效.
+    // 因此 SDP 必须在 N+1 拿 (psum @N + bias @N + shortcut @N+1) 同步组合.
+    // pipe register 锁存 N 拍的 acc_out_vec / bias_in / ofb_ptr / cs_cnt /
+    // evt_fire_cs_wrap, 在 N+1 拍跟 sb_rdata 一起进 SDP, 写 OFB.
+    //
+    // Stage 0 (cycle N): acc_fire 把 parf 数据吃下, 同时发 shortcut SRAM 读
+    //                     (sb_raddr = sb_ptr).
+    // Stage 1 (cycle N+1): sb_rdata 到达 = shortcut for 上拍 fire 的位置;
+    //                       SDP 组合算 ofm_data; ofb_we = pipe_valid; OFB 写.
+    // =========================================================================
+    logic                                 pipe_valid;
+    logic signed [NUM_COL*PSUM_WIDTH-1:0] pipe_psum;
+    logic [NUM_COL*PSUM_WIDTH-1:0]        pipe_bias;
+    logic [ADDR_W-1:0]                    pipe_ofb_waddr;
+    logic                                 pipe_evt_cs_wrap;
+
+    // sb_ptr: 非 wrap 的 Shortcut Bank shortcut 段 reading pointer
+    //   起点 = cfg_cout_slices × 4 (= 跳过 bias section)
+    //   每 acc_fire +1
+    logic [12:0] sb_ptr;
+    logic [12:0] shortcut_section_base;
+    assign shortcut_section_base = {{(13-8){1'b0}}, cfg_cout_slices, 2'b0};  // cs × 4
+
+    always_ff @(posedge clk) begin
+        if      (evt_start) sb_ptr <= shortcut_section_base;
+        else if (acc_fire)  sb_ptr <= sb_ptr + 13'd1;
+    end
+
+    // shortcut SRAM 读: 每 acc_fire 发一拍读 (residual_en=0 时也读, 反正不用; 简化)
+    assign sb_re    = acc_fire;
+    assign sb_raddr = sb_ptr;
+
+    // Stage 0 → 1 latch
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            pipe_valid <= 1'b0;
+        end else begin
+            pipe_valid <= acc_fire;
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        if (acc_fire) begin
+            pipe_psum        <= acc_out_vec;
+            pipe_bias        <= bias_in;
+            pipe_ofb_waddr   <= ofb_ptr;
+            pipe_evt_cs_wrap <= evt_fire_cs_wrap;
+        end
+    end
+
+    // =========================================================================
+    // SDP (组合, 在 Stage 1 用 latched 数据 + 这拍到达的 sb_rdata)
     // =========================================================================
     logic [NUM_COL*DATA_WIDTH-1:0] sdp_out;
 
@@ -153,24 +223,29 @@ module ofb_writer #(
         .NUM_COL   (NUM_COL),
         .PSUM_WIDTH(PSUM_WIDTH)
     ) u_sdp (
-        .shift_amt (cfg_sdp_shift),
-        .mult      (cfg_sdp_mult),
-        .zp_out    (cfg_sdp_zp_out),
-        .clip_min  (cfg_sdp_clip_min),
-        .clip_max  (cfg_sdp_clip_max),
-        .round_en  (cfg_sdp_round_en),
-        .relu_en   (cfg_sdp_relu_en),
-        .psum_in   (acc_out_vec),
-        .valid_in  (acc_fire),
-        .ofm_data  (sdp_out),
-        .valid_out ()
+        .shift_amt      (cfg_sdp_shift),
+        .mult           (cfg_sdp_mult),
+        .zp_out         (cfg_sdp_zp_out),
+        .clip_min       (cfg_sdp_clip_min),
+        .clip_max       (cfg_sdp_clip_max),
+        .round_en       (cfg_sdp_round_en),
+        .relu_en        (cfg_sdp_relu_en),
+        .residual_en    (cfg_residual_en),
+        .shortcut_mult  (cfg_shortcut_mult),
+        .shortcut_shift (cfg_shortcut_shift),
+        .psum_in        (pipe_psum),
+        .bias_in        (pipe_bias),
+        .shortcut_in    (sb_rdata),
+        .valid_in       (pipe_valid),
+        .ofm_data       (sdp_out),
+        .valid_out      ()
     );
 
     // =========================================================================
-    // OFB 写（同拍 fire）
+    // OFB 写 (Stage 1, 用 pipe_* latched signals)
     // =========================================================================
-    assign ofb_we    = acc_fire;
-    assign ofb_waddr = ofb_ptr[AW-1:0];
+    assign ofb_we    = pipe_valid;
+    assign ofb_waddr = pipe_ofb_waddr[AW-1:0];
     assign ofb_wdata = sdp_out;
 
     // =========================================================================
@@ -245,18 +320,20 @@ module ofb_writer #(
     end
 
     // =========================================================================
-    // Row-level credit 输出（方式 1）
-    //   row_done_pulse: 在 evt_fire_cs_wrap（一个 yout 所有 cs 段都写完）发
+    // Row-level credit 输出（方式 1, R.1 后延 1 拍跟 OFB 写对齐）
+    //   row_done_pulse: pipe_evt_cs_wrap (= evt_fire_cs_wrap 延 1 拍, 跟 ofb_we
+    //                   写下一行第一个 word 同拍, 此时该 yout 最后一个 word
+    //                   已经写到 OFB SRAM)
     //   rows_written:   累计 yout 数（控制路径，复位必须）
     // =========================================================================
-    assign row_done_pulse = evt_fire_cs_wrap;
+    assign row_done_pulse = pipe_evt_cs_wrap && pipe_valid;
 
     logic [15:0] r_rows_written;
     always_ff @(posedge clk) begin
-        if      (!rst_n)              r_rows_written <= 16'd0;
-        else if (evt_start)           r_rows_written <= 16'd0;
-        else if (evt_fire_cs_wrap)    r_rows_written <= r_rows_written + 16'd1;
-        else                          r_rows_written <= r_rows_written;
+        if      (!rst_n)                                 r_rows_written <= 16'd0;
+        else if (evt_start)                              r_rows_written <= 16'd0;
+        else if (pipe_evt_cs_wrap && pipe_valid)         r_rows_written <= r_rows_written + 16'd1;
+        else                                             r_rows_written <= r_rows_written;
     end
     assign rows_written = r_rows_written;
 

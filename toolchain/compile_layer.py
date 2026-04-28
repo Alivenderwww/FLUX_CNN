@@ -194,8 +194,11 @@ def compile_and_emit_conv2d(
     # --- 写所有文件 ---
     os.makedirs(out_dir, exist_ok=True)
     hw_files.write_ifb(out_dir, ifm_arr, H_IN, W_IN, Cin, HW_PE=16)
-    hw_files.write_wb(out_dir, w_arr, bias_arr=bias_arr,
+    hw_files.write_wb(out_dir, w_arr,
                       K=K, NUM_CIN=Cin, NUM_COUT=Cout, HW_PE=16, HW_COL=16)
+    # R.1: bias 走 rdma_data (Shortcut Bank), 不再放 wb prefix
+    hw_files.write_rdma_data(out_dir, bias_arr=bias_arr, shortcut_arr=None,
+                              NUM_COUT=Cout, HW_COL=16)
     if emit_expected_ofm:
         hw_files.write_expected_ofm(out_dir, ofm_arr, H_OUT, W_OUT, Cout, HW_COL=16)
 

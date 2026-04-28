@@ -66,12 +66,14 @@ module sequencer (
     output logic                start_idma_pulse,     // IDMA (每 strip)
     output logic                start_odma_pulse,     // ODMA (每 strip)
     output logic                start_wdma_pulse,     // WDMA (仅 is_first)
+    output logic                start_rdma_pulse,     // RDMA (仅 is_first, 拉 bias+shortcut)
 
     // ---- Done aggregation ----
     input  logic                core_strip_done,
     input  logic                idma_strip_done,
     input  logic                odma_strip_done,
-    input  logic                wdma_done
+    input  logic                wdma_done,
+    input  logic                rdma_done
 );
 
     // =========================================================================
@@ -164,14 +166,14 @@ module sequencer (
                              default     : state_next = S_FETCH;
                          endcase
                      end
-            // PRELOAD 等 wdma (is_first only) 完成
-            S_PRELOAD : if (!r_is_first || wdma_done)       state_next = S_DISPATCH;
+            // PRELOAD 等 wdma + rdma (is_first only) 完成
+            S_PRELOAD : if (!r_is_first || (wdma_done && rdma_done)) state_next = S_DISPATCH;
             S_DISPATCH: state_next = S_WAIT;
             S_WAIT    : if (core_strip_done && idma_strip_done && odma_strip_done)
                             state_next = S_FETCH;
-            S_BARRIER : if (core_strip_done && idma_strip_done && odma_strip_done && wdma_done)
+            S_BARRIER : if (core_strip_done && idma_strip_done && odma_strip_done && wdma_done && rdma_done)
                             state_next = S_FETCH;
-            S_END     : if (wdma_done && idma_strip_done && odma_strip_done)
+            S_END     : if (wdma_done && rdma_done && idma_strip_done && odma_strip_done)
                             state_next = S_IDLE;
             default   :     state_next = S_IDLE;
         endcase
@@ -222,8 +224,10 @@ module sequencer (
     // J-2: IDMA / ODMA 同 DISPATCH 并发启动
     assign start_idma_pulse = (state == S_DISPATCH);
     assign start_odma_pulse = (state == S_DISPATCH);
-    // WDMA: is_first 时 PRELOAD 进入启 (同拍 r_is_first 已 latch)
+    // WDMA / RDMA: is_first 时 PRELOAD 进入启 (同拍 r_is_first 已 latch)
+    //   RDMA 拉 bias + (可选 shortcut) 进 Shortcut Bank, 跟 wdma 并行
     assign start_wdma_pulse = preload_entry && r_is_first;
+    assign start_rdma_pulse = preload_entry && r_is_first;
 
     // =========================================================================
     // Strip-level cfg 输出：layer_busy 时用 latch 值；IDLE 时给安全默认

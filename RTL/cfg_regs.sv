@@ -56,12 +56,18 @@
 //   0x1B0  IFB_KY_STEP       [19:0]            (W_IN × cin_slices, IFB 跨 ky 行 word 步长)
 //   0x1B4  TILE_PIX_STEP     [15:0]            (TILE_W × stride, 像素域 tile 步长 for pad 判定)
 //   0x1B8  ARF_REUSE_EN      [0]               (1: kx sliding-window reuse；仅 stride==1 && K>1)
+//   0x1BC  RESIDUAL_EN       [0]               (1: SDP enable shortcut add path)
+//   0x1C0  SHORTCUT_MULT     [15:0] signed     (shortcut scale align: shortcut × mult >> shift)
+//   0x1C4  SHORTCUT_SHIFT    [4:0]             (右移量, 0..31)
+//   0x1C8  BIAS_BASE         [12:0]            (bias 在 Shortcut Bank 中的起始 word-index, 0 表示 SRAM 头)
 //   0x200  IDMA_SRC_BASE     [31:0]
 //   0x204  IDMA_BYTE_LEN     [23:0]             (保留，WDMA 用；IDMA 实际 len 由 descriptor 覆盖)
 //   0x210  WDMA_SRC_BASE     [31:0]
 //   0x214  WDMA_BYTE_LEN     [23:0]
 //   0x220  ODMA_DST_BASE     [31:0]
 //   0x224  ODMA_BYTE_LEN     [23:0]             (保留；ODMA 实际 len 由 descriptor 覆盖)
+//   0x230  RDMA_SRC_BASE     [31:0]             (一条 batch cmd 拉 [bias][shortcut] 进 SB)
+//   0x234  RDMA_BYTE_LEN     [23:0]
 //
 // 复位：按 §6，数据路径 cfg / DMA 寄存器不加复位。控制路径 DMA_MODE 有复位。
 // =============================================================================
@@ -157,7 +163,15 @@ module cfg_regs #(
     output logic [CORE_ADDR_W-1:0]   ifb_iss_step,
     output logic [CORE_ADDR_W-1:0]   ifb_ky_step,
     output logic [15:0]              tile_pix_step,
-    output logic                     arf_reuse_en
+    output logic                     arf_reuse_en,
+
+    // ---- Residual / shortcut / bias (R.1) ----
+    output logic                     residual_en,
+    output logic signed [15:0]       shortcut_mult,
+    output logic [4:0]               shortcut_shift,
+    output logic [12:0]              bias_base,           // word-index in Shortcut Bank
+    output logic [31:0]              rdma_src_base,
+    output logic [23:0]              rdma_byte_len
 );
 
     // =========================================================================
@@ -211,6 +225,10 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_IFB_KY_STEP      = 12'h1B0;
     localparam [ADDR_W-1:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
     localparam [ADDR_W-1:0] ADDR_ARF_REUSE_EN     = 12'h1B8;
+    localparam [ADDR_W-1:0] ADDR_RESIDUAL_EN      = 12'h1BC;
+    localparam [ADDR_W-1:0] ADDR_SHORTCUT_MULT    = 12'h1C0;
+    localparam [ADDR_W-1:0] ADDR_SHORTCUT_SHIFT   = 12'h1C4;
+    localparam [ADDR_W-1:0] ADDR_BIAS_BASE        = 12'h1C8;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
@@ -218,6 +236,8 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_WDMA_BYTE_LEN    = 12'h214;
     localparam [ADDR_W-1:0] ADDR_ODMA_DST_BASE    = 12'h220;
     localparam [ADDR_W-1:0] ADDR_ODMA_BYTE_LEN    = 12'h224;
+    localparam [ADDR_W-1:0] ADDR_RDMA_SRC_BASE    = 12'h230;
+    localparam [ADDR_W-1:0] ADDR_RDMA_BYTE_LEN    = 12'h234;
 
     // =========================================================================
     // start pulse 生成：CTRL 写 1 → 当拍 pulse
@@ -285,6 +305,13 @@ module cfg_regs #(
     logic signed [8:0]       r_sdp_clip_min;
     logic signed [8:0]       r_sdp_clip_max;
     logic                    r_sdp_round_en;
+    // R.1: residual / shortcut / bias / rdma
+    logic                    r_residual_en;
+    logic signed [15:0]      r_shortcut_mult;
+    logic [4:0]              r_shortcut_shift;
+    logic [12:0]             r_bias_base;
+    logic [31:0]             r_rdma_src_base;
+    logic [23:0]             r_rdma_byte_len;
 
     // 寄存器 bank 写入（§4.1 例外 2：共享 reg_w_en 门控 + addr 解码，
     // 所有寄存器写在同一 always_ff 内，未命中时所有寄存器隐式保持）。
@@ -339,6 +366,12 @@ module cfg_regs #(
                 ADDR_SDP_CLIP_MIN    : r_sdp_clip_min    <= $signed(reg_w_data[8:0]);
                 ADDR_SDP_CLIP_MAX    : r_sdp_clip_max    <= $signed(reg_w_data[8:0]);
                 ADDR_SDP_ROUND_EN    : r_sdp_round_en    <= reg_w_data[0];
+                ADDR_RESIDUAL_EN     : r_residual_en     <= reg_w_data[0];
+                ADDR_SHORTCUT_MULT   : r_shortcut_mult   <= $signed(reg_w_data[15:0]);
+                ADDR_SHORTCUT_SHIFT  : r_shortcut_shift  <= reg_w_data[4:0];
+                ADDR_BIAS_BASE       : r_bias_base       <= reg_w_data[12:0];
+                ADDR_RDMA_SRC_BASE   : r_rdma_src_base   <= reg_w_data[31:0];
+                ADDR_RDMA_BYTE_LEN   : r_rdma_byte_len   <= reg_w_data[23:0];
                 default              : ;   // CTRL / STATUS / DMA_MODE / 未使用地址
             endcase
         end
@@ -396,6 +429,12 @@ module cfg_regs #(
     assign sdp_clip_min    = r_sdp_clip_min;
     assign sdp_clip_max    = r_sdp_clip_max;
     assign sdp_round_en    = r_sdp_round_en;
+    assign residual_en     = r_residual_en;
+    assign shortcut_mult   = r_shortcut_mult;
+    assign shortcut_shift  = r_shortcut_shift;
+    assign bias_base       = r_bias_base;
+    assign rdma_src_base   = r_rdma_src_base;
+    assign rdma_byte_len   = r_rdma_byte_len;
 
     // =========================================================================
     // 读 mux：按 reg_r_addr 选择返回数据（组合）
@@ -460,6 +499,12 @@ module cfg_regs #(
             ADDR_WDMA_BYTE_LEN   : reg_r_data = {8'd0, r_wdma_byte_len};
             ADDR_ODMA_DST_BASE   : reg_r_data = r_odma_dst_base;
             ADDR_ODMA_BYTE_LEN   : reg_r_data = {8'd0, r_odma_byte_len};
+            ADDR_RDMA_SRC_BASE   : reg_r_data = r_rdma_src_base;
+            ADDR_RDMA_BYTE_LEN   : reg_r_data = {8'd0, r_rdma_byte_len};
+            ADDR_RESIDUAL_EN     : reg_r_data = {31'd0, r_residual_en};
+            ADDR_SHORTCUT_MULT   : reg_r_data = {{16{r_shortcut_mult[15]}}, r_shortcut_mult};
+            ADDR_SHORTCUT_SHIFT  : reg_r_data = {27'd0, r_shortcut_shift};
+            ADDR_BIAS_BASE       : reg_r_data = {19'd0, r_bias_base};
             default              : reg_r_data = '0;
         endcase
     end

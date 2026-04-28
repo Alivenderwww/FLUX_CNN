@@ -183,12 +183,22 @@ module core_top #(
     logic              cfg_start_dfe_pulse, cfg_start_layer_pulse;
     logic [31:0]       dma_idma_src_base, dma_wdma_src_base, dma_odma_dst_base;
     logic [23:0]       dma_idma_byte_len, dma_wdma_byte_len, dma_odma_byte_len;
+    logic [31:0]       dma_rdma_src_base;
+    logic [23:0]       dma_rdma_byte_len;
     logic              idma_busy, idma_done, wdma_busy, wdma_done, odma_busy, odma_done;
+    logic              rdma_busy, rdma_done;
     logic              dfe_busy, dfe_done, layer_busy, layer_done;
+
+    // R.1: residual / shortcut / bias cfg
+    logic              cfg_residual_en;
+    logic signed [15:0] cfg_shortcut_mult;
+    logic [4:0]        cfg_shortcut_shift;
+    logic [12:0]       cfg_bias_base;
 
     // Sequencer → core pipeline + DMA
     logic              seq_start_core_pulse, seq_start_wgt_pulse;
     logic              seq_start_idma_pulse, seq_start_odma_pulse, seq_start_wdma_pulse;
+    logic              seq_start_rdma_pulse;
     logic [15:0]       seq_strip_n_yout;
     logic [3:0]        seq_pad_top, seq_pad_bot, seq_pad_left, seq_pad_right;
     logic [15:0]       seq_strip_y_start;
@@ -263,7 +273,14 @@ module core_top #(
         .desc_list_base(cfg_desc_list_base), .desc_count(cfg_desc_count),
         .sdp_mult(cfg_sdp_mult), .sdp_zp_out(cfg_sdp_zp_out),
         .sdp_clip_min(cfg_sdp_clip_min), .sdp_clip_max(cfg_sdp_clip_max),
-        .sdp_round_en(cfg_sdp_round_en)
+        .sdp_round_en(cfg_sdp_round_en),
+        // R.1: residual / shortcut / bias / rdma cfg
+        .residual_en(cfg_residual_en),
+        .shortcut_mult(cfg_shortcut_mult),
+        .shortcut_shift(cfg_shortcut_shift),
+        .bias_base(cfg_bias_base),
+        .rdma_src_base(dma_rdma_src_base),
+        .rdma_byte_len(dma_rdma_byte_len)
     );
 
     // =========================================================================
@@ -304,10 +321,12 @@ module core_top #(
         .start_idma_pulse      (seq_start_idma_pulse),
         .start_odma_pulse      (seq_start_odma_pulse),
         .start_wdma_pulse      (seq_start_wdma_pulse),
+        .start_rdma_pulse      (seq_start_rdma_pulse),
         .core_strip_done       (done),
         .idma_strip_done       (idma_done),
         .odma_strip_done       (odma_done),
-        .wdma_done             (wdma_done)
+        .wdma_done             (wdma_done),
+        .rdma_done             (rdma_done)
     );
 
     // =========================================================================
@@ -460,8 +479,7 @@ module core_top #(
     // =========================================================================
     logic wb_done;
 
-    // F-1b: bias/psum 连线
-    logic signed [NUM_COL*PSUM_WIDTH-1:0] bias_vec_wire;
+    // R.1: bias 已挪到 SDP, mac_array 不再需要 bias_vec; 仅留 old_psum 回写路径
     logic signed [NUM_COL*PSUM_WIDTH-1:0] old_psum_wire;
     logic                                 is_first_round_fill_wire;
 
@@ -471,7 +489,6 @@ module core_top #(
         .DATA_WIDTH     (DATA_WIDTH),
         .PSUM_WIDTH     (PSUM_WIDTH),
         .WRF_DEPTH      (WRF_DEPTH),
-        .MAX_COUT_SLICES(32),
         .SRAM_DEPTH     (SRAM_DEPTH),
         .ADDR_W         (ADDR_W)
     ) u_wgt_buffer (
@@ -500,8 +517,7 @@ module core_top #(
         .wrf_wdata        (wrf_wdata),
         .wgt_valid        (wgt_valid),
         .wrf_raddr        (wrf_raddr),
-        .wgt_ready        (wgt_ready),
-        .bias_vec         (bias_vec_wire)
+        .wgt_ready        (wgt_ready)
     );
 
     // =========================================================================
@@ -529,7 +545,6 @@ module core_top #(
         .psum_out_vec   (psum_out_vec),
         .psum_in_ready  (psum_in_ready),
         .is_first_round_fill(is_first_round_fill_wire),
-        .bias_vec           (bias_vec_wire),
         .old_psum_vec       (old_psum_wire)
     );
 
@@ -568,6 +583,14 @@ module core_top #(
     logic [15:0] rows_written;   // debug only
     logic [15:0] rows_drained;
 
+    // R.1: ofb_writer ↔ Shortcut Bank ↔ bias_rf 之间的接线
+    logic                  ow_sb_re;
+    logic [AW-1:0]         ow_sb_raddr;
+    logic [OFB_WIDTH-1:0]  ow_sb_rdata;          // shortcut data (1 拍延迟回到 ofb_writer)
+    logic [5:0]            ow_cs_cnt;            // ofb_writer 当前 cs, 给 bias_rf
+    logic [NUM_COL*PSUM_WIDTH-1:0] bias_vec_wire; // bias_rf → ofb_writer (= SDP bias_in)
+    logic                  bias_ready_wire;
+
     ofb_writer #(
         .NUM_COL   (NUM_COL),
         .DATA_WIDTH(DATA_WIDTH),
@@ -595,6 +618,16 @@ module core_top #(
         .cfg_ofb_ring_words(cfg_ofb_ring_words),
         .cfg_ofb_strip_rows(cfg_ofb_strip_rows),
         .rows_drained      (rows_drained),
+        // R.1: SDP residual / bias / shortcut 接线
+        .cfg_residual_en   (cfg_residual_en),
+        .cfg_shortcut_mult (cfg_shortcut_mult),
+        .cfg_shortcut_shift(cfg_shortcut_shift),
+        .bias_in           (bias_vec_wire),
+        .bias_ready        (bias_ready_wire),
+        .cs_cnt_out        (ow_cs_cnt),
+        .sb_re             (ow_sb_re),
+        .sb_raddr          (ow_sb_raddr),
+        .sb_rdata          (ow_sb_rdata),
         .acc_out_valid    (acc_out_valid),
         .acc_out_vec      (acc_out_vec),
         .acc_out_ready    (acc_out_ready),
@@ -603,6 +636,63 @@ module core_top #(
         .ofb_wdata        (ofb_wdata),
         .row_done_pulse   (row_done_pulse),
         .rows_written     (rows_written)
+    );
+
+    // =========================================================================
+    // R.1: Shortcut Bank SRAM (128 bit wide, 复用 sram_model)
+    //   写: rdma_ctrl 一次性 batch 装载 [bias 段 + shortcut 段]
+    //   读端口仲裁: bias_rf 优先 (cs 切换时它需要 4 拍 prefetch),
+    //               否则 ofb_writer 的 shortcut read
+    //   bias_ready=0 时 ofb_writer 已被 stall, 不会同拍发 sb_re
+    // =========================================================================
+    logic                  rdma_sb_we;
+    logic [AW-1:0]         rdma_sb_waddr;
+    logic [OFB_WIDTH-1:0]  rdma_sb_wdata;
+
+    logic                  br_re;
+    logic [AW-1:0]         br_raddr;
+    logic [OFB_WIDTH-1:0]  br_rdata;
+
+    // 读端口 mux: bias_rf 用 br_re, ofb_writer 用 ow_sb_re; 两路同拍 mutually exclusive
+    // (bias_ready=0 → ow_sb_re=0; bias_ready=1 → br_re=0)
+    logic                  sb_re_mux;
+    logic [AW-1:0]         sb_raddr_mux;
+    logic [OFB_WIDTH-1:0]  sb_rdata_shared;
+    assign sb_re_mux    = br_re | ow_sb_re;
+    assign sb_raddr_mux = br_re ? br_raddr : ow_sb_raddr;
+    // sb_rdata 1 拍后到达, 两个消费者都拿同一份, 各自 latching 区分
+    assign br_rdata     = sb_rdata_shared;
+    assign ow_sb_rdata  = sb_rdata_shared;
+
+    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(OFB_WIDTH)) u_shortcut_bank (
+        .clk(clk),
+        .we(rdma_sb_we),
+        .waddr(rdma_sb_waddr),
+        .wdata(rdma_sb_wdata),
+        .re(sb_re_mux),
+        .raddr(sb_raddr_mux),
+        .rdata(sb_rdata_shared)
+    );
+
+    // =========================================================================
+    // R.1: bias_rf — 16 × INT32 RF, 跨 cs 自动 prefetch 4 拍
+    // =========================================================================
+    bias_rf #(
+        .NUM_COL    (NUM_COL),
+        .PSUM_WIDTH (PSUM_WIDTH),
+        .SRAM_DATA_W(OFB_WIDTH),
+        .SRAM_ADDR_W(AW)
+    ) u_bias_rf (
+        .clk           (clk),
+        .rst_n         (rst_n),
+        .start         (seq_start_core_pulse),
+        .cs_cnt        (ow_cs_cnt),
+        .cfg_bias_base (cfg_bias_base),
+        .br_re         (br_re),
+        .br_raddr      (br_raddr),
+        .br_rdata      (br_rdata),
+        .bias_vec      (bias_vec_wire),
+        .bias_ready    (bias_ready_wire)
     );
 
     // =========================================================================
@@ -760,6 +850,16 @@ module core_top #(
     logic [7:0]                 wdma_sts_tdata;
     logic                       wdma_err_w;
     logic                       odma_err_w;
+    // R.1: rdma_ctrl <→ mm2s_arb
+    logic                       rdma_cmd_tvalid, rdma_cmd_tready;
+    logic [71:0]                rdma_cmd_tdata;
+    logic                       rdma_data_tvalid, rdma_data_tready;
+    logic [BUS_DATA_W-1:0]      rdma_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    rdma_data_tkeep;
+    logic                       rdma_data_tlast;
+    logic                       rdma_sts_tvalid, rdma_sts_tready;
+    logic [7:0]                 rdma_sts_tdata;
+    logic                       rdma_err_w;
 
     // =========================================================================
     // idma_ctrl
@@ -802,7 +902,26 @@ module core_top #(
     );
 
     // =========================================================================
-    // mm2s_arb (idma + wdma → 单条 axi_dm.MM2S)
+    // rdma_ctrl (R.1: bias + shortcut 加载到 Shortcut Bank)
+    // =========================================================================
+    rdma_ctrl #(
+        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+        .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+    ) u_rdma (
+        .clk(clk), .rst_n(rst_n),
+        .start(seq_start_rdma_pulse), .done(rdma_done), .busy(rdma_busy), .err(rdma_err_w),
+        .src_base(dma_rdma_src_base), .byte_len(dma_rdma_byte_len),
+        .mm2s_cmd_tvalid (rdma_cmd_tvalid),  .mm2s_cmd_tready (rdma_cmd_tready),  .mm2s_cmd_tdata  (rdma_cmd_tdata),
+        .mm2s_data_tvalid(rdma_data_tvalid), .mm2s_data_tready(rdma_data_tready),
+        .mm2s_data_tdata (rdma_data_tdata),  .mm2s_data_tkeep (rdma_data_tkeep),  .mm2s_data_tlast (rdma_data_tlast),
+        .mm2s_sts_tvalid (rdma_sts_tvalid),  .mm2s_sts_tready (rdma_sts_tready),  .mm2s_sts_tdata  (rdma_sts_tdata),
+        .sb_we   (rdma_sb_we),
+        .sb_waddr(rdma_sb_waddr),
+        .sb_wdata(rdma_sb_wdata)
+    );
+
+    // =========================================================================
+    // mm2s_arb (idma + wdma + rdma → 单条 axi_dm.MM2S)
     // =========================================================================
     mm2s_arb #(.DATA_W(BUS_DATA_W)) u_mm2s_arb (
         .clk(clk), .rst_n(rst_n),
@@ -814,6 +933,10 @@ module core_top #(
         .wdma_data_tvalid(wdma_data_tvalid), .wdma_data_tready(wdma_data_tready),
         .wdma_data_tdata (wdma_data_tdata),  .wdma_data_tkeep (wdma_data_tkeep),  .wdma_data_tlast (wdma_data_tlast),
         .wdma_sts_tvalid (wdma_sts_tvalid),  .wdma_sts_tready (wdma_sts_tready),  .wdma_sts_tdata  (wdma_sts_tdata),
+        .rdma_cmd_tvalid (rdma_cmd_tvalid),  .rdma_cmd_tready (rdma_cmd_tready),  .rdma_cmd_tdata  (rdma_cmd_tdata),
+        .rdma_data_tvalid(rdma_data_tvalid), .rdma_data_tready(rdma_data_tready),
+        .rdma_data_tdata (rdma_data_tdata),  .rdma_data_tkeep (rdma_data_tkeep),  .rdma_data_tlast (rdma_data_tlast),
+        .rdma_sts_tvalid (rdma_sts_tvalid),  .rdma_sts_tready (rdma_sts_tready),  .rdma_sts_tdata  (rdma_sts_tdata),
         .mm2s_cmd_tvalid (arb_mm2s_cmd_tvalid),  .mm2s_cmd_tready (arb_mm2s_cmd_tready),  .mm2s_cmd_tdata  (arb_mm2s_cmd_tdata),
         .mm2s_data_tvalid(arb_mm2s_data_tvalid), .mm2s_data_tready(arb_mm2s_data_tready),
         .mm2s_data_tdata (arb_mm2s_data_tdata),  .mm2s_data_tkeep (arb_mm2s_data_tkeep),  .mm2s_data_tlast (arb_mm2s_data_tlast),

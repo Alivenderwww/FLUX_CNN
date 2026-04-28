@@ -207,18 +207,24 @@ def generate_random(
             f"fold cfg H 不一致: got {cfg['H_OUT']} vs {H_OUT}"
 
         hw_files.write_ifb(out_dir, ifm_virt, H_IN_virt, W_IN, cin_fake, HW_PE)
-        hw_files.write_wb(out_dir, w_virt, bias_arr=None,
+        hw_files.write_wb(out_dir, w_virt,
                           K=K, NUM_CIN=cin_fake, NUM_COUT=NUM_COUT,
                           HW_PE=HW_PE, HW_COL=HW_COL, KY=ky_per_group)
         H_IN_hw = H_IN_virt
     else:
         # no fold: 原始路径
         hw_files.write_ifb(out_dir, ifm_arr, H_IN, W_IN, NUM_CIN, HW_PE)
-        hw_files.write_wb(out_dir, w_arr, bias_arr=None,
+        hw_files.write_wb(out_dir, w_arr,
                           K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
                           HW_PE=HW_PE, HW_COL=HW_COL)
         H_IN_hw = H_IN
         pad_top_hw = pad_top
+
+    # R.1: rdma_data.txt - bias section only (R.1 默认无 shortcut/residual)
+    #   bias_arr = None → 全 0 bias (跟 compute_expected_ofm 用 bias=None 一致,
+    #   保证 OFM bit-exact 匹配)
+    hw_files.write_rdma_data(out_dir, bias_arr=None, shortcut_arr=None,
+                              NUM_COUT=NUM_COUT, HW_COL=HW_COL)
 
     # 原始卷积维度 (给 TB 算 MAC util 用): 取 *S2D 之前* 的原始值, 与 fold/S2D 无关
     cfg['K_orig']        = K_pre_s2d

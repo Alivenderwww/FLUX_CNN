@@ -29,6 +29,7 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/DMA/idma_ctrl.sv \
     ../../RTL/DMA/wdma_ctrl.sv \
     ../../RTL/DMA/odma_ctrl.sv \
+    ../../RTL/DMA/rdma_ctrl.sv \
     ../../RTL/DMA/mm2s_arb.sv \
     ../../RTL/DMA/dfe.sv \
     ../../RTL/desc_fifo.sv \
@@ -41,6 +42,7 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/parf_accum.sv \
     ../../RTL/line_buffer.sv \
     ../../RTL/wgt_buffer.sv \
+    ../../RTL/bias_rf.sv \
     ../../RTL/ofb_writer.sv \
     ../../RTL/core_top.sv \
     ../tb_axi_m_mux/axi_slave_mem.sv \

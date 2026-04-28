@@ -43,6 +43,8 @@ module tb_core_dma;
     localparam [31:0] DDR_DESC_BASE = 32'h007F_0000;
     localparam [31:0] DDR_WB_BASE   = 32'h0080_0000;
     localparam [31:0] DDR_OFB_BASE  = 32'h0090_0000;
+    // R.1: rdma 数据 (bias + 可选 shortcut). 64 KB 在 OFB 后, 16MB DDR mock 内有富余
+    localparam [31:0] DDR_RDMA_BASE = 32'h00A0_0000;
 
     // cfg_regs 地址（和 RTL 对齐）
     localparam [11:0] ADDR_CTRL             = 12'h000;
@@ -96,6 +98,13 @@ module tb_core_dma;
     localparam [11:0] ADDR_WDMA_BYTE_LEN    = 12'h214;
     localparam [11:0] ADDR_ODMA_DST_BASE    = 12'h220;
     localparam [11:0] ADDR_ODMA_BYTE_LEN    = 12'h224;
+    // R.1: 残差 / shortcut / bias / rdma cfg
+    localparam [11:0] ADDR_RESIDUAL_EN      = 12'h1BC;
+    localparam [11:0] ADDR_SHORTCUT_MULT    = 12'h1C0;
+    localparam [11:0] ADDR_SHORTCUT_SHIFT   = 12'h1C4;
+    localparam [11:0] ADDR_BIAS_BASE        = 12'h1C8;
+    localparam [11:0] ADDR_RDMA_SRC_BASE    = 12'h230;
+    localparam [11:0] ADDR_RDMA_BYTE_LEN    = 12'h234;
 
     logic clk  = 0;
     logic rst_n = 0;
@@ -181,23 +190,33 @@ module tb_core_dma;
     logic [WB_WIDTH-1:0]   wb_arr   [0:2047];
     logic [OFB_WIDTH-1:0]  exp_arr  [0:524287];
     logic [BUS_DATA_W-1:0] desc_arr [0:4095];     // 2 beats/desc × up to 2048 desc
+    // R.1: rdma_data (bias section + 可选 shortcut), 128b/word
+    logic [BUS_DATA_W-1:0] rdma_arr [0:8191];     // 128 KB / 16 = 8 K word, 远超 cout=512 × 4 = 2048 word
 
     // Phase G: 支持 per-layer DDR base + 可选跳过 IFB preload / OFB clear（多层场景）
     task automatic preload_ddr(input string case_dir,
                                 input int ifb_words, input int wb_words,
                                 input int desc_beats, input int ofb_words_to_clear,
+                                input int rdma_words,
                                 input [31:0] ifb_base_byte, input [31:0] wb_base_byte,
                                 input [31:0] desc_base_byte, input [31:0] ofb_base_byte,
+                                input [31:0] rdma_base_byte,
                                 input bit    skip_ifb_preload, input bit skip_ofb_clear);
         int ifb_base_w  = ifb_base_byte  / 16;
         int wb_base_w   = wb_base_byte   / 16;
         int desc_base_w = desc_base_byte / 16;
+        int rdma_base_w = rdma_base_byte / 16;
         if (!skip_ifb_preload) begin
             $readmemh($sformatf("%s/ifb.txt", case_dir), ifb_arr);
             for (int i = 0; i < ifb_words; i++) u_ddr.mem[ifb_base_w + i] = ifb_arr[i];
         end
         $readmemh($sformatf("%s/wb.txt",        case_dir), wb_arr);
         $readmemh($sformatf("%s/desc_list.hex", case_dir), desc_arr);
+        // R.1: rdma_data (bias 段 + 可选 shortcut)
+        if (rdma_words > 0) begin
+            $readmemh($sformatf("%s/rdma_data.txt", case_dir), rdma_arr);
+            for (int i = 0; i < rdma_words; i++) u_ddr.mem[rdma_base_w + i] = rdma_arr[i];
+        end
 
         // WB: 2048-bit lines 拆 16 个 128-bit 填 DDR（LSB 先）
         for (int i = 0; i < wb_words; i++)
@@ -235,12 +254,14 @@ module tb_core_dma;
     // 从 config.txt 读的 META 字段（TB 运行期用，不写 cfg_regs）
     string case_name_cfg;
     int    ifb_words_cfg, wb_words_cfg, ofb_words_cfg;
+    int    rdma_words_cfg;       // R.1
     int    num_cin_cfg, num_cout_cfg;
     // 原始卷积维度 (pre-fold), 用于算真实 MAC 利用率
     int    k_orig_cfg, num_cin_orig_cfg, num_cout_orig_cfg;
     int    h_out_cfg, w_out_cfg;
     // Phase G: 多层支持。缺失 → 用 TB hard-coded 默认
     logic [31:0] ddr_ifb_base_cfg, ddr_wb_base_cfg, ddr_ofb_base_cfg, ddr_desc_base_cfg;
+    logic [31:0] ddr_rdma_base_cfg;     // R.1
     bit          skip_ifb_preload_cfg, skip_ofb_clear_cfg;
 
     task automatic load_config(input string case_dir);
@@ -255,6 +276,8 @@ module tb_core_dma;
         ddr_wb_base_cfg      = DDR_WB_BASE;
         ddr_ofb_base_cfg     = DDR_OFB_BASE;
         ddr_desc_base_cfg    = DDR_DESC_BASE;
+        ddr_rdma_base_cfg    = DDR_RDMA_BASE;
+        rdma_words_cfg       = 0;
         skip_ifb_preload_cfg = 1'b0;
         skip_ofb_clear_cfg   = 1'b0;
         path = $sformatf("%s/config.txt", case_dir);
@@ -294,6 +317,12 @@ module tb_core_dma;
                 "IFB_KY_STEP"    : axi_lite_write(ADDR_IFB_KY_STEP,    val);
                 "TILE_PIX_STEP"  : axi_lite_write(ADDR_TILE_PIX_STEP,  val);
                 "ARF_REUSE_EN"   : axi_lite_write(ADDR_ARF_REUSE_EN,   val);
+                // R.1: residual / shortcut / bias cfg
+                "RESIDUAL_EN"    : axi_lite_write(ADDR_RESIDUAL_EN,    val);
+                "SHORTCUT_MULT"  : axi_lite_write(ADDR_SHORTCUT_MULT,  val);
+                "SHORTCUT_SHIFT" : axi_lite_write(ADDR_SHORTCUT_SHIFT, val);
+                "BIAS_BASE"      : axi_lite_write(ADDR_BIAS_BASE,      val);
+                "RDMA_BYTE_LEN"  : axi_lite_write(ADDR_RDMA_BYTE_LEN,  val);
                 "NUM_TILES"      : axi_lite_write(ADDR_NUM_TILES,       val);
                 "LAST_VALID_W"   : axi_lite_write(ADDR_LAST_VALID_W,    val);
                 "TILE_IN_STEP"   : axi_lite_write(ADDR_TILE_IN_STEP,    val);
@@ -318,6 +347,7 @@ module tb_core_dma;
                 "_META_IFB_WORDS" : ifb_words_cfg = val;
                 "_META_WB_WORDS"  : wb_words_cfg  = val;
                 "_META_OFB_WORDS" : ofb_words_cfg = val;
+                "_META_RDMA_WORDS": rdma_words_cfg = val;
                 "_META_NUM_CIN"   : num_cin_cfg   = val;
                 "_META_NUM_COUT"  : num_cout_cfg  = val;
                 "_META_K_ORIG"        : k_orig_cfg        = val;
@@ -328,6 +358,7 @@ module tb_core_dma;
                 "_META_DDR_WB_BASE"     : ddr_wb_base_cfg      = val;
                 "_META_DDR_OFB_BASE"    : ddr_ofb_base_cfg     = val;
                 "_META_DDR_DESC_BASE"   : ddr_desc_base_cfg    = val;
+                "_META_DDR_RDMA_BASE"   : ddr_rdma_base_cfg    = val;
                 "_META_SKIP_IFB_PRELOAD": skip_ifb_preload_cfg = (val != 0);
                 "_META_SKIP_OFB_CLEAR"  : skip_ofb_clear_cfg   = (val != 0);
                 default          : ;
@@ -463,10 +494,12 @@ module tb_core_dma;
         // desc_beats: preload 必须给个数；按 2048 max 足够
         desc_beats = 4096;   // 2048 desc × 2 beat; 实际使用按 DESC_COUNT
 
-        // 载入 IFB/WB/DESC 到 DDR + 清 OFB 区
+        // 载入 IFB/WB/DESC/RDMA 到 DDR + 清 OFB 区
         preload_ddr(case_dir, ifb_words_cfg, wb_words_cfg, desc_beats, ofb_words_cfg,
+                    rdma_words_cfg,
                     ddr_ifb_base_cfg, ddr_wb_base_cfg,
                     ddr_desc_base_cfg, ddr_ofb_base_cfg,
+                    ddr_rdma_base_cfg,
                     skip_ifb_preload_cfg, skip_ofb_clear_cfg);
         // 中间层（skip_ofb_clear=1，OFB 是下层 IFB）没有 expected_ofm.txt，跳过读
         if (!skip_ofb_clear_cfg)
@@ -479,6 +512,8 @@ module tb_core_dma;
         axi_lite_write(ADDR_WDMA_BYTE_LEN, wb_bytes);
         axi_lite_write(ADDR_ODMA_DST_BASE, ddr_ofb_base_cfg);
         axi_lite_write(ADDR_ODMA_BYTE_LEN, ofb_bytes);
+        axi_lite_write(ADDR_RDMA_SRC_BASE, ddr_rdma_base_cfg);
+        // RDMA_BYTE_LEN 在 load_config 里已经按 cfg 写过；这里不重复
         axi_lite_write(ADDR_DESC_LIST_BASE, ddr_desc_base_cfg);
         // DESC_COUNT 已由 load_config 写入
 

@@ -243,15 +243,13 @@ def write_ifb(out_dir, ifm_arr, H_IN, W_IN, NUM_CIN, HW_PE):
 
 
 # ---------------------------------------------------------------------------
-# WB: bias prefix + weight (cs, cins, ky, kx) 顺序打包
+# WB: weight (cs, cins, ky, kx) 顺序打包. R.1 起 bias 不再放 wb prefix,
+#     由独立的 rdma_data.txt 装到 Shortcut Bank, 见 write_rdma_data().
 # ---------------------------------------------------------------------------
-def write_wb(out_dir, w_arr, bias_arr, K, NUM_CIN, NUM_COUT, HW_PE, HW_COL, KY=None):
+def write_wb(out_dir, w_arr, K, NUM_CIN, NUM_COUT, HW_PE, HW_COL, KY=None):
     """
-    w_arr:    [KY][K][NUM_COUT][NUM_CIN] int8  (KY=None 时 KY=K, 方形核)
-    bias_arr: [NUM_COUT] int32 或 None（None 等同全 0）
-    WB 前 cout_slices 个 word 放 bias (每 word 低 NUM_COL × 32bit 放 16 个 int32)，
-    其后 weight (cs, cins, ky, kx) 顺序, ky 范围 0..KY-1, kx 范围 0..K-1,
-    每个 (cs, cins, ky, kx) 1 word (2048bit)。
+    w_arr: [KY][K][NUM_COUT][NUM_CIN] int8  (KY=None 时 KY=K, 方形核)
+    weight (cs, cins, ky, kx) 顺序, 每 (cs, cins, ky, kx) 1 word (2048bit).
     """
     if KY is None:
         KY = K
@@ -259,18 +257,6 @@ def write_wb(out_dir, w_arr, bias_arr, K, NUM_CIN, NUM_COUT, HW_PE, HW_COL, KY=N
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
     wb_hex_chars = HW_COL * HW_PE * 2           # 2048 bit = 512 hex chars
 
-    # bias prefix: 一 cs 一 word，低 16×32 bit 放 16 个 int32 bias
-    bias_lines = []
-    for cs in range(cout_slices):
-        word = 0
-        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
-        for lc in range(local_cout):
-            cout = cs * HW_COL + lc
-            bv = bias_arr[cout] if bias_arr is not None else 0
-            word |= (bv & 0xFFFFFFFF) << (lc * 32)       # 低位先
-        bias_lines.append(f"{word:0{wb_hex_chars}X}")
-
-    # weight: cs × cins × ky × kx 顺序 (ky ∈ [0..KY-1], kx ∈ [0..K-1])
     w_lines = []
     for cs in range(cout_slices):
         local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
@@ -290,9 +276,58 @@ def write_wb(out_dir, w_arr, bias_arr, K, NUM_CIN, NUM_COUT, HW_PE, HW_COL, KY=N
                     w_lines.append(f"{word:0{wb_hex_chars}X}")
 
     with open(_out_path(out_dir, 'wb.txt'), 'w') as f:
-        f.writelines(d + '\n' for d in bias_lines)
         f.writelines(d + '\n' for d in w_lines)
-    return len(bias_lines) + len(w_lines)
+    return len(w_lines)
+
+
+# ---------------------------------------------------------------------------
+# RDMA data: bias section + (optional) shortcut section, 128-bit per line.
+#   - bias_arr: [NUM_COUT] int32 或 None (None = 全 0)
+#   - shortcut_arr: [H_OUT][W_OUT][NUM_COUT] int8 或 None (R.1 默认 None)
+#
+# bias 布局: 每 cs 4 个 128-bit 字, 每字打包 4 个 INT32 (低位先):
+#   word0 = {b3, b2, b1, b0}, word1 = {b7, b6, b5, b4}, ...
+# shortcut 布局: NHWC, 每 (yout, x, cs) 1 个 128-bit 字 = 16 × INT8 (低位先).
+# ---------------------------------------------------------------------------
+def write_rdma_data(out_dir, bias_arr, shortcut_arr,
+                    NUM_COUT, HW_COL, H_OUT=0, W_OUT=0):
+    """生成 rdma_data.txt. 返回 (n_lines, n_bias_lines)."""
+    cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
+    hex_chars   = HW_COL * 2                 # 128 bit = 32 hex chars
+
+    lines = []
+
+    # ---- bias section: cout_slices × 4 行 (128-bit) ----
+    for cs in range(cout_slices):
+        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
+        for sub in range(4):                 # 4 sub-words per cs (16 INT32 / 4)
+            word = 0
+            for k in range(4):               # 4 INT32 per sub-word
+                lc = sub * 4 + k
+                if lc < local_cout:
+                    cout = cs * HW_COL + lc
+                    bv = bias_arr[cout] if bias_arr is not None else 0
+                    word |= (bv & 0xFFFFFFFF) << (k * 32)
+            lines.append(f"{word:0{hex_chars}X}")
+
+    n_bias_lines = len(lines)
+
+    # ---- shortcut section: NHWC, 每 (yout, x, cs) 1 行 ----
+    if shortcut_arr is not None:
+        for yout in range(H_OUT):
+            for x in range(W_OUT):
+                for cs in range(cout_slices):
+                    local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
+                    word = 0
+                    for lc in range(local_cout):
+                        cout = cs * HW_COL + lc
+                        v = shortcut_arr[yout][x][cout] & 0xFF
+                        word |= v << (lc * 8)
+                    lines.append(f"{word:0{hex_chars}X}")
+
+    with open(_out_path(out_dir, 'rdma_data.txt'), 'w') as f:
+        f.writelines(d + '\n' for d in lines)
+    return len(lines), n_bias_lines
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +576,10 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     TILE_IN_STEP  = TILE_W * stride * cin_slices
 
     ifb_words = H_IN * W_IN * cin_slices
-    wb_words  = kk * cout_slices * cin_slices + cout_slices   # +bias prefix
+    wb_words  = kk * cout_slices * cin_slices              # 纯 weight, bias 走 rdma
     ofb_words = H_OUT * W_OUT * cout_slices
+    # rdma_data: bias section (cout_slices × 4 个 128-bit 字), R.1 默认无 shortcut
+    rdma_words = cout_slices * 4
 
     # Strip 计算（整图装得下 SRAM 就 strip=H_IN/H_OUT，退化为原 batch 行为；
     # 装不下就按 SRAM 容量切小 strip，ring-buffer 流式跑）。
@@ -594,6 +631,7 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         'TILE_IN_STEP': TILE_IN_STEP,
         # 大小
         'ifb_words': ifb_words, 'wb_words': wb_words, 'ofb_words': ofb_words,
+        'rdma_words': rdma_words,         # R.1: bias-only (cout_slices × 4)
         'sram_depth': sram_depth,
         # Ring / strip
         'ifb_strip': ifb_strip, 'ofb_strip': ofb_strip,
@@ -624,6 +662,7 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         '_META_IFB_WORDS'   : cfg['ifb_words'],
         '_META_WB_WORDS'    : cfg['wb_words'],
         '_META_OFB_WORDS'   : cfg['ofb_words'],
+        '_META_RDMA_WORDS'  : cfg.get('rdma_words', 0),    # R.1: bias 装载量
         '_META_SRAM_DEPTH'  : cfg['sram_depth'],
         '_META_NUM_CIN'     : cfg['NUM_CIN'],        # fold 后 cin_fake
         '_META_NUM_COUT'    : cfg['NUM_COUT'],       # fold 后 cout_fake
@@ -648,7 +687,7 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'ROUNDS_PER_CINS': cfg['rounds_per_cins'],
         'ROUND_LEN_LAST' : cfg['round_len_last'],
         'IFB_BASE'       : 0,
-        'WB_BASE'        : cfg['cout_slices'],     # bias prefix 之后
+        'WB_BASE'        : 0,                       # R.1: WB 不再有 bias prefix
         'OFB_BASE'       : 0,
         'IFB_ROW_STEP'   : cfg['IFB_ROW_STEP'],
         'WB_COUT_STEP'   : cfg['WB_COUT_STEP'],
@@ -677,6 +716,13 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'IFB_KY_STEP'    : cfg['W_IN']   * cfg['cin_slices'],
         'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg['stride'],
         'ARF_REUSE_EN'   : 1 if cfg['arf_reuse_en'] else 0,
+        # --- R.1: residual / shortcut / bias / rdma ---
+        'RESIDUAL_EN'    : 0,                         # 默认关 (R.1, R.2 时残差 layer 设 1)
+        'SHORTCUT_MULT'  : 0,                         # 残差启用时填 INT16 mult
+        'SHORTCUT_SHIFT' : 0,
+        'BIAS_BASE'      : 0,                         # bias 在 Shortcut Bank word index 0 开始
+        # rdma_byte_len = bias section bytes (= rdma_words × 16 byte/word)
+        'RDMA_BYTE_LEN'  : cfg.get('rdma_words', 0) * 16,
     }
     # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
     if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base

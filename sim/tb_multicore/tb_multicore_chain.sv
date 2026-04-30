@@ -33,8 +33,8 @@ module tb_multicore_chain;
     localparam int AXI_M_ID   = `FLUX_AXI_M_ID;
     localparam int AXI_M_W    = `FLUX_AXI_M_WIDTH;
 
-    localparam int NUM_CORES  = 2;        // P0 demo: 跟 driver 默认一致
-    localparam int CORE_ID_W  = 1;
+    localparam int NUM_CORES  = 4;        // P1 N=4 W slice 验证 (NUM_CORES=2/4 都支持)
+    localparam int CORE_ID_W  = (NUM_CORES <= 1) ? 1 : $clog2(NUM_CORES);
     localparam int HOST_CSR_AW = 12 + CORE_ID_W;
     localparam int CORE_BUS_ID = AXI_M_ID + AXI_M_W;
     localparam int EXT_BUS_ID  = CORE_BUS_ID + CORE_ID_W;
@@ -282,7 +282,9 @@ module tb_multicore_chain;
     endtask
 
     // ----------------- AXI-Lite write helper -----------------
-    task automatic axi_lite_write(input bit core_id, input [11:0] reg_addr, input [31:0] data);
+    task automatic axi_lite_write(input [CORE_ID_W-1:0] core_id,
+                                   input [11:0] reg_addr,
+                                   input [31:0] data);
         csr_awaddr  <= {core_id, reg_addr};
         csr_awvalid <= 1'b1;
         csr_wdata   <= data;
@@ -304,22 +306,36 @@ module tb_multicore_chain;
     //   3. host 等所有 core dfe_done
     //   4. host 触发所有 core 的 start_layer (同时触发 → 并行计算)
     //   5. host 等 done_per_core 全 1 (sticky 已被 start_layer 清掉, 现在重新置 1 表示 layer_done)
-    task automatic axi_lite_write_dfe_start(input bit core_id);
+    task automatic axi_lite_write_dfe_start(input [CORE_ID_W-1:0] core_id);
         axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0010);
     endtask
 
-    task automatic axi_lite_write_layer_start(input bit core_id);
+    task automatic axi_lite_write_layer_start(input [CORE_ID_W-1:0] core_id);
         axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0020);
     endtask
 
-    task automatic wait_dfe_done(input bit core_id);
-        if (core_id == 1'b0) begin
-            wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b1);
-            wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b0);
-        end else begin
-            wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b1);
-            wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b0);
-        end
+    // 等指定 core 的 DFE 0→1→0. SystemVerilog 不支持 dynamic hierarchical refs,
+    // 只能 case 静态展开 (NUM_CORES 上限 4).
+    task automatic wait_dfe_done(input [CORE_ID_W-1:0] core_id);
+        case (core_id)
+            'd0: begin
+                wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b1);
+                wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b0);
+            end
+            'd1: begin
+                wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b1);
+                wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b0);
+            end
+            'd2: if (NUM_CORES > 2) begin
+                wait (u_dut.gen_core[2].u_core.dfe_busy == 1'b1);
+                wait (u_dut.gen_core[2].u_core.dfe_busy == 1'b0);
+            end
+            'd3: if (NUM_CORES > 3) begin
+                wait (u_dut.gen_core[3].u_core.dfe_busy == 1'b1);
+                wait (u_dut.gen_core[3].u_core.dfe_busy == 1'b0);
+            end
+            default: ;
+        endcase
     endtask
 
     // ----------------- 比对 final OFM -----------------
@@ -404,17 +420,17 @@ module tb_multicore_chain;
             //   并行触发 dfe 会让 dfe_busy 1→0 错过 wait, 串行最稳 (DFE ~1000 cy 短开销).
             for (int c = 0; c < NUM_CORES; c++) begin
                 if (core_layer_desc_count[c][l] > 0) begin
-                    axi_lite_write(c[0], ADDR_DESC_LIST_BASE, core_layer_desc_base[c][l]);
-                    axi_lite_write(c[0], ADDR_DESC_COUNT,     core_layer_desc_count[c][l]);
-                    axi_lite_write_dfe_start(c[0]);
-                    wait_dfe_done(c[0]);
+                    axi_lite_write(CORE_ID_W'(c), ADDR_DESC_LIST_BASE, core_layer_desc_base[c][l]);
+                    axi_lite_write(CORE_ID_W'(c), ADDR_DESC_COUNT,     core_layer_desc_count[c][l]);
+                    axi_lite_write_dfe_start(CORE_ID_W'(c));
+                    wait_dfe_done(CORE_ID_W'(c));
                 end
             end
 
             // 2) 所有 desc 都进 FIFO 了, 现在并行触发 start_layer (clear sticky + 启计算)
             for (int c = 0; c < NUM_CORES; c++)
                 if (core_layer_desc_count[c][l] > 0)
-                    axi_lite_write_layer_start(c[0]);
+                    axi_lite_write_layer_start(CORE_ID_W'(c));
 
             // 3) 等所有参与 core 的 done_per_core (= core_done_sticky)
             wait ((done_per_core & expected_done_mask) == expected_done_mask);

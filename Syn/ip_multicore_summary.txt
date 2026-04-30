@@ -1,14 +1,14 @@
 # Multicore IP generation summary
-# Generated: 2026-04-29 22:19:05
-# NUM_CORES = 2
+# Generated: 2026-04-30 21:16:46
+# NUM_CORES = 4
 
-## axi_2to3
-xci  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_2to3/axi_2to3.xci
-src  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_2to3
-gen  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_2to3
+## axi_4to5
+xci  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_4to5/axi_4to5.xci
+src  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_4to5
+gen  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_4to5
 
-## axi_lite_1to2
-xci  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_lite_1to2/axi_lite_1to2.xci
-src  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_lite_1to2
-gen  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to2
+## axi_lite_1to4
+xci  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_lite_1to4/axi_lite_1to4.xci
+src  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_lite_1to4
+gen  : c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to4
 

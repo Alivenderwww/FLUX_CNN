@@ -135,50 +135,61 @@ module multicore_top #(
     logic [NUM_CORES-1:0]               csr_m_rvalid;
     logic [NUM_CORES-1:0]               csr_m_rready;
 
-    // axi_lite_1toN IP (NUM_CORES=2 时模块名 axi_lite_1to2)
-    axi_lite_1to2 u_csr_xbar (
-        .aclk          (clk),
-        .aresetn       (aresetn),
-        .s_axi_awaddr  (csr_awaddr),
-        .s_axi_awprot  (3'b000),
-        .s_axi_awvalid (csr_awvalid),
-        .s_axi_awready (csr_awready),
-        .s_axi_wdata   (csr_wdata),
-        .s_axi_wstrb   (csr_wstrb),
-        .s_axi_wvalid  (csr_wvalid),
-        .s_axi_wready  (csr_wready),
-        .s_axi_bresp   (csr_bresp),
-        .s_axi_bvalid  (csr_bvalid),
-        .s_axi_bready  (csr_bready),
-        .s_axi_araddr  (csr_araddr),
-        .s_axi_arprot  (3'b000),
-        .s_axi_arvalid (csr_arvalid),
-        .s_axi_arready (csr_arready),
-        .s_axi_rdata   (csr_rdata),
-        .s_axi_rresp   (csr_rresp),
-        .s_axi_rvalid  (csr_rvalid),
-        .s_axi_rready  (csr_rready),
-
-        .m_axi_awaddr  (csr_m_awaddr),
-        .m_axi_awprot  (csr_m_awprot),
-        .m_axi_awvalid (csr_m_awvalid),
-        .m_axi_awready (csr_m_awready),
-        .m_axi_wdata   (csr_m_wdata),
-        .m_axi_wstrb   (csr_m_wstrb),
-        .m_axi_wvalid  (csr_m_wvalid),
-        .m_axi_wready  (csr_m_wready),
-        .m_axi_bresp   (csr_m_bresp),
-        .m_axi_bvalid  (csr_m_bvalid),
-        .m_axi_bready  (csr_m_bready),
-        .m_axi_araddr  (csr_m_araddr),
-        .m_axi_arprot  (csr_m_arprot),
-        .m_axi_arvalid (csr_m_arvalid),
-        .m_axi_arready (csr_m_arready),
-        .m_axi_rdata   (csr_m_rdata),
-        .m_axi_rresp   (csr_m_rresp),
-        .m_axi_rvalid  (csr_m_rvalid),
-        .m_axi_rready  (csr_m_rready)
-    );
+    // axi_lite_1toN IP: NUM_CORES=2 → axi_lite_1to2, NUM_CORES=4 → axi_lite_1to4
+    // (generate if 切换 IP 模块名 — IP 模块端口签名一致, 只 NUM_MI 不同)
+    generate
+        if (NUM_CORES == 2) begin : g_csr_xbar_2
+            axi_lite_1to2 u_csr_xbar (
+                .aclk          (clk),
+                .aresetn       (aresetn),
+                .s_axi_awaddr  (csr_awaddr),    .s_axi_awprot  (3'b000),
+                .s_axi_awvalid (csr_awvalid),   .s_axi_awready (csr_awready),
+                .s_axi_wdata   (csr_wdata),     .s_axi_wstrb   (csr_wstrb),
+                .s_axi_wvalid  (csr_wvalid),    .s_axi_wready  (csr_wready),
+                .s_axi_bresp   (csr_bresp),
+                .s_axi_bvalid  (csr_bvalid),    .s_axi_bready  (csr_bready),
+                .s_axi_araddr  (csr_araddr),    .s_axi_arprot  (3'b000),
+                .s_axi_arvalid (csr_arvalid),   .s_axi_arready (csr_arready),
+                .s_axi_rdata   (csr_rdata),     .s_axi_rresp   (csr_rresp),
+                .s_axi_rvalid  (csr_rvalid),    .s_axi_rready  (csr_rready),
+                .m_axi_awaddr  (csr_m_awaddr),  .m_axi_awprot  (csr_m_awprot),
+                .m_axi_awvalid (csr_m_awvalid), .m_axi_awready (csr_m_awready),
+                .m_axi_wdata   (csr_m_wdata),   .m_axi_wstrb   (csr_m_wstrb),
+                .m_axi_wvalid  (csr_m_wvalid),  .m_axi_wready  (csr_m_wready),
+                .m_axi_bresp   (csr_m_bresp),
+                .m_axi_bvalid  (csr_m_bvalid),  .m_axi_bready  (csr_m_bready),
+                .m_axi_araddr  (csr_m_araddr),  .m_axi_arprot  (csr_m_arprot),
+                .m_axi_arvalid (csr_m_arvalid), .m_axi_arready (csr_m_arready),
+                .m_axi_rdata   (csr_m_rdata),   .m_axi_rresp   (csr_m_rresp),
+                .m_axi_rvalid  (csr_m_rvalid),  .m_axi_rready  (csr_m_rready)
+            );
+        end else if (NUM_CORES == 4) begin : g_csr_xbar_4
+            axi_lite_1to4 u_csr_xbar (
+                .aclk          (clk),
+                .aresetn       (aresetn),
+                .s_axi_awaddr  (csr_awaddr),    .s_axi_awprot  (3'b000),
+                .s_axi_awvalid (csr_awvalid),   .s_axi_awready (csr_awready),
+                .s_axi_wdata   (csr_wdata),     .s_axi_wstrb   (csr_wstrb),
+                .s_axi_wvalid  (csr_wvalid),    .s_axi_wready  (csr_wready),
+                .s_axi_bresp   (csr_bresp),
+                .s_axi_bvalid  (csr_bvalid),    .s_axi_bready  (csr_bready),
+                .s_axi_araddr  (csr_araddr),    .s_axi_arprot  (3'b000),
+                .s_axi_arvalid (csr_arvalid),   .s_axi_arready (csr_arready),
+                .s_axi_rdata   (csr_rdata),     .s_axi_rresp   (csr_rresp),
+                .s_axi_rvalid  (csr_rvalid),    .s_axi_rready  (csr_rready),
+                .m_axi_awaddr  (csr_m_awaddr),  .m_axi_awprot  (csr_m_awprot),
+                .m_axi_awvalid (csr_m_awvalid), .m_axi_awready (csr_m_awready),
+                .m_axi_wdata   (csr_m_wdata),   .m_axi_wstrb   (csr_m_wstrb),
+                .m_axi_wvalid  (csr_m_wvalid),  .m_axi_wready  (csr_m_wready),
+                .m_axi_bresp   (csr_m_bresp),
+                .m_axi_bvalid  (csr_m_bvalid),  .m_axi_bready  (csr_m_bready),
+                .m_axi_araddr  (csr_m_araddr),  .m_axi_arprot  (csr_m_arprot),
+                .m_axi_arvalid (csr_m_arvalid), .m_axi_arready (csr_m_arready),
+                .m_axi_rdata   (csr_m_rdata),   .m_axi_rresp   (csr_m_rresp),
+                .m_axi_rvalid  (csr_m_rvalid),  .m_axi_rready  (csr_m_rready)
+            );
+        end
+    endgenerate
 
     // =========================================================================
     // 2. AXI4 N:(N+1) crossbar (Xilinx IP) -- M2 多 MI 拓扑
@@ -225,6 +236,26 @@ module multicore_top #(
     logic [NUM_CORES-1:0]               bus_s_rlast;
     logic [NUM_CORES-1:0]               bus_s_rvalid;
     logic [NUM_CORES-1:0]               bus_s_rready;
+
+    // crossbar SI 端 ID 宽 = ID_WIDTH = EXT_BUS_ID (pad CORE_BUS_ID 比特上加 0).
+    // Vivado axi_crossbar IP 把 SI 的 ID_WIDTH 直接当 SI ID 宽 (没有自动扩展),
+    // 所以 multicore_top 这边显式 pad 跟 IP 端口对齐.
+    logic [NUM_CORES*EXT_BUS_ID-1:0]    bus_s_awid_padded, bus_s_arid_padded;
+    logic [NUM_CORES*EXT_BUS_ID-1:0]    bus_s_bid_padded,  bus_s_rid_padded;
+    genvar gp;
+    generate
+        for (gp = 0; gp < NUM_CORES; gp++) begin : g_si_id_pad
+            assign bus_s_awid_padded[gp*EXT_BUS_ID +: EXT_BUS_ID] =
+                {{(EXT_BUS_ID-CORE_BUS_ID){1'b0}}, bus_s_awid[gp*CORE_BUS_ID +: CORE_BUS_ID]};
+            assign bus_s_arid_padded[gp*EXT_BUS_ID +: EXT_BUS_ID] =
+                {{(EXT_BUS_ID-CORE_BUS_ID){1'b0}}, bus_s_arid[gp*CORE_BUS_ID +: CORE_BUS_ID]};
+            // IP 返回的 BID/RID 含 SI tag (跟原 ID 一起回来), 取低 CORE_BUS_ID 位还给核
+            assign bus_s_bid[gp*CORE_BUS_ID +: CORE_BUS_ID] =
+                bus_s_bid_padded[gp*EXT_BUS_ID +: CORE_BUS_ID];
+            assign bus_s_rid[gp*CORE_BUS_ID +: CORE_BUS_ID] =
+                bus_s_rid_padded[gp*EXT_BUS_ID +: CORE_BUS_ID];
+        end
+    endgenerate
 
     // crossbar MI 端 packed array: [NUM_MI_BUS * field_width]
     //   MI[0]   = DDR (接 multicore_top 顶层 bus_*)
@@ -297,91 +328,96 @@ module multicore_top #(
     assign bus_rready   = bus_m_rready[0];
 
     // crossbar 实例化 (NUM_SI=NUM_CORES, NUM_MI=NUM_CORES+1)
-    // M2 NUM_CORES=2: 模块名 axi_2to3
-    axi_2to3 u_bus_xbar (
-        .aclk          (clk),
-        .aresetn       (aresetn),
-
-        // SI 端 (核侧)
-        .s_axi_awid    (bus_s_awid),
-        .s_axi_awaddr  (bus_s_awaddr),
-        .s_axi_awlen   (bus_s_awlen),
-        .s_axi_awsize  (bus_s_awsize),
-        .s_axi_awburst (bus_s_awburst),
-        .s_axi_awlock  (bus_s_awlock),
-        .s_axi_awcache (bus_s_awcache),
-        .s_axi_awprot  (bus_s_awprot),
-        .s_axi_awqos   (bus_s_awqos),
-        .s_axi_awvalid (bus_s_awvalid),
-        .s_axi_awready (bus_s_awready),
-        .s_axi_wdata   (bus_s_wdata),
-        .s_axi_wstrb   (bus_s_wstrb),
-        .s_axi_wlast   (bus_s_wlast),
-        .s_axi_wvalid  (bus_s_wvalid),
-        .s_axi_wready  (bus_s_wready),
-        .s_axi_bid     (bus_s_bid),
-        .s_axi_bresp   (bus_s_bresp),
-        .s_axi_bvalid  (bus_s_bvalid),
-        .s_axi_bready  (bus_s_bready),
-        .s_axi_arid    (bus_s_arid),
-        .s_axi_araddr  (bus_s_araddr),
-        .s_axi_arlen   (bus_s_arlen),
-        .s_axi_arsize  (bus_s_arsize),
-        .s_axi_arburst (bus_s_arburst),
-        .s_axi_arlock  (bus_s_arlock),
-        .s_axi_arcache (bus_s_arcache),
-        .s_axi_arprot  (bus_s_arprot),
-        .s_axi_arqos   (bus_s_arqos),
-        .s_axi_arvalid (bus_s_arvalid),
-        .s_axi_arready (bus_s_arready),
-        .s_axi_rid     (bus_s_rid),
-        .s_axi_rdata   (bus_s_rdata),
-        .s_axi_rresp   (bus_s_rresp),
-        .s_axi_rlast   (bus_s_rlast),
-        .s_axi_rvalid  (bus_s_rvalid),
-        .s_axi_rready  (bus_s_rready),
-
-        // MI 端 (packed: MI[0]=DDR, MI[1..N]=各核 IFB)
-        .m_axi_awid    (bus_m_awid),
-        .m_axi_awaddr  (bus_m_awaddr),
-        .m_axi_awlen   (bus_m_awlen),
-        .m_axi_awsize  (bus_m_awsize),
-        .m_axi_awburst (bus_m_awburst),
-        .m_axi_awlock  (bus_m_awlock),
-        .m_axi_awcache (bus_m_awcache),
-        .m_axi_awprot  (bus_m_awprot),
-        .m_axi_awregion(),
-        .m_axi_awqos   (bus_m_awqos),
-        .m_axi_awvalid (bus_m_awvalid),
-        .m_axi_awready (bus_m_awready),
-        .m_axi_wdata   (bus_m_wdata),
-        .m_axi_wstrb   (bus_m_wstrb),
-        .m_axi_wlast   (bus_m_wlast),
-        .m_axi_wvalid  (bus_m_wvalid),
-        .m_axi_wready  (bus_m_wready),
-        .m_axi_bid     (bus_m_bid),
-        .m_axi_bresp   (bus_m_bresp),
-        .m_axi_bvalid  (bus_m_bvalid),
-        .m_axi_bready  (bus_m_bready),
-        .m_axi_arid    (bus_m_arid),
-        .m_axi_araddr  (bus_m_araddr),
-        .m_axi_arlen   (bus_m_arlen),
-        .m_axi_arsize  (bus_m_arsize),
-        .m_axi_arburst (bus_m_arburst),
-        .m_axi_arlock  (bus_m_arlock),
-        .m_axi_arcache (bus_m_arcache),
-        .m_axi_arprot  (bus_m_arprot),
-        .m_axi_arregion(),
-        .m_axi_arqos   (bus_m_arqos),
-        .m_axi_arvalid (bus_m_arvalid),
-        .m_axi_arready (bus_m_arready),
-        .m_axi_rid     (bus_m_rid),
-        .m_axi_rdata   (bus_m_rdata),
-        .m_axi_rresp   (bus_m_rresp),
-        .m_axi_rlast   (bus_m_rlast),
-        .m_axi_rvalid  (bus_m_rvalid),
-        .m_axi_rready  (bus_m_rready)
-    );
+    // NUM_CORES=2 → axi_2to3, NUM_CORES=4 → axi_4to5 (generate if 切 IP 模块名)
+    generate
+        if (NUM_CORES == 2) begin : g_bus_xbar_2
+            axi_2to3 u_bus_xbar (
+                .aclk          (clk),    .aresetn       (aresetn),
+                .s_axi_awid    (bus_s_awid_padded),    .s_axi_awaddr  (bus_s_awaddr),
+                .s_axi_awlen   (bus_s_awlen),   .s_axi_awsize  (bus_s_awsize),
+                .s_axi_awburst (bus_s_awburst), .s_axi_awlock  (bus_s_awlock),
+                .s_axi_awcache (bus_s_awcache), .s_axi_awprot  (bus_s_awprot),
+                .s_axi_awqos   (bus_s_awqos),   .s_axi_awvalid (bus_s_awvalid),
+                .s_axi_awready (bus_s_awready), .s_axi_wdata   (bus_s_wdata),
+                .s_axi_wstrb   (bus_s_wstrb),   .s_axi_wlast   (bus_s_wlast),
+                .s_axi_wvalid  (bus_s_wvalid),  .s_axi_wready  (bus_s_wready),
+                .s_axi_bid     (bus_s_bid_padded),     .s_axi_bresp   (bus_s_bresp),
+                .s_axi_bvalid  (bus_s_bvalid),  .s_axi_bready  (bus_s_bready),
+                .s_axi_arid    (bus_s_arid_padded),    .s_axi_araddr  (bus_s_araddr),
+                .s_axi_arlen   (bus_s_arlen),   .s_axi_arsize  (bus_s_arsize),
+                .s_axi_arburst (bus_s_arburst), .s_axi_arlock  (bus_s_arlock),
+                .s_axi_arcache (bus_s_arcache), .s_axi_arprot  (bus_s_arprot),
+                .s_axi_arqos   (bus_s_arqos),   .s_axi_arvalid (bus_s_arvalid),
+                .s_axi_arready (bus_s_arready), .s_axi_rid     (bus_s_rid_padded),
+                .s_axi_rdata   (bus_s_rdata),   .s_axi_rresp   (bus_s_rresp),
+                .s_axi_rlast   (bus_s_rlast),   .s_axi_rvalid  (bus_s_rvalid),
+                .s_axi_rready  (bus_s_rready),
+                .m_axi_awid    (bus_m_awid),    .m_axi_awaddr  (bus_m_awaddr),
+                .m_axi_awlen   (bus_m_awlen),   .m_axi_awsize  (bus_m_awsize),
+                .m_axi_awburst (bus_m_awburst), .m_axi_awlock  (bus_m_awlock),
+                .m_axi_awcache (bus_m_awcache), .m_axi_awprot  (bus_m_awprot),
+                .m_axi_awregion(),              .m_axi_awqos   (bus_m_awqos),
+                .m_axi_awvalid (bus_m_awvalid), .m_axi_awready (bus_m_awready),
+                .m_axi_wdata   (bus_m_wdata),   .m_axi_wstrb   (bus_m_wstrb),
+                .m_axi_wlast   (bus_m_wlast),   .m_axi_wvalid  (bus_m_wvalid),
+                .m_axi_wready  (bus_m_wready),  .m_axi_bid     (bus_m_bid),
+                .m_axi_bresp   (bus_m_bresp),   .m_axi_bvalid  (bus_m_bvalid),
+                .m_axi_bready  (bus_m_bready),  .m_axi_arid    (bus_m_arid),
+                .m_axi_araddr  (bus_m_araddr),  .m_axi_arlen   (bus_m_arlen),
+                .m_axi_arsize  (bus_m_arsize),  .m_axi_arburst (bus_m_arburst),
+                .m_axi_arlock  (bus_m_arlock),  .m_axi_arcache (bus_m_arcache),
+                .m_axi_arprot  (bus_m_arprot),  .m_axi_arregion(),
+                .m_axi_arqos   (bus_m_arqos),   .m_axi_arvalid (bus_m_arvalid),
+                .m_axi_arready (bus_m_arready), .m_axi_rid     (bus_m_rid),
+                .m_axi_rdata   (bus_m_rdata),   .m_axi_rresp   (bus_m_rresp),
+                .m_axi_rlast   (bus_m_rlast),   .m_axi_rvalid  (bus_m_rvalid),
+                .m_axi_rready  (bus_m_rready)
+            );
+        end else if (NUM_CORES == 4) begin : g_bus_xbar_4
+            axi_4to5 u_bus_xbar (
+                .aclk          (clk),    .aresetn       (aresetn),
+                .s_axi_awid    (bus_s_awid_padded),    .s_axi_awaddr  (bus_s_awaddr),
+                .s_axi_awlen   (bus_s_awlen),   .s_axi_awsize  (bus_s_awsize),
+                .s_axi_awburst (bus_s_awburst), .s_axi_awlock  (bus_s_awlock),
+                .s_axi_awcache (bus_s_awcache), .s_axi_awprot  (bus_s_awprot),
+                .s_axi_awqos   (bus_s_awqos),   .s_axi_awvalid (bus_s_awvalid),
+                .s_axi_awready (bus_s_awready), .s_axi_wdata   (bus_s_wdata),
+                .s_axi_wstrb   (bus_s_wstrb),   .s_axi_wlast   (bus_s_wlast),
+                .s_axi_wvalid  (bus_s_wvalid),  .s_axi_wready  (bus_s_wready),
+                .s_axi_bid     (bus_s_bid_padded),     .s_axi_bresp   (bus_s_bresp),
+                .s_axi_bvalid  (bus_s_bvalid),  .s_axi_bready  (bus_s_bready),
+                .s_axi_arid    (bus_s_arid_padded),    .s_axi_araddr  (bus_s_araddr),
+                .s_axi_arlen   (bus_s_arlen),   .s_axi_arsize  (bus_s_arsize),
+                .s_axi_arburst (bus_s_arburst), .s_axi_arlock  (bus_s_arlock),
+                .s_axi_arcache (bus_s_arcache), .s_axi_arprot  (bus_s_arprot),
+                .s_axi_arqos   (bus_s_arqos),   .s_axi_arvalid (bus_s_arvalid),
+                .s_axi_arready (bus_s_arready), .s_axi_rid     (bus_s_rid_padded),
+                .s_axi_rdata   (bus_s_rdata),   .s_axi_rresp   (bus_s_rresp),
+                .s_axi_rlast   (bus_s_rlast),   .s_axi_rvalid  (bus_s_rvalid),
+                .s_axi_rready  (bus_s_rready),
+                .m_axi_awid    (bus_m_awid),    .m_axi_awaddr  (bus_m_awaddr),
+                .m_axi_awlen   (bus_m_awlen),   .m_axi_awsize  (bus_m_awsize),
+                .m_axi_awburst (bus_m_awburst), .m_axi_awlock  (bus_m_awlock),
+                .m_axi_awcache (bus_m_awcache), .m_axi_awprot  (bus_m_awprot),
+                .m_axi_awregion(),              .m_axi_awqos   (bus_m_awqos),
+                .m_axi_awvalid (bus_m_awvalid), .m_axi_awready (bus_m_awready),
+                .m_axi_wdata   (bus_m_wdata),   .m_axi_wstrb   (bus_m_wstrb),
+                .m_axi_wlast   (bus_m_wlast),   .m_axi_wvalid  (bus_m_wvalid),
+                .m_axi_wready  (bus_m_wready),  .m_axi_bid     (bus_m_bid),
+                .m_axi_bresp   (bus_m_bresp),   .m_axi_bvalid  (bus_m_bvalid),
+                .m_axi_bready  (bus_m_bready),  .m_axi_arid    (bus_m_arid),
+                .m_axi_araddr  (bus_m_araddr),  .m_axi_arlen   (bus_m_arlen),
+                .m_axi_arsize  (bus_m_arsize),  .m_axi_arburst (bus_m_arburst),
+                .m_axi_arlock  (bus_m_arlock),  .m_axi_arcache (bus_m_arcache),
+                .m_axi_arprot  (bus_m_arprot),  .m_axi_arregion(),
+                .m_axi_arqos   (bus_m_arqos),   .m_axi_arvalid (bus_m_arvalid),
+                .m_axi_arready (bus_m_arready), .m_axi_rid     (bus_m_rid),
+                .m_axi_rdata   (bus_m_rdata),   .m_axi_rresp   (bus_m_rresp),
+                .m_axi_rlast   (bus_m_rlast),   .m_axi_rvalid  (bus_m_rvalid),
+                .m_axi_rready  (bus_m_rready)
+            );
+        end
+    endgenerate
 
     // =========================================================================
     // 3. 例化 NUM_CORES 个 core_top, 接 crossbar 各端口
@@ -400,7 +436,8 @@ module multicore_top #(
                 .CSR_ADDR_W(12), .CSR_DATA_W(CSR_DATA_W),
                 .BUS_ADDR_W(BUS_ADDR_W), .BUS_DATA_W(BUS_DATA_W),
                 .AXI_M_ID(AXI_M_ID), .AXI_M_WIDTH(AXI_M_WIDTH),
-                .DMA_LEN_W(DMA_LEN_W)
+                .DMA_LEN_W(DMA_LEN_W),
+                .RMT_ID_W(EXT_BUS_ID)        // 跨核 IFB AXI4 SI ID 宽 = crossbar MI ID 宽
             ) u_core (
                 .clk(clk), .rst_n(rst_n),
 

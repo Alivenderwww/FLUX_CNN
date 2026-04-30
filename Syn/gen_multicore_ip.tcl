@@ -24,7 +24,7 @@
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 #   核数 (改这里就行, 然后重跑)
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-set NUM_CORES 2
+set NUM_CORES 4
 
 set PART        xc7k325tffg900-2
 set PROJ_DIR    C:/_Project/FLUX_CNN/Syn/ip_managed
@@ -33,10 +33,26 @@ set RPT_FILE    C:/_Project/FLUX_CNN/Syn/ip_multicore_summary.txt
 # -----------------------------------------------------------------------------
 # 复用已存在的 ip_managed 工程 (axi_dm 也在里面)
 # -----------------------------------------------------------------------------
+set _need_fresh 0
 if {[file exists "$PROJ_DIR/ip_managed.xpr"]} {
     puts "==> reusing project at $PROJ_DIR"
-    open_project "$PROJ_DIR/ip_managed.xpr"
+    if {[catch {open_project "$PROJ_DIR/ip_managed.xpr"} err]} {
+        puts "==> open_project failed (likely stale IP refs): $err"
+        puts "==> recreating project"
+        set _need_fresh 1
+    } else {
+        # 清理 xpr 里指向已不存在的文件的 stale ref
+        foreach f [get_files] {
+            if {![file exists $f]} {
+                puts "==> removing stale file ref $f"
+                remove_files -quiet $f
+            }
+        }
+    }
 } else {
+    set _need_fresh 1
+}
+if {$_need_fresh} {
     puts "==> creating fresh project at $PROJ_DIR"
     create_project -force -part $PART ip_managed $PROJ_DIR -ip
     set_property target_simulator       ModelSim          [current_project]
@@ -44,14 +60,16 @@ if {[file exists "$PROJ_DIR/ip_managed.xpr"]} {
 }
 
 # -----------------------------------------------------------------------------
-# 删除旧的 IP 实例 (各种 NUM_CORES 历史版本 + 旧拓扑 axi_Nto1)
+# 删除旧的 IP 实例: 仅删 *当前 NUM_CORES* 对应的 IP 跟更老旧拓扑 axi_Nto1.
+# 不删其他 NUM_CORES 的 IP (允许 N=2 + N=4 IP 共存, sim 时按需 link).
 # -----------------------------------------------------------------------------
 set stale_ips [list]
 foreach n {2 3 4 8} {
-    lappend stale_ips axi_${n}to1
-    lappend stale_ips axi_${n}to[expr {$n + 1}]
-    lappend stale_ips axi_lite_1to${n}
+    lappend stale_ips axi_${n}to1   ;# 旧拓扑, 始终删
 }
+# 当前 NUM_CORES 的 IP: 删了重建 (避免 create_ip 报 IP exists)
+lappend stale_ips axi_${NUM_CORES}to[expr {$NUM_CORES + 1}]
+lappend stale_ips axi_lite_1to${NUM_CORES}
 foreach old $stale_ips {
     if {[llength [get_ips -quiet $old]] > 0} {
         puts "==> removing stale IP $old"
@@ -83,7 +101,7 @@ set agg_dict [list \
     CONFIG.CONNECTIVITY_MODE SAMD \
     CONFIG.ADDR_WIDTH     32 \
     CONFIG.DATA_WIDTH     128 \
-    CONFIG.ID_WIDTH       5 \
+    CONFIG.ID_WIDTH       [expr {4 + int(ceil(log($NUM_CORES) / log(2)))}] \
 ]
 
 # MI[0] = DDR: BASE 0x00000000, 31 bit (2 GB) - 给 IFB region 让出 0x80000000+

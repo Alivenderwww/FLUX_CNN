@@ -4,8 +4,10 @@
 
 set XLNX_INI    {C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini}
 set IP_DM_DIR   {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm}
-set IP_AGG_DIR  {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_2to3}
-set IP_CSR_DIR  {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to2}
+set IP_AGG2_DIR {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_2to3}
+set IP_AGG4_DIR {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_4to5}
+set IP_CSR2_DIR {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to2}
+set IP_CSR4_DIR {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to4}
 file copy -force $XLNX_INI ./modelsim.ini
 
 vlib work
@@ -19,9 +21,13 @@ vlog -work xil_defaultlib \
     "C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/glbl.v"
 
 vlog -work xil_defaultlib \
-    "$IP_AGG_DIR/sim/axi_2to3.v"
+    "$IP_AGG2_DIR/sim/axi_2to3.v"
 vlog -work xil_defaultlib \
-    "$IP_CSR_DIR/sim/axi_lite_1to2.v"
+    "$IP_AGG4_DIR/sim/axi_4to5.v"
+vlog -work xil_defaultlib \
+    "$IP_CSR2_DIR/sim/axi_lite_1to2.v"
+vlog -work xil_defaultlib \
+    "$IP_CSR4_DIR/sim/axi_lite_1to4.v"
 
 vlog -sv -work work -mfcu -suppress 2902,13314 \
     +incdir+../../RTL \

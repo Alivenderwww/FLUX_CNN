@@ -157,13 +157,16 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers):
     cin_slices  = (layer.c_in  + 16 - 1) // 16
     cout_slices = (layer.c_out + 16 - 1) // 16
 
-    # 决定本核实际跑的 sub-layer 维度 + per-core IDMA/ODMA 偏移
+    # 决定本核实际跑的 sub-layer 维度 + per-core IDMA/ODMA 偏移.
+    # step.my_core 是物理核 ID (e.g. 2), derive_w_slice_cfg 要的是切片 index (0..n_split-1).
+    # 物理 → 切片 index: cores_all.index(my_core).
     if step.mode == 'C_w_slice':
+        slice_idx = step.cores_all.index(step.my_core)
         cfg = hw_files.derive_w_slice_cfg(
             H_IN=layer.h_in, W_full=layer.w_in, K=layer.k,
             NUM_CIN=layer.c_in, NUM_COUT=layer.c_out, stride=layer.stride,
             pad_top=layer.pad, pad_left_full=layer.pad,
-            my_core=step.my_core, n_split=n_split,
+            my_core=slice_idx, n_split=n_split,
             TILE_W=32, streaming=True,
         )
         ifb_w_start = cfg['_W_SLICE_W_IN_START']
@@ -323,9 +326,13 @@ if __name__ == '__main__':
                         help='输出目录名 (在 sim/tb_multicore/cases 下)')
     parser.add_argument('--n_cores', type=int, default=2)
     parser.add_argument('--demo',
-                        choices=['wslice1', 'simple2', 'simple3', 'wslice4', 'wslice5', 'wslice_mixed', 'resnet11'],
+                        choices=['wslice1', 'simple2', 'simple3', 'wslice4', 'wslice5',
+                                 'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
+                                 'wslice_smallw', 'wslice_k7', 'wslice_k1', 'resnet11'],
                         default='wslice1',
-                        help='wslice4/5: 4/5 层 conv chain (W slice 验证) | wslice_mixed: 多 K/stride')
+                        help='wslice4/5: 4/5 层 chain | wslice_mixed: 多 K | '
+                             'wslice_stride2: 含 ds 层 | wslice_oddw: W=33 奇 | '
+                             'wslice_smallw: W=8 极小 | wslice_k7: K=7 大 halo | wslice_k1: K=1 无 halo')
     args = parser.parse_args()
 
     if args.demo == 'wslice1':
@@ -367,6 +374,45 @@ if __name__ == '__main__':
             scheduler.Layer('L1', k=5, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=2, sdp_shift=3),
             scheduler.Layer('L2', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
             scheduler.Layer('L3', k=1, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=0, sdp_shift=2),
+        ]
+    elif args.demo == 'wslice_stride2':
+        # 含 stride=2 的多层 chain: layer 间 H/W 维度变化
+        # L0 32×32 K=3 s=2 pad=1 → 16×16
+        # L1 16×16 K=3 s=1 pad=1 → 16×16
+        # L2 16×16 K=3 s=2 pad=1 → 8×8
+        # L3 8×8   K=3 s=1 pad=1 → 8×8
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=2, pad=1, sdp_shift=3),
+            scheduler.Layer('L1', k=3, c_in=16, c_out=16, h_in=16, w_in=16, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L2', k=3, c_in=16, c_out=16, h_in=16, w_in=16, stride=2, pad=1, sdp_shift=3),
+            scheduler.Layer('L3', k=3, c_in=16, c_out=16, h_in=8,  w_in=8,  stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'wslice_oddw':
+        # W 不被 N 整除: W=33, 33/2=16余1, 33/4=8余1
+        # 用 K=3 pad=1 让维度保持 (奇数 H 也 OK).
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=33, w_in=33, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L1', k=3, c_in=16, c_out=16, h_in=33, w_in=33, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L2', k=3, c_in=16, c_out=16, h_in=33, w_in=33, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'wslice_smallw':
+        # 极小 W: W=8 (N=4 时每核 W_OUT=2, 极端边界).
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=8, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L1', k=3, c_in=16, c_out=16, h_in=32, w_in=8, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'wslice_k7':
+        # 大 K: K=7 N=2 → halo=3, 验证 大 halo 几何 + 不对称 pad
+        layers = [
+            scheduler.Layer('L0', k=7, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=3, sdp_shift=4),
+            scheduler.Layer('L1', k=7, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=3, sdp_shift=4),
+        ]
+    elif args.demo == 'wslice_k1':
+        # K=1 W slice (无 halo, 直接切): 强制 prefer_w_slice 跑
+        # 注 scheduler 默认对 K=1 c=16 cycles 太小用 mode A; 这里用 c=64 让 cycles 大
+        layers = [
+            scheduler.Layer('L0', k=1, c_in=64, c_out=64, h_in=16, w_in=16, stride=1, pad=0, sdp_shift=4),
+            scheduler.Layer('L1', k=1, c_in=64, c_out=64, h_in=16, w_in=16, stride=1, pad=0, sdp_shift=4),
         ]
     elif args.demo == 'resnet11':
         from run_regression import CASES

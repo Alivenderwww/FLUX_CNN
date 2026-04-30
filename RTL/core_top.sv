@@ -35,7 +35,10 @@ module core_top #(
     parameter int BUS_DATA_W  = `FLUX_BUS_DATA_W,
     parameter int AXI_M_ID    = `FLUX_AXI_M_ID,
     parameter int AXI_M_WIDTH = `FLUX_AXI_M_WIDTH,
-    parameter int DMA_LEN_W   = `FLUX_DMA_LEN_W
+    parameter int DMA_LEN_W   = `FLUX_DMA_LEN_W,
+    // 跨核 IFB AXI4 SI 端口 ID 宽 = multicore_top.EXT_BUS_ID = CORE_BUS_ID + log2(NUM_CORES).
+    // 单核 sim (NUM_CORES=1, 跨核口 tie 0) 可用默认 5; multicore_top 显式 override.
+    parameter int RMT_ID_W    = AXI_M_ID + AXI_M_WIDTH + 1
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
@@ -103,7 +106,7 @@ module core_top #(
     output logic                                 bus_rready,
 
     // ---- 跨核 IFB AXI4 SI (M2: 远端核 ODMA push 进本核 IFB) ----
-    input  logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_awid,    // EXT_BUS_ID = AXI_M_ID+AXI_M_WIDTH+1
+    input  logic [RMT_ID_W-1:0]        rmt_ifb_awid,    // EXT_BUS_ID = AXI_M_ID+AXI_M_WIDTH+1
     input  logic [BUS_ADDR_W-1:0]                rmt_ifb_awaddr,
     input  logic [7:0]                           rmt_ifb_awlen,
     input  logic [2:0]                           rmt_ifb_awsize,
@@ -119,11 +122,11 @@ module core_top #(
     input  logic                                 rmt_ifb_wlast,
     input  logic                                 rmt_ifb_wvalid,
     output logic                                 rmt_ifb_wready,
-    output logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_bid,
+    output logic [RMT_ID_W-1:0]        rmt_ifb_bid,
     output logic [1:0]                           rmt_ifb_bresp,
     output logic                                 rmt_ifb_bvalid,
     input  logic                                 rmt_ifb_bready,
-    input  logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_arid,
+    input  logic [RMT_ID_W-1:0]        rmt_ifb_arid,
     input  logic [BUS_ADDR_W-1:0]                rmt_ifb_araddr,
     input  logic [7:0]                           rmt_ifb_arlen,
     input  logic [2:0]                           rmt_ifb_arsize,
@@ -134,7 +137,7 @@ module core_top #(
     input  logic [3:0]                           rmt_ifb_arqos,
     input  logic                                 rmt_ifb_arvalid,
     output logic                                 rmt_ifb_arready,
-    output logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_rid,
+    output logic [RMT_ID_W-1:0]        rmt_ifb_rid,
     output logic [BUS_DATA_W-1:0]                rmt_ifb_rdata,
     output logic [1:0]                           rmt_ifb_rresp,
     output logic                                 rmt_ifb_rlast,
@@ -1245,7 +1248,7 @@ module core_top #(
     ifb_axi_slave #(
         .ADDR_W (BUS_ADDR_W),
         .DATA_W (BUS_DATA_W),
-        .ID_W   (AXI_M_ID + AXI_M_WIDTH + 1),
+        .ID_W   (RMT_ID_W),
         .SRAM_AW($clog2(SRAM_DEPTH)),
         .IFB_W  (IFB_WIDTH)
     ) u_ifb_axi_slv (

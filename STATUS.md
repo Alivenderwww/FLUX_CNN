@@ -167,14 +167,41 @@ ResNet N=4 切片决策: layer 0-9 全 W slice (4 push 边界 + 6 DDR 边界), F
 
 ### 验证状态
 
+#### 单核回归
 | 测试 | 结果 |
 |---|---|
 | 单核 26-case 回归 (sub_W=full_W 数值等价) | ✅ 全 PASS, 无回归 |
-| wslice1 单层 N=2 W slice (32×32×16, K=3) | ✅ PASS @ 5569 cycles |
-| simple3 N=1 (3 层 mode A chain) | ✅ PASS @ 30825 cycles |
-| simple3 N=2 (3 层 W slice chain) | ✅ PASS @ 16705 cycles |
-| wslice4 N=2 (4 层 W slice chain) | ✅ PASS @ 22273 cycles |
-| wslice5 N=2 (5 层 W slice chain) | ✅ PASS @ 27841 cycles |
+
+#### N=2 W slice (TB NUM_CORES=2)
+| 测试 | 结果 |
+|---|---|
+| wslice1 (1 层 K=3) | ✅ 5569 cycles |
+| simple3 (3 层 K=3 stride=1) | ✅ 16705 cycles |
+| wslice4 (4 层 K=3) | ✅ 22273 cycles |
+| wslice5 (5 层 K=3) | ✅ 27841 cycles |
+| wslice_mixed (4 层混合 K=3,5,3,1) | ✅ 27411 cycles |
+| wslice_stride2 (4 层含 ds 层 stride=2) | ✅ 5995 cycles |
+| wslice_oddw (W=33 奇数 N 不整除) | ✅ 18058 cycles |
+| wslice_smallw (W=8 极小) | ✅ 4113 cycles |
+| wslice_k7 (K=7 大 halo) | ✅ 55357 cycles |
+| wslice_k1 (K=1 c=64 无 halo) | ✅ 6649 cycles |
+
+#### N=4 W slice (TB NUM_CORES=4, axi_4to5 + axi_lite_1to4)
+| 测试 | 结果 |
+|---|---|
+| wslice1 N=4 | ✅ 3833 cycles (vs N=2 5569: 1.45×) |
+| simple3 N=4 (3 层) | ✅ 11493 cycles |
+| wslice4 N=4 | ✅ 15323 cycles |
+| wslice5 N=4 | ✅ 19153 cycles |
+| wslice_mixed N=4 | ✅ 18649 cycles |
+| wslice_stride2 N=4 | ✅ 7148 cycles |
+| wslice_oddw N=4 (W=33 不被 4 整除) | ✅ 12630 cycles |
+| wslice_smallw N=4 (W=8 LPT 并行 stage) | ✅ 4115 cycles |
+| wslice_k7 N=4 | ✅ 34097 cycles |
+| wslice_k1 N=4 | ✅ 6187 cycles |
+
+整体: **20/20 切片 case 全 bit-exact PASS** (覆盖 K∈{1,3,5,7}, stride∈{1,2}, W∈{8,32,33},
+单层/多层, N∈{2,4}, mode A/W slice 混合, LPT 并行 stage).
 
 ### 单层 W slice 关键点
 
@@ -201,14 +228,32 @@ return v - 256 if v >= 128 else v
 `write_expected_ofm` 的 `& 0xFF` 仍 byte-pack 不变, 单层 case 输出 byte 不变.
 跨层 chain `prev_ofm` 现在是 signed Python int, 跟 RTL 一致.
 
+### N=4 IP gen + RTL 改动 (P1 N=4 上线)
+
+新增 IP (gen_multicore_ip.tcl 已支持 NUM_CORES=4):
+- `axi_4to5`: 4 SI / 5 MI 全连接 crossbar, ID_WIDTH=6
+- `axi_lite_1to4`: 1 SI / 4 MI host CSR 分发, host_addr_w=14
+
+multicore_top RTL:
+- IP 实例放进 `generate if (NUM_CORES==2) ... else if (NUM_CORES==4) ...` 块
+- 加 SI 端 ID padding (CORE_BUS_ID=4 → EXT_BUS_ID=6 zero-extend)
+- IP gen tcl: ID_WIDTH=4+log2(N) 让 SI/MI 端口宽度匹配
+- IP gen tcl: 加 `catch open_project + create -force` 兜底, 处理 stale IP refs
+
+core_top RTL:
+- `rmt_ifb_*id` 改成参数化宽度 `RMT_ID_W` (default 5 兼容旧, multicore_top 显式 override)
+
+driver:
+- `build_step_cfg_dict` 把 `step.my_core` (物理核 ID) 转 `slice_idx` (0..n_split-1) 再传 derive_w_slice_cfg
+  (LPT scheduler 可能把不同 layer 分到不同核组, 物理 ID 跟 slice idx 不一致)
+
 ### 下一步
 
 | 任务 | 工时估计 |
 |---|---|
-| W slice mixed K/stride 验证 (wslice_mixed demo) | 0.5 天 |
-| ResNet 11 layer 适配 (residual 路径 + 多层 chain) | 1-2 天 |
+| ResNet 11 layer 适配 (residual 路径 + chain h/w 维度变化) | 1-2 天 |
 | Mode C cout slice 实施 (P2) | 1 天 |
-| 片上 push 链 (P2 完成态) | 2-3 天 |
+| 片上 push 链 (P2 完成态, N=2 ABAB / N=4 流水) | 2-3 天 |
 
 ---
 

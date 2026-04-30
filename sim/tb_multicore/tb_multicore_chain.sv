@@ -416,7 +416,7 @@ module tb_multicore_chain;
                 if (core_layer_desc_count[c][l] > 0)
                     axi_lite_write_layer_start(c[0]);
 
-            // 5) 等所有参与 core 的 done_per_core (= core_done_sticky)
+            // 3) 等所有参与 core 的 done_per_core (= core_done_sticky)
             wait ((done_per_core & expected_done_mask) == expected_done_mask);
             $display("  Layer %0d done @ t=%0t (cycles=%0d, mask=%b)",
                      l, $time, ($time - t_layer_start) / 10, expected_done_mask);
@@ -424,8 +424,6 @@ module tb_multicore_chain;
             @(posedge clk); @(posedge clk);
 
             // 每 layer 完成后立刻 check 自己的 OFM (intermediate or final).
-            // 这是关键诊断点: 多层 chain 的 Layer 2+ 当前会在这里报 mismatch
-            // (单层 wslice1 OK, 多层 chain 有未解 bug 见 memory/multilayer_chain_bug.md).
             begin
                 automatic string ldir2;
                 automatic int    ofb_base_w2;

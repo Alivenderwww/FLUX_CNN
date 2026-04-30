@@ -72,7 +72,12 @@ def sdp_sim(psum_i32, mult, shift, zp_out, clip_min, clip_max, round_en, relu_en
         summed = 0
     if summed < clip_min: summed = clip_min
     if summed > clip_max: summed = clip_max
-    return summed & 0xFF
+    # 返回 *signed int8* (-128..127), 跟 RTL line_buffer 把 IFB byte 当 INT8 解释一致.
+    # 写 expected_ofm.txt 仍 & 0xFF 得 byte. 关键: 链式 layer 间, 上层 OFM 当下层 IFM 时,
+    # 必须用 signed 解释保持数值一致, 否则 clip_max>127 输出 byte 在 Python (无符号 200)
+    # vs RTL (signed -56) 就会算出截然不同的 psum (chain Layer 2+ OFM mismatch root cause).
+    v = summed & 0xFF
+    return v - 256 if v >= 128 else v
 
 
 # ---------------------------------------------------------------------------

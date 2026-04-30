@@ -5,7 +5,7 @@
 > M2 跨核 SRAM 直送 双层 chain 仿真验证通过, 见 §2.5.
 > M2.5 多核调度器 + 切片决策 + driver 框架已就位, 见 §2.6.
 > 参数 single source of truth (`params.py`) 完成, 见 §2.7.
-> P1 Mode C W slice 单层 N=2 仿真验证通过, 见 §2.8 (多层 chain 有未解 bug).
+> P1 Mode C W slice 单层 + 多层 chain 全 PASS, 见 §2.8.
 > 长期项目状态见 `README.md`, 模块细节见 `docs/`, 编码规范见 `RTL代码编写原则.md`,
 > 历史经验教训见 `memory/`.
 
@@ -170,8 +170,11 @@ ResNet N=4 切片决策: layer 0-9 全 W slice (4 push 边界 + 6 DDR 边界), F
 | 测试 | 结果 |
 |---|---|
 | 单核 26-case 回归 (sub_W=full_W 数值等价) | ✅ 全 PASS, 无回归 |
-| wslice1 单层 N=2 W slice (32×32×16, K=3) | ✅ PASS @ 7567 cycles, FINAL OFB 1024 词 bit-exact |
-| 多层 chain (simple3, wslice4 等) | ❌ Layer 2 起 OFM 不匹配 (1003/1024), 见 `memory/multilayer_chain_bug.md` |
+| wslice1 单层 N=2 W slice (32×32×16, K=3) | ✅ PASS @ 5569 cycles |
+| simple3 N=1 (3 层 mode A chain) | ✅ PASS @ 30825 cycles |
+| simple3 N=2 (3 层 W slice chain) | ✅ PASS @ 16705 cycles |
+| wslice4 N=2 (4 层 W slice chain) | ✅ PASS @ 22273 cycles |
+| wslice5 N=2 (5 层 W slice chain) | ✅ PASS @ 27841 cycles |
 
 ### 单层 W slice 关键点
 
@@ -180,28 +183,32 @@ W slice 几何 (computed redundancy halo):
 - 每核独立从 DDR 读自己 W 段 (offset = w_in_start × cin × 16), 各核 ODMA 写 DDR 的对应 W 段, DDR 上自然合并.
 - DDR_*_ROW_STRIDE = 整层 W × cin/cout × 16 (跟 cmd_btt 的 sub_W × cin × 16 解耦, 对应 RTL 改动).
 
-### 多层 chain 已知 bug (待修)
+### 多层 chain bug 修复 (重要)
 
-`memory/multilayer_chain_bug.md` 详细记录. 复现:
-```bash
-python toolchain/run_multicore_chain.py --case_name multicore_demo --demo simple3 --n_cores 1
-cd sim/tb_multicore && vsim -c -do "do run_chain.tcl"
+**Root cause**: `hw_files.sdp_sim` 之前返回 `summed & 0xFF` (uint 0..255), 但 RTL line_buffer 把
+IFB byte 当 INT8 *signed* (-128..127) 解释. 链式层间, 上层 OFM 当下层 IFM 时, 输出 byte 大于 127
+的那些值, Python emulator 把它们当 +200, RTL 当 -56, 算出截然不同的 psum.
+
+之前 run_regression chain 用 `clip_max=127` 强制输出 ≤ 127 (signed/unsigned 数值一致), 不触发 bug.
+multicore chain 用 `clip_max=255` 才暴露.
+
+**Fix**: `sdp_sim` 改成返回 signed int8:
+```python
+v = summed & 0xFF
+return v - 256 if v >= 128 else v
 ```
-Layer 0/1 OFM PASS, Layer 2 OFM 1003/1024 mismatches. 不论 N=1 还是 N=2 都复现, 跟 W slice 几何无关.
 
-怀疑方向 (按可能性排序):
-1. WB SRAM 上层 weight 残留 / Layer 2 WDMA 没完全覆盖
-2. wgt_buffer 内部 round/kk counter 在 layer 边界没复位
-3. ARF/PARF 残留状态
-4. 跟 host stage barrier 启 layer 2 的时序 race
+`write_expected_ofm` 的 `& 0xFF` 仍 byte-pack 不变, 单层 case 输出 byte 不变.
+跨层 chain `prev_ofm` 现在是 signed Python int, 跟 RTL 一致.
 
 ### 下一步
 
 | 任务 | 工时估计 |
 |---|---|
-| 修多层 chain bug (定位 + fix) | 1-2 天 |
 | W slice mixed K/stride 验证 (wslice_mixed demo) | 0.5 天 |
 | ResNet 11 layer 适配 (residual 路径 + 多层 chain) | 1-2 天 |
+| Mode C cout slice 实施 (P2) | 1 天 |
+| 片上 push 链 (P2 完成态) | 2-3 天 |
 
 ---
 

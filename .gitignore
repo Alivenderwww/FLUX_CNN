@@ -10,6 +10,7 @@ sim/*/vsim_run.wlf
 sim/*/*.txt
 sim/*/*.hex
 sim/*/wlft*
+sim/*/cases
 sim/*/__pycache__/
 sim/*/sim_params.f
 .claude/scheduled_tasks.lock
@@ -58,3 +59,8 @@ toolchain/models/images/mnist_test/*.png
 # F-2 多 case 生成物
 sim/tb_core_dma/cases/
 sim/tb_core_dma/vsim_all.log
+
+.claude
+paper
+memory
+STATUS.md

@@ -1,9 +1,11 @@
 # =============================================================================
-# tb_core_dma/run.tcl
+# tb_multicore/run_chain.tcl  --  M2.5 P0 多核多层 chain TB
 # =============================================================================
 
 set XLNX_INI    {C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini}
-set IP_GEN_DIR  {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm}
+set IP_DM_DIR   {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm}
+set IP_AGG_DIR  {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_2to3}
+set IP_CSR_DIR  {C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to2}
 file copy -force $XLNX_INI ./modelsim.ini
 
 vlib work
@@ -11,13 +13,16 @@ vmap work work
 vlib xil_defaultlib
 vmap xil_defaultlib xil_defaultlib
 
-# ---- axi_dm IP wrapper (VHDL) + Vivado glbl ----
 vcom -work xil_defaultlib -93 \
-    "$IP_GEN_DIR/sim/axi_dm.vhd"
+    "$IP_DM_DIR/sim/axi_dm.vhd"
 vlog -work xil_defaultlib \
     "C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/glbl.v"
 
-# ---- 我们的 RTL + TB ----
+vlog -work xil_defaultlib \
+    "$IP_AGG_DIR/sim/axi_2to3.v"
+vlog -work xil_defaultlib \
+    "$IP_CSR_DIR/sim/axi_lite_1to2.v"
+
 vlog -sv -work work -mfcu -suppress 2902,13314 \
     +incdir+../../RTL \
     ../../RTL/std_rf.sv \
@@ -46,19 +51,21 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/bias_rf.sv \
     ../../RTL/ofb_writer.sv \
     ../../RTL/core_top.sv \
+    ../../RTL/multicore_top.sv \
     ../tb_axi_m_mux/axi_slave_mem.sv \
-    tb_core_dma.sv
+    tb_multicore_chain.sv
 
-vsim -c -voptargs="+acc" -sva -f sim_params.f \
+vsim -c -voptargs="+acc" \
     -L work -L xil_defaultlib \
     -L axi_datamover_v5_1_30 \
     -L fifo_generator_v13_2_8 \
-    -L lib_pkg_v1_0_2 \
-    -L lib_cdc_v1_0_2 \
-    -L lib_fifo_v1_0_17 \
-    -L lib_srl_fifo_v1_0_2 \
+    -L lib_pkg_v1_0_2 -L lib_cdc_v1_0_2 \
+    -L lib_fifo_v1_0_17 -L lib_srl_fifo_v1_0_2 \
     -L blk_mem_gen_v8_4_6 \
+    -L axi_crossbar_v2_1_29 -L axi_data_fifo_v2_1_27 \
+    -L axi_infrastructure_v1_1_0 -L axi_register_slice_v2_1_28 \
+    -L generic_baseblocks_v2_1_0 \
     -L unisims_ver \
-    work.tb_core_dma xil_defaultlib.glbl
+    work.tb_multicore_chain xil_defaultlib.glbl
 run -all
 quit -f

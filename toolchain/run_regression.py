@@ -176,6 +176,25 @@ _l2    = resnet_block    (_l1,    'L2', c=32, shifts=(11, 12, 7))
 _l3    = resnet_block    (_l2,    'L3', c=64, shifts=(12, 13, 8))
 _fc    = _chain.root     ('FC',  k=1, c_in=256, c_out=522, h=1, w=1, shift=8)
 
+# 鲁棒性 corner case (用独立 root, 不依赖前面 chain): 覆盖 K/stride/pad/cin/cout/h/w 边界
+# 每个 case 用自己的 random IFM (gen_isa_test seed 互不相同)
+_chain.root('R.K1_C16',     k=1, c_out=16, c_in=16,  h=16,  w=16, pad=0, shift=2)
+_chain.root('R.K2_C16',     k=2, c_out=16, c_in=16,  h=16,  w=16, pad=0, shift=3)
+_chain.root('R.K5_C16',     k=5, c_out=16, c_in=16,  h=16,  w=16, pad=2, shift=7)
+_chain.root('R.K7_C16',     k=7, c_out=16, c_in=16,  h=16,  w=16, pad=3, shift=8)
+# _chain.root('R.K3S3',     k=3, ..., s=3) -- skipped: stride>=3 触发 chain 的 force_s2d, 跟原意 (不 fold) 冲突
+_chain.root('R.K3S2',       k=3, c_out=16, c_in=16,  h=32,  w=32, s=2, pad=1, shift=5)
+_chain.root('R.K5S2',       k=5, c_out=16, c_in=16,  h=32,  w=32, s=2, pad=2, shift=6)
+_chain.root('R.Cin4',       k=3, c_out=16, c_in=4,   h=16,  w=16, pad=1, shift=4)
+_chain.root('R.Cin8',       k=3, c_out=16, c_in=8,   h=16,  w=16, pad=1, shift=4)
+_chain.root('R.Cin12',      k=3, c_out=16, c_in=12,  h=16,  w=16, pad=1, shift=4)
+_chain.root('R.Cout24',     k=3, c_out=24, c_in=16,  h=16,  w=16, pad=1, shift=5)
+_chain.root('R.Cout32',     k=3, c_out=32, c_in=16,  h=16,  w=16, pad=1, shift=5)
+_chain.root('R.H15W17',     k=3, c_out=16, c_in=16,  h=15,  w=17, pad=1, shift=5)
+_chain.root('R.H33W33',     k=3, c_out=16, c_in=16,  h=33,  w=33, pad=1, shift=5)
+_chain.root('R.H64W32',     k=3, c_out=16, c_in=16,  h=64,  w=32, pad=1, shift=5)  # OFB ring boundary
+_chain.root('R.1x1FC',      k=1, c_out=32, c_in=64,  h=1,   w=1,  pad=0, shift=6)
+
 CASES = _chain.cases
 
 

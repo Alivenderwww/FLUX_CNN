@@ -56,9 +56,13 @@ always @(posedge clk or negedge rstn) begin
     else  wr_channel_lock <= wr_channel_lock;
 end
 
+// W 通道 sel 必须 sticky: AW 握手后, IP (e.g. axi_dm DataMover) 可能把 cmd N+1
+// 的 W beats 送出来 *早于* cmd N+1 的 AW (Xilinx IP 内部预读 W FIFO). 旧实现
+// default=0 让 IDLE 时 sel 飘到 master 0, mux W forward 错 master.
+// 改成保持上一次 cu_wr_master_sel — 没新 AW 时 sel 不动, 新 AW 来才切.
 always_comb begin: wr_addr_master
     int rev_i;
-    wr_addr_master_sel = 0;
+    wr_addr_master_sel = cu_wr_master_sel;
     if (wr_channel_lock) wr_addr_master_sel = cu_wr_master_sel;
     else for(rev_i=(2**M_WIDTH-1); rev_i>=0; rev_i--) if(MASTER_WR_ADDR_VALID[rev_i])
         wr_addr_master_sel = rev_i[M_WIDTH-1:0];

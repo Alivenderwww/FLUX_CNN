@@ -71,6 +71,7 @@ def generate_random(
     ddr_ifb_base=None, ddr_wb_base=None,
     ddr_ofb_base=None, ddr_desc_base=None, ddr_rdma_base=None,
     skip_ifb_preload=False, skip_ofb_clear=False,
+    skip_idma=False,
 ):
     """随机 ifm + weight + SDP 量化的测试生成器。
     单 case CLI 用法: 全 None override → 用 F-1a 默认 SDP 参数 (mult=1, clip[0,255], ReLU).
@@ -310,7 +311,8 @@ def generate_random(
                                      ddr_desc_base=ddr_desc_base,
                                      ddr_rdma_base=ddr_rdma_base,
                                      skip_ifb_preload=1 if skip_ifb_preload else 0,
-                                     skip_ofb_clear  =1 if skip_ofb_clear   else 0)
+                                     skip_ofb_clear  =1 if skip_ofb_clear   else 0,
+                                     skip_idma       =1 if skip_idma        else 0)
     hw_files.write_config(out_dir, cfg_dict)
 
     # fold 后 cin_slices/cout_slices 取 fold-aware 的值 (cfg 已更新)
@@ -331,9 +333,12 @@ def generate_random(
     print(f"Files  : ifb.txt  wb.txt  expected_ofm.txt  config.txt  sim_params.f  desc_list.hex")
     # 链式调用需要 ofm_arr (作下层 ifm) + 输出维度
     return {
-        'ofm_arr': ofm_arr,
-        'H_OUT'  : H_OUT,
-        'W_OUT'  : W_OUT,
+        'ofm_arr'  : ofm_arr,
+        'H_OUT'    : H_OUT,
+        'W_OUT'    : W_OUT,
+        'ifb_words': cfg['ifb_words'],
+        'wb_words' : cfg['wb_words'],
+        'ofb_words': cfg['ofb_words'],
     }
 
 

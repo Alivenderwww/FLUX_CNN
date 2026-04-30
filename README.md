@@ -36,7 +36,9 @@ FLUX_CNN 是一个用 SystemVerilog 实现的 CNN 加速器：**16×16 int8 MAC 
 
 | 文档 | 内容 |
 |------|------|
+| [`STATUS.md`](STATUS.md) | **当前进度 + 任务交接** (2026-04-29 更新) |
 | [`CLAUDE.md`](CLAUDE.md) | Claude Code 工作指引（含快速命令） |
+| [`memory/`](memory/) | 设计经验小文档 (踩过的坑 + 当时不明显的设计决策) |
 | [`docs/modules/`](docs/modules/) | 每个 RTL 模块的时序与数据流 |
 | [`docs/slicing/`](docs/slicing/) | Cin/Cout > 16 时编译器、cfg、硬件循环嵌套的切片机制 |
 | [`docs/pe-fold.md`](docs/pe-fold.md) | Ky-fold + Space-to-Depth 数学推导 + 实现位置 |

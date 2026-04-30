@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+`include "flux_cnn_params.svh"
 
 // =============================================================================
 // cfg_regs.sv  --  Shared Configuration + DMA Descriptor Register Bank
@@ -191,74 +192,78 @@ module cfg_regs #(
     output logic signed [15:0]       shortcut_mult,
     output logic [4:0]               shortcut_shift,
     output logic [12:0]              bias_base,           // word-index in Shortcut Bank
+
+    // ---- M2 Multi-core ----
+    output logic                     skip_idma,           // 1 = consumer 等远端核 push 进 IFB, 不启本地 IDMA
     output logic [31:0]              rdma_src_base,
     output logic [23:0]              rdma_byte_len
 );
 
     // =========================================================================
-    // 地址常量
+    // 地址常量 (来自 flux_cnn_params.svh, 由 params.py codegen 生成)
     // =========================================================================
-    localparam [ADDR_W-1:0] ADDR_CTRL             = 12'h000;
-    localparam [ADDR_W-1:0] ADDR_STATUS           = 12'h004;
+    localparam [ADDR_W-1:0] ADDR_CTRL             = `FLUX_ADDR_CTRL;
+    localparam [ADDR_W-1:0] ADDR_STATUS           = `FLUX_ADDR_STATUS;
 
-    localparam [ADDR_W-1:0] ADDR_H_OUT            = 12'h100;
-    localparam [ADDR_W-1:0] ADDR_W_OUT            = 12'h104;
-    localparam [ADDR_W-1:0] ADDR_W_IN             = 12'h108;
-    localparam [ADDR_W-1:0] ADDR_K                = 12'h10C;
-    localparam [ADDR_W-1:0] ADDR_STRIDE           = 12'h110;
-    localparam [ADDR_W-1:0] ADDR_CIN_SLICES       = 12'h114;
-    localparam [ADDR_W-1:0] ADDR_COUT_SLICES      = 12'h118;
-    localparam [ADDR_W-1:0] ADDR_TILE_W           = 12'h11C;
-    localparam [ADDR_W-1:0] ADDR_NUM_TILES        = 12'h120;
-    localparam [ADDR_W-1:0] ADDR_LAST_VALID_W     = 12'h124;
-    localparam [ADDR_W-1:0] ADDR_TOTAL_WRF        = 12'h128;
-    localparam [ADDR_W-1:0] ADDR_KY               = 12'h12C;  // ky 独立维度 (默认等于 K)
-    localparam [ADDR_W-1:0] ADDR_KK               = 12'h130;
-    localparam [ADDR_W-1:0] ADDR_ROUNDS_PER_CINS  = 12'h134;
-    localparam [ADDR_W-1:0] ADDR_ROUND_LEN_LAST   = 12'h138;
-    localparam [ADDR_W-1:0] ADDR_IFB_BASE         = 12'h13C;
-    localparam [ADDR_W-1:0] ADDR_WB_BASE          = 12'h140;
-    localparam [ADDR_W-1:0] ADDR_OFB_BASE         = 12'h144;
-    localparam [ADDR_W-1:0] ADDR_IFB_ROW_STEP     = 12'h14C;
-    localparam [ADDR_W-1:0] ADDR_WB_COUT_STEP     = 12'h154;
-    localparam [ADDR_W-1:0] ADDR_TILE_IN_STEP     = 12'h15C;
-    localparam [ADDR_W-1:0] ADDR_SDP_SHIFT        = 12'h160;
-    localparam [ADDR_W-1:0] ADDR_SDP_RELU_EN      = 12'h164;
+    localparam [ADDR_W-1:0] ADDR_H_OUT            = `FLUX_ADDR_H_OUT;
+    localparam [ADDR_W-1:0] ADDR_W_OUT            = `FLUX_ADDR_W_OUT;
+    localparam [ADDR_W-1:0] ADDR_W_IN             = `FLUX_ADDR_W_IN;
+    localparam [ADDR_W-1:0] ADDR_K                = `FLUX_ADDR_K;
+    localparam [ADDR_W-1:0] ADDR_STRIDE           = `FLUX_ADDR_STRIDE;
+    localparam [ADDR_W-1:0] ADDR_CIN_SLICES       = `FLUX_ADDR_CIN_SLICES;
+    localparam [ADDR_W-1:0] ADDR_COUT_SLICES      = `FLUX_ADDR_COUT_SLICES;
+    localparam [ADDR_W-1:0] ADDR_TILE_W           = `FLUX_ADDR_TILE_W;
+    localparam [ADDR_W-1:0] ADDR_NUM_TILES        = `FLUX_ADDR_NUM_TILES;
+    localparam [ADDR_W-1:0] ADDR_LAST_VALID_W     = `FLUX_ADDR_LAST_VALID_W;
+    localparam [ADDR_W-1:0] ADDR_TOTAL_WRF        = `FLUX_ADDR_TOTAL_WRF;
+    localparam [ADDR_W-1:0] ADDR_KY               = `FLUX_ADDR_KY;
+    localparam [ADDR_W-1:0] ADDR_KK               = `FLUX_ADDR_KK;
+    localparam [ADDR_W-1:0] ADDR_ROUNDS_PER_CINS  = `FLUX_ADDR_ROUNDS_PER_CINS;
+    localparam [ADDR_W-1:0] ADDR_ROUND_LEN_LAST   = `FLUX_ADDR_ROUND_LEN_LAST;
+    localparam [ADDR_W-1:0] ADDR_IFB_BASE         = `FLUX_ADDR_IFB_BASE;
+    localparam [ADDR_W-1:0] ADDR_WB_BASE          = `FLUX_ADDR_WB_BASE;
+    localparam [ADDR_W-1:0] ADDR_OFB_BASE         = `FLUX_ADDR_OFB_BASE;
+    localparam [ADDR_W-1:0] ADDR_IFB_ROW_STEP     = `FLUX_ADDR_IFB_ROW_STEP;
+    localparam [ADDR_W-1:0] ADDR_WB_COUT_STEP     = `FLUX_ADDR_WB_COUT_STEP;
+    localparam [ADDR_W-1:0] ADDR_TILE_IN_STEP     = `FLUX_ADDR_TILE_IN_STEP;
+    localparam [ADDR_W-1:0] ADDR_SDP_SHIFT        = `FLUX_ADDR_SDP_SHIFT;
+    localparam [ADDR_W-1:0] ADDR_SDP_RELU_EN      = `FLUX_ADDR_SDP_RELU_EN;
 
-    localparam [ADDR_W-1:0] ADDR_H_IN_TOTAL       = 12'h168;
-    localparam [ADDR_W-1:0] ADDR_IFB_STRIP_ROWS   = 12'h16C;
-    localparam [ADDR_W-1:0] ADDR_OFB_STRIP_ROWS   = 12'h170;
-    localparam [ADDR_W-1:0] ADDR_DDR_IFM_ROW_STR  = 12'h174;
-    localparam [ADDR_W-1:0] ADDR_DDR_OFM_ROW_STR  = 12'h178;
-    localparam [ADDR_W-1:0] ADDR_DMA_MODE         = 12'h17C;
+    localparam [ADDR_W-1:0] ADDR_H_IN_TOTAL       = `FLUX_ADDR_H_IN_TOTAL;
+    localparam [ADDR_W-1:0] ADDR_IFB_STRIP_ROWS   = `FLUX_ADDR_IFB_STRIP_ROWS;
+    localparam [ADDR_W-1:0] ADDR_OFB_STRIP_ROWS   = `FLUX_ADDR_OFB_STRIP_ROWS;
+    localparam [ADDR_W-1:0] ADDR_DDR_IFM_ROW_STR  = `FLUX_ADDR_DDR_IFM_ROW_STRIDE;
+    localparam [ADDR_W-1:0] ADDR_DDR_OFM_ROW_STR  = `FLUX_ADDR_DDR_OFM_ROW_STRIDE;
+    localparam [ADDR_W-1:0] ADDR_DMA_MODE         = `FLUX_ADDR_DMA_MODE;
 
-    localparam [ADDR_W-1:0] ADDR_DESC_LIST_BASE   = 12'h180;
-    localparam [ADDR_W-1:0] ADDR_DESC_COUNT       = 12'h184;
-    localparam [ADDR_W-1:0] ADDR_SDP_MULT         = 12'h188;
-    localparam [ADDR_W-1:0] ADDR_SDP_ZP_OUT       = 12'h18C;
-    localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MIN     = 12'h190;
-    localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MAX     = 12'h194;
-    localparam [ADDR_W-1:0] ADDR_SDP_ROUND_EN     = 12'h198;
-    localparam [ADDR_W-1:0] ADDR_IFB_RING_WORDS   = 12'h1A0;
-    localparam [ADDR_W-1:0] ADDR_OFB_ROW_WORDS    = 12'h1A4;
-    localparam [ADDR_W-1:0] ADDR_OFB_RING_WORDS   = 12'h1A8;
-    localparam [ADDR_W-1:0] ADDR_IFB_ISS_STEP     = 12'h1AC;
-    localparam [ADDR_W-1:0] ADDR_IFB_KY_STEP      = 12'h1B0;
-    localparam [ADDR_W-1:0] ADDR_TILE_PIX_STEP    = 12'h1B4;
-    localparam [ADDR_W-1:0] ADDR_ARF_REUSE_EN     = 12'h1B8;
-    localparam [ADDR_W-1:0] ADDR_RESIDUAL_EN      = 12'h1BC;
-    localparam [ADDR_W-1:0] ADDR_SHORTCUT_MULT    = 12'h1C0;
-    localparam [ADDR_W-1:0] ADDR_SHORTCUT_SHIFT   = 12'h1C4;
-    localparam [ADDR_W-1:0] ADDR_BIAS_BASE        = 12'h1C8;
+    localparam [ADDR_W-1:0] ADDR_DESC_LIST_BASE   = `FLUX_ADDR_DESC_LIST_BASE;
+    localparam [ADDR_W-1:0] ADDR_DESC_COUNT       = `FLUX_ADDR_DESC_COUNT;
+    localparam [ADDR_W-1:0] ADDR_SDP_MULT         = `FLUX_ADDR_SDP_MULT;
+    localparam [ADDR_W-1:0] ADDR_SDP_ZP_OUT       = `FLUX_ADDR_SDP_ZP_OUT;
+    localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MIN     = `FLUX_ADDR_SDP_CLIP_MIN;
+    localparam [ADDR_W-1:0] ADDR_SDP_CLIP_MAX     = `FLUX_ADDR_SDP_CLIP_MAX;
+    localparam [ADDR_W-1:0] ADDR_SDP_ROUND_EN     = `FLUX_ADDR_SDP_ROUND_EN;
+    localparam [ADDR_W-1:0] ADDR_IFB_RING_WORDS   = `FLUX_ADDR_IFB_RING_WORDS;
+    localparam [ADDR_W-1:0] ADDR_OFB_ROW_WORDS    = `FLUX_ADDR_OFB_ROW_WORDS;
+    localparam [ADDR_W-1:0] ADDR_OFB_RING_WORDS   = `FLUX_ADDR_OFB_RING_WORDS;
+    localparam [ADDR_W-1:0] ADDR_IFB_ISS_STEP     = `FLUX_ADDR_IFB_ISS_STEP;
+    localparam [ADDR_W-1:0] ADDR_IFB_KY_STEP      = `FLUX_ADDR_IFB_KY_STEP;
+    localparam [ADDR_W-1:0] ADDR_TILE_PIX_STEP    = `FLUX_ADDR_TILE_PIX_STEP;
+    localparam [ADDR_W-1:0] ADDR_ARF_REUSE_EN     = `FLUX_ADDR_ARF_REUSE_EN;
+    localparam [ADDR_W-1:0] ADDR_RESIDUAL_EN      = `FLUX_ADDR_RESIDUAL_EN;
+    localparam [ADDR_W-1:0] ADDR_SHORTCUT_MULT    = `FLUX_ADDR_SHORTCUT_MULT;
+    localparam [ADDR_W-1:0] ADDR_SHORTCUT_SHIFT   = `FLUX_ADDR_SHORTCUT_SHIFT;
+    localparam [ADDR_W-1:0] ADDR_BIAS_BASE        = `FLUX_ADDR_BIAS_BASE;
+    localparam [ADDR_W-1:0] ADDR_SKIP_IDMA        = `FLUX_ADDR_SKIP_IDMA;
 
-    localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = 12'h200;
-    localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = 12'h204;
-    localparam [ADDR_W-1:0] ADDR_WDMA_SRC_BASE    = 12'h210;
-    localparam [ADDR_W-1:0] ADDR_WDMA_BYTE_LEN    = 12'h214;
-    localparam [ADDR_W-1:0] ADDR_ODMA_DST_BASE    = 12'h220;
-    localparam [ADDR_W-1:0] ADDR_ODMA_BYTE_LEN    = 12'h224;
-    localparam [ADDR_W-1:0] ADDR_RDMA_SRC_BASE    = 12'h230;
-    localparam [ADDR_W-1:0] ADDR_RDMA_BYTE_LEN    = 12'h234;
+    localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = `FLUX_ADDR_IDMA_SRC_BASE;
+    localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = `FLUX_ADDR_IDMA_BYTE_LEN;
+    localparam [ADDR_W-1:0] ADDR_WDMA_SRC_BASE    = `FLUX_ADDR_WDMA_SRC_BASE;
+    localparam [ADDR_W-1:0] ADDR_WDMA_BYTE_LEN    = `FLUX_ADDR_WDMA_BYTE_LEN;
+    localparam [ADDR_W-1:0] ADDR_ODMA_DST_BASE    = `FLUX_ADDR_ODMA_DST_BASE;
+    localparam [ADDR_W-1:0] ADDR_ODMA_BYTE_LEN    = `FLUX_ADDR_ODMA_BYTE_LEN;
+    localparam [ADDR_W-1:0] ADDR_RDMA_SRC_BASE    = `FLUX_ADDR_RDMA_SRC_BASE;
+    localparam [ADDR_W-1:0] ADDR_RDMA_BYTE_LEN    = `FLUX_ADDR_RDMA_BYTE_LEN;
 
     // =========================================================================
     // start pulse 生成 (csr_w only): CTRL 写 1 → 当拍 pulse
@@ -291,6 +296,13 @@ module cfg_regs #(
     always_ff @(posedge clk) begin
         if      (!rst_n)                                    r_dma_mode_ctrl <= 2'b00;
         else if (csr_w_en && csr_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= csr_w_data[1:0];
+    end
+
+    // SKIP_IDMA (M2 控制路径, 跨核 consumer 标志, seq_w only): 复位 0 默认本地 IDMA 走原路径
+    logic r_skip_idma;
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                                       r_skip_idma <= 1'b0;
+        else if (seq_w_en && seq_w_addr == ADDR_SKIP_IDMA)     r_skip_idma <= seq_w_data[0];
     end
 
     // =========================================================================
@@ -483,6 +495,7 @@ module cfg_regs #(
     assign sdp_clip_max    = r_sdp_clip_max;
     assign sdp_round_en    = r_sdp_round_en;
     assign residual_en     = r_residual_en;
+    assign skip_idma       = r_skip_idma;
     assign shortcut_mult   = r_shortcut_mult;
     assign shortcut_shift  = r_shortcut_shift;
     assign bias_base       = r_bias_base;
@@ -557,6 +570,7 @@ module cfg_regs #(
             ADDR_RDMA_SRC_BASE   : reg_r_data = r_rdma_src_base;
             ADDR_RDMA_BYTE_LEN   : reg_r_data = {8'd0, r_rdma_byte_len};
             ADDR_RESIDUAL_EN     : reg_r_data = {31'd0, r_residual_en};
+            ADDR_SKIP_IDMA       : reg_r_data = {31'd0, r_skip_idma};
             ADDR_SHORTCUT_MULT   : reg_r_data = {{16{r_shortcut_mult[15]}}, r_shortcut_mult};
             ADDR_SHORTCUT_SHIFT  : reg_r_data = {27'd0, r_shortcut_shift};
             ADDR_BIAS_BASE       : reg_r_data = {19'd0, r_bias_base};

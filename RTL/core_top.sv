@@ -15,23 +15,27 @@
 // observability 输出。TB 用 $readmemh 填 IFB/WB mem（hier），用 AXI-Lite 下
 // 发 cfg 和 start。
 // =============================================================================
+`include "flux_cnn_params.svh"
 
 module core_top #(
-    parameter int NUM_COL     = 16,
-    parameter int NUM_PE      = 16,
-    parameter int DATA_WIDTH  = 8,
-    parameter int PSUM_WIDTH  = 32,
-    parameter int WRF_DEPTH   = 32,
-    parameter int ARF_DEPTH   = 32,
-    parameter int PARF_DEPTH  = 32,
-    parameter int SRAM_DEPTH  = 8192,
-    parameter int CSR_ADDR_W  = 12,        // AXI-Lite 地址位宽
-    parameter int CSR_DATA_W  = 32,
-    parameter int BUS_ADDR_W  = 32,        // 外部 AXI M 地址位宽（DDR）
-    parameter int BUS_DATA_W  = 128,       // 外部 AXI M 数据位宽
-    parameter int AXI_M_ID    = 2,         // per-DMA AXI ID 位宽
-    parameter int AXI_M_WIDTH = 2,         // log2(master 数) — 4 slot: IDMA/WDMA/ODMA/reserved
-    parameter int DMA_LEN_W   = 24         // DMA byte_len 位宽
+    // 默认值来自 flux_cnn_params.svh (params.py codegen). 实例化时可 override.
+    parameter int NUM_COL     = `FLUX_NUM_COL,
+    parameter int NUM_PE      = `FLUX_NUM_PE,
+    parameter int DATA_WIDTH  = `FLUX_DATA_WIDTH,
+    parameter int PSUM_WIDTH  = `FLUX_PSUM_WIDTH,
+    parameter int WRF_DEPTH   = `FLUX_WRF_DEPTH,
+    parameter int ARF_DEPTH   = `FLUX_ARF_DEPTH,
+    parameter int PARF_DEPTH  = `FLUX_PARF_DEPTH,
+    parameter int SRAM_DEPTH  = `FLUX_IFB_DEPTH,    // IFB 物理深度
+    parameter int WB_DEPTH    = `FLUX_WB_DEPTH,
+    parameter int OFB_DEPTH   = `FLUX_OFB_DEPTH,
+    parameter int CSR_ADDR_W  = `FLUX_CSR_ADDR_W,
+    parameter int CSR_DATA_W  = `FLUX_CSR_DATA_W,
+    parameter int BUS_ADDR_W  = `FLUX_BUS_ADDR_W,
+    parameter int BUS_DATA_W  = `FLUX_BUS_DATA_W,
+    parameter int AXI_M_ID    = `FLUX_AXI_M_ID,
+    parameter int AXI_M_WIDTH = `FLUX_AXI_M_WIDTH,
+    parameter int DMA_LEN_W   = `FLUX_DMA_LEN_W
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
@@ -59,7 +63,12 @@ module core_top #(
     output logic [AXI_M_ID+AXI_M_WIDTH-1:0]      bus_awid,
     output logic [BUS_ADDR_W-1:0]                bus_awaddr,
     output logic [7:0]                           bus_awlen,
+    output logic [2:0]                           bus_awsize,
     output logic [1:0]                           bus_awburst,
+    output logic                                 bus_awlock,
+    output logic [3:0]                           bus_awcache,
+    output logic [2:0]                           bus_awprot,
+    output logic [3:0]                           bus_awqos,
     output logic                                 bus_awvalid,
     input  logic                                 bus_awready,
 
@@ -77,7 +86,12 @@ module core_top #(
     output logic [AXI_M_ID+AXI_M_WIDTH-1:0]      bus_arid,
     output logic [BUS_ADDR_W-1:0]                bus_araddr,
     output logic [7:0]                           bus_arlen,
+    output logic [2:0]                           bus_arsize,
     output logic [1:0]                           bus_arburst,
+    output logic                                 bus_arlock,
+    output logic [3:0]                           bus_arcache,
+    output logic [2:0]                           bus_arprot,
+    output logic [3:0]                           bus_arqos,
     output logic                                 bus_arvalid,
     input  logic                                 bus_arready,
 
@@ -87,6 +101,45 @@ module core_top #(
     input  logic                                 bus_rlast,
     input  logic                                 bus_rvalid,
     output logic                                 bus_rready,
+
+    // ---- 跨核 IFB AXI4 SI (M2: 远端核 ODMA push 进本核 IFB) ----
+    input  logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_awid,    // EXT_BUS_ID = AXI_M_ID+AXI_M_WIDTH+1
+    input  logic [BUS_ADDR_W-1:0]                rmt_ifb_awaddr,
+    input  logic [7:0]                           rmt_ifb_awlen,
+    input  logic [2:0]                           rmt_ifb_awsize,
+    input  logic [1:0]                           rmt_ifb_awburst,
+    input  logic                                 rmt_ifb_awlock,
+    input  logic [3:0]                           rmt_ifb_awcache,
+    input  logic [2:0]                           rmt_ifb_awprot,
+    input  logic [3:0]                           rmt_ifb_awqos,
+    input  logic                                 rmt_ifb_awvalid,
+    output logic                                 rmt_ifb_awready,
+    input  logic [BUS_DATA_W-1:0]                rmt_ifb_wdata,
+    input  logic [BUS_DATA_W/8-1:0]              rmt_ifb_wstrb,
+    input  logic                                 rmt_ifb_wlast,
+    input  logic                                 rmt_ifb_wvalid,
+    output logic                                 rmt_ifb_wready,
+    output logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_bid,
+    output logic [1:0]                           rmt_ifb_bresp,
+    output logic                                 rmt_ifb_bvalid,
+    input  logic                                 rmt_ifb_bready,
+    input  logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_arid,
+    input  logic [BUS_ADDR_W-1:0]                rmt_ifb_araddr,
+    input  logic [7:0]                           rmt_ifb_arlen,
+    input  logic [2:0]                           rmt_ifb_arsize,
+    input  logic [1:0]                           rmt_ifb_arburst,
+    input  logic                                 rmt_ifb_arlock,
+    input  logic [3:0]                           rmt_ifb_arcache,
+    input  logic [2:0]                           rmt_ifb_arprot,
+    input  logic [3:0]                           rmt_ifb_arqos,
+    input  logic                                 rmt_ifb_arvalid,
+    output logic                                 rmt_ifb_arready,
+    output logic [AXI_M_ID+AXI_M_WIDTH:0]        rmt_ifb_rid,
+    output logic [BUS_DATA_W-1:0]                rmt_ifb_rdata,
+    output logic [1:0]                           rmt_ifb_rresp,
+    output logic                                 rmt_ifb_rlast,
+    output logic                                 rmt_ifb_rvalid,
+    input  logic                                 rmt_ifb_rready,
 
     // TB 外部 SRAM 写口 (加载 IFB / WB) — DMA 未接入时保留作为 $readmemh 后门
     input  logic                                 ifb_we_ext,
@@ -197,6 +250,11 @@ module core_top #(
     logic [4:0]        cfg_shortcut_shift;
     logic [12:0]       cfg_bias_base;
 
+    // M2: skip local IDMA (consumer 端等远端核 push 进 IFB)
+    logic              cfg_skip_idma;
+    logic              seq_start_idma_pulse_g;    // gated start pulse (= seq_start_idma_pulse & ~cfg_skip_idma)
+    logic              idma_done_eff;              // effective done given sequencer (= idma_done | cfg_skip_idma)
+
     // Sequencer → core pipeline + DMA
     logic              seq_start_core_pulse, seq_start_wgt_pulse;
     logic              seq_start_idma_pulse, seq_start_odma_pulse, seq_start_wdma_pulse;
@@ -286,6 +344,7 @@ module core_top #(
         .sdp_round_en(cfg_sdp_round_en),
         // R.1: residual / shortcut / bias / rdma cfg
         .residual_en(cfg_residual_en),
+        .skip_idma  (cfg_skip_idma),
         .shortcut_mult(cfg_shortcut_mult),
         .shortcut_shift(cfg_shortcut_shift),
         .bias_base(cfg_bias_base),
@@ -334,7 +393,7 @@ module core_top #(
         .start_wdma_pulse      (seq_start_wdma_pulse),
         .start_rdma_pulse      (seq_start_rdma_pulse),
         .core_strip_done       (ow_done),
-        .idma_strip_done       (idma_done),
+        .idma_strip_done       (idma_done_eff),
         .odma_strip_done       (odma_done),
         .wdma_done             (wdma_done),
         .rdma_done             (rdma_done),
@@ -374,13 +433,20 @@ module core_top #(
     logic [AW-1:0]          odma_ofb_raddr;
     logic [OFB_WIDTH-1:0]   odma_ofb_rdata;
 
-    // IFB 写口：DMA 优先（无冲突默认下 DMA we 和 ext we 不会同时高）
+    // IFB 写口三路 mux: idma_local | tb_backdoor | rmt_axi_push
+    //   M2: SKIP_IDMA=1 时 idma_ifb_we=0, rmt_axi_we 走跨核 push 路径.
+    //   优先级 (运行时不应该有 2 路同时高): idma > rmt_axi > tb_ext
+    logic                   rmt_ifb_we;
+    logic [AW-1:0]          rmt_ifb_waddr;
+    logic [IFB_WIDTH-1:0]   rmt_ifb_wdata_int;
     logic                   ifb_we_mux;
     logic [AW-1:0]          ifb_waddr_mux;
     logic [IFB_WIDTH-1:0]   ifb_wdata_mux;
-    assign ifb_we_mux    = idma_ifb_we | ifb_we_ext;
-    assign ifb_waddr_mux = idma_ifb_we ? idma_ifb_waddr : ifb_waddr_ext;
-    assign ifb_wdata_mux = idma_ifb_we ? idma_ifb_wdata : ifb_wdata_ext;
+    assign ifb_we_mux    = idma_ifb_we | rmt_ifb_we | ifb_we_ext;
+    assign ifb_waddr_mux = idma_ifb_we ? idma_ifb_waddr :
+                           rmt_ifb_we  ? rmt_ifb_waddr  : ifb_waddr_ext;
+    assign ifb_wdata_mux = idma_ifb_we ? idma_ifb_wdata :
+                           rmt_ifb_we  ? rmt_ifb_wdata_int : ifb_wdata_ext;
 
     logic                   wb_we_mux;
     logic [AW-1:0]          wb_waddr_mux;
@@ -399,18 +465,23 @@ module core_top #(
     assign ofb_rdata_ext  = ofb_rdata_shared;
 
     sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(IFB_WIDTH)) u_ifb (
-        .clk(clk), .we(ifb_we_mux), .waddr(ifb_waddr_mux), .wdata(ifb_wdata_mux),
-        .re(ifb_re), .raddr(ifb_raddr), .rdata(ifb_rdata)
+        .clk(clk), .we(ifb_we_mux), .waddr(ifb_waddr_mux[$clog2(SRAM_DEPTH)-1:0]),
+        .wdata(ifb_wdata_mux),
+        .re(ifb_re), .raddr(ifb_raddr[$clog2(SRAM_DEPTH)-1:0]), .rdata(ifb_rdata)
     );
 
-    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(WB_WIDTH)) u_wb (
-        .clk(clk), .we(wb_we_mux), .waddr(wb_waddr_mux), .wdata(wb_wdata_mux),
-        .re(wb_re), .raddr(wb_raddr), .rdata(wb_rdata)
+    // WB / OFB 物理深度小于 SRAM_DEPTH (= 13-bit AW). Vivado 自动只用低位寻址.
+    sram_model #(.DEPTH(WB_DEPTH), .DATA_WIDTH(WB_WIDTH)) u_wb (
+        .clk(clk), .we(wb_we_mux), .waddr(wb_waddr_mux[$clog2(WB_DEPTH)-1:0]),
+        .wdata(wb_wdata_mux),
+        .re(wb_re), .raddr(wb_raddr[$clog2(WB_DEPTH)-1:0]), .rdata(wb_rdata)
     );
 
-    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(OFB_WIDTH)) u_ofb (
-        .clk(clk), .we(ofb_we), .waddr(ofb_waddr), .wdata(ofb_wdata),
-        .re(ofb_re_mux), .raddr(ofb_raddr_mux), .rdata(ofb_rdata_shared)
+    sram_model #(.DEPTH(OFB_DEPTH), .DATA_WIDTH(OFB_WIDTH)) u_ofb (
+        .clk(clk), .we(ofb_we), .waddr(ofb_waddr[$clog2(OFB_DEPTH)-1:0]),
+        .wdata(ofb_wdata),
+        .re(ofb_re_mux), .raddr(ofb_raddr_mux[$clog2(OFB_DEPTH)-1:0]),
+        .rdata(ofb_rdata_shared)
     );
 
     // =========================================================================
@@ -445,7 +516,10 @@ module core_top #(
     // =========================================================================
     logic lb_done;
     logic [15:0] rows_consumed;
-    logic [15:0] rows_available;   // IDMA rows_written → line_buffer 做 forward-pressure
+    logic [15:0] rows_available;       // IDMA rows_written
+    logic [15:0] rmt_rows_pushed;       // ifb_axi_slave 跨核 push 行数 (M2 SKIP_IDMA 路径)
+    logic [15:0] rows_available_eff;    // line_buffer 输入: SKIP_IDMA 时用 rmt, 否则用 idma
+    assign rows_available_eff = cfg_skip_idma ? rmt_rows_pushed : rows_available;
 
     line_buffer #(
         .NUM_PE    (NUM_PE),
@@ -486,7 +560,7 @@ module core_top #(
         .act_vec          (act_vec),
         .act_ready        (act_ready),
         .rows_consumed    (rows_consumed),
-        .rows_available   (rows_available)
+        .rows_available   (rows_available_eff)
     );
 
     // =========================================================================
@@ -737,7 +811,12 @@ module core_top #(
     logic [N_MST-1:0] [AXI_M_ID-1:0]      m_awid;
     logic [N_MST-1:0] [BUS_ADDR_W-1:0]    m_awaddr;
     logic [N_MST-1:0] [7:0]               m_awlen;
+    logic [N_MST-1:0] [2:0]               m_awsize;
     logic [N_MST-1:0] [1:0]               m_awburst;
+    logic [N_MST-1:0]                     m_awlock;
+    logic [N_MST-1:0] [3:0]               m_awcache;
+    logic [N_MST-1:0] [2:0]               m_awprot;
+    logic [N_MST-1:0] [3:0]               m_awqos;
     logic [N_MST-1:0]                     m_awvalid;
     logic [N_MST-1:0]                     m_awready;
     logic [N_MST-1:0] [BUS_DATA_W-1:0]    m_wdata;
@@ -752,7 +831,12 @@ module core_top #(
     logic [N_MST-1:0] [AXI_M_ID-1:0]      m_arid;
     logic [N_MST-1:0] [BUS_ADDR_W-1:0]    m_araddr;
     logic [N_MST-1:0] [7:0]               m_arlen;
+    logic [N_MST-1:0] [2:0]               m_arsize;
     logic [N_MST-1:0] [1:0]               m_arburst;
+    logic [N_MST-1:0]                     m_arlock;
+    logic [N_MST-1:0] [3:0]               m_arcache;
+    logic [N_MST-1:0] [2:0]               m_arprot;
+    logic [N_MST-1:0] [3:0]               m_arqos;
     logic [N_MST-1:0]                     m_arvalid;
     logic [N_MST-1:0]                     m_arready;
     logic [N_MST-1:0] [AXI_M_ID-1:0]      m_rid;
@@ -763,29 +847,51 @@ module core_top #(
     logic [N_MST-1:0]                     m_rready;
 
     // ---- M[0] 写通道 / M[1] 读通道 / M[2] 全部 / M[3] 写通道 tie 0 ----
-    // M[0] = MM2S (read only)
+    // 注: AXI4 全核统一 size=3'b100 (16 byte/beat, BUS_DATA_W=128); cache=4'b0011
+    // (normal non-cacheable bufferable); lock/prot/qos=0. 这些字段用于 axi_2to1 IP
+    // 严格校验, 不能悬空.
+    // M[0] = MM2S (read only); axi_dm IP 暴露 arsize/arprot/arcache, arlock/arqos 给常量
     assign m_awid   [0] = '0;
     assign m_awaddr [0] = '0;
     assign m_awlen  [0] = '0;
+    assign m_awsize [0] = 3'b100;
     assign m_awburst[0] = 2'b01;
+    assign m_awlock [0] = 1'b0;
+    assign m_awcache[0] = 4'b0011;
+    assign m_awprot [0] = 3'b000;
+    assign m_awqos  [0] = 4'b0000;
     assign m_awvalid[0] = 1'b0;
     assign m_wdata  [0] = '0;
     assign m_wstrb  [0] = '0;
     assign m_wlast  [0] = 1'b0;
     assign m_wvalid [0] = 1'b0;
     assign m_bready [0] = 1'b1;
-    // M[1] = S2MM (write only)
+    assign m_arlock [0] = 1'b0;
+    assign m_arqos  [0] = 4'b0000;
+    // M[1] = S2MM (write only); axi_dm IP 暴露 awsize/awprot/awcache, awlock/awqos 给常量
+    assign m_awlock [1] = 1'b0;
+    assign m_awqos  [1] = 4'b0000;
     assign m_arid   [1] = '0;
     assign m_araddr [1] = '0;
     assign m_arlen  [1] = '0;
+    assign m_arsize [1] = 3'b100;
     assign m_arburst[1] = 2'b01;
+    assign m_arlock [1] = 1'b0;
+    assign m_arcache[1] = 4'b0011;
+    assign m_arprot [1] = 3'b000;
+    assign m_arqos  [1] = 4'b0000;
     assign m_arvalid[1] = 1'b0;
     assign m_rready [1] = 1'b1;
     // M[2] unused (DataMover 把原 wdma 的 master 槽合并掉了)
     assign m_awid   [2] = '0;
     assign m_awaddr [2] = '0;
     assign m_awlen  [2] = '0;
+    assign m_awsize [2] = 3'b100;
     assign m_awburst[2] = 2'b01;
+    assign m_awlock [2] = 1'b0;
+    assign m_awcache[2] = 4'b0011;
+    assign m_awprot [2] = 3'b000;
+    assign m_awqos  [2] = 4'b0000;
     assign m_awvalid[2] = 1'b0;
     assign m_wdata  [2] = '0;
     assign m_wstrb  [2] = '0;
@@ -795,20 +901,35 @@ module core_top #(
     assign m_arid   [2] = '0;
     assign m_araddr [2] = '0;
     assign m_arlen  [2] = '0;
+    assign m_arsize [2] = 3'b100;
     assign m_arburst[2] = 2'b01;
+    assign m_arlock [2] = 1'b0;
+    assign m_arcache[2] = 4'b0011;
+    assign m_arprot [2] = 3'b000;
+    assign m_arqos  [2] = 4'b0000;
     assign m_arvalid[2] = 1'b0;
     assign m_rready [2] = 1'b1;
-    // M[3] = DFE (read only)
+    // M[3] = DFE (read only); DFE 不产生这些字段, 全给常量
     assign m_awid   [3] = '0;
     assign m_awaddr [3] = '0;
     assign m_awlen  [3] = '0;
+    assign m_awsize [3] = 3'b100;
     assign m_awburst[3] = 2'b01;
+    assign m_awlock [3] = 1'b0;
+    assign m_awcache[3] = 4'b0011;
+    assign m_awprot [3] = 3'b000;
+    assign m_awqos  [3] = 4'b0000;
     assign m_awvalid[3] = 1'b0;
     assign m_wdata  [3] = '0;
     assign m_wstrb  [3] = '0;
     assign m_wlast  [3] = 1'b0;
     assign m_wvalid [3] = 1'b0;
     assign m_bready [3] = 1'b1;
+    assign m_arsize [3] = 3'b100;
+    assign m_arlock [3] = 1'b0;
+    assign m_arcache[3] = 4'b0011;
+    assign m_arprot [3] = 3'b000;
+    assign m_arqos  [3] = 4'b0000;
 
     dfe #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
@@ -881,13 +1002,18 @@ module core_top #(
 
     // =========================================================================
     // idma_ctrl
+    //   M2: cfg_skip_idma=1 时 (consumer 等跨核 push), gate start 脉冲让 IDMA 不启;
+    //   sequencer 看到的 idma_strip_done 用 OR cfg_skip_idma 短路成 1, 走原 strip 流程.
     // =========================================================================
+    assign seq_start_idma_pulse_g = seq_start_idma_pulse & ~cfg_skip_idma;
+    assign idma_done_eff          = idma_done | cfg_skip_idma;
+
     idma_ctrl #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_idma (
         .clk(clk), .rst_n(rst_n),
-        .start(seq_start_idma_pulse), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
+        .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
         .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
         .cfg_h_in_total    (cfg_h_in_total),
         .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
@@ -1011,10 +1137,10 @@ module core_top #(
         .m_axi_mm2s_arid            (m_arid   [0]),
         .m_axi_mm2s_araddr          (m_araddr [0]),
         .m_axi_mm2s_arlen           (m_arlen  [0]),
-        .m_axi_mm2s_arsize          (),
+        .m_axi_mm2s_arsize          (m_arsize [0]),
         .m_axi_mm2s_arburst         (m_arburst[0]),
-        .m_axi_mm2s_arprot          (),
-        .m_axi_mm2s_arcache         (),
+        .m_axi_mm2s_arprot          (m_arprot [0]),
+        .m_axi_mm2s_arcache         (m_arcache[0]),
         .m_axi_mm2s_aruser          (),
         .m_axi_mm2s_arvalid         (m_arvalid[0]),
         .m_axi_mm2s_arready         (m_arready[0]),
@@ -1048,10 +1174,10 @@ module core_top #(
         .m_axi_s2mm_awid            (m_awid   [1]),
         .m_axi_s2mm_awaddr          (m_awaddr [1]),
         .m_axi_s2mm_awlen           (m_awlen  [1]),
-        .m_axi_s2mm_awsize          (),
+        .m_axi_s2mm_awsize          (m_awsize [1]),
         .m_axi_s2mm_awburst         (m_awburst[1]),
-        .m_axi_s2mm_awprot          (),
-        .m_axi_s2mm_awcache         (),
+        .m_axi_s2mm_awprot          (m_awprot [1]),
+        .m_axi_s2mm_awcache         (m_awcache[1]),
         .m_axi_s2mm_awuser          (),
         .m_axi_s2mm_awvalid         (m_awvalid[1]),
         .m_axi_s2mm_awready         (m_awready[1]),
@@ -1077,24 +1203,77 @@ module core_top #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W)
     ) u_axi_mux (
         .clk(clk), .rstn(rst_n),
-        .M_AWID(m_awid), .M_AWADDR(m_awaddr), .M_AWLEN(m_awlen), .M_AWBURST(m_awburst),
+        .M_AWID(m_awid), .M_AWADDR(m_awaddr), .M_AWLEN(m_awlen),
+        .M_AWSIZE(m_awsize), .M_AWBURST(m_awburst),
+        .M_AWLOCK(m_awlock), .M_AWCACHE(m_awcache),
+        .M_AWPROT(m_awprot), .M_AWQOS(m_awqos),
         .M_AWVALID(m_awvalid), .M_AWREADY(m_awready),
         .M_WDATA(m_wdata), .M_WSTRB(m_wstrb), .M_WLAST(m_wlast),
         .M_WVALID(m_wvalid), .M_WREADY(m_wready),
         .M_BID(m_bid), .M_BRESP(m_bresp), .M_BVALID(m_bvalid), .M_BREADY(m_bready),
-        .M_ARID(m_arid), .M_ARADDR(m_araddr), .M_ARLEN(m_arlen), .M_ARBURST(m_arburst),
+        .M_ARID(m_arid), .M_ARADDR(m_araddr), .M_ARLEN(m_arlen),
+        .M_ARSIZE(m_arsize), .M_ARBURST(m_arburst),
+        .M_ARLOCK(m_arlock), .M_ARCACHE(m_arcache),
+        .M_ARPROT(m_arprot), .M_ARQOS(m_arqos),
         .M_ARVALID(m_arvalid), .M_ARREADY(m_arready),
         .M_RID(m_rid), .M_RDATA(m_rdata), .M_RRESP(m_rresp), .M_RLAST(m_rlast),
         .M_RVALID(m_rvalid), .M_RREADY(m_rready),
-        .B_AWID(bus_awid), .B_AWADDR(bus_awaddr), .B_AWLEN(bus_awlen), .B_AWBURST(bus_awburst),
+        .B_AWID(bus_awid), .B_AWADDR(bus_awaddr), .B_AWLEN(bus_awlen),
+        .B_AWSIZE(bus_awsize), .B_AWBURST(bus_awburst),
+        .B_AWLOCK(bus_awlock), .B_AWCACHE(bus_awcache),
+        .B_AWPROT(bus_awprot), .B_AWQOS(bus_awqos),
         .B_AWVALID(bus_awvalid), .B_AWREADY(bus_awready),
         .B_WDATA(bus_wdata), .B_WSTRB(bus_wstrb), .B_WLAST(bus_wlast),
         .B_WVALID(bus_wvalid), .B_WREADY(bus_wready),
         .B_BID(bus_bid), .B_BRESP(bus_bresp), .B_BVALID(bus_bvalid), .B_BREADY(bus_bready),
-        .B_ARID(bus_arid), .B_ARADDR(bus_araddr), .B_ARLEN(bus_arlen), .B_ARBURST(bus_arburst),
+        .B_ARID(bus_arid), .B_ARADDR(bus_araddr), .B_ARLEN(bus_arlen),
+        .B_ARSIZE(bus_arsize), .B_ARBURST(bus_arburst),
+        .B_ARLOCK(bus_arlock), .B_ARCACHE(bus_arcache),
+        .B_ARPROT(bus_arprot), .B_ARQOS(bus_arqos),
         .B_ARVALID(bus_arvalid), .B_ARREADY(bus_arready),
         .B_RID(bus_rid), .B_RDATA(bus_rdata), .B_RRESP(bus_rresp), .B_RLAST(bus_rlast),
         .B_RVALID(bus_rvalid), .B_RREADY(bus_rready)
+    );
+
+    // =========================================================================
+    // 11. IFB AXI4 Slave (M2 跨核 push 入口)
+    //     远端核 ODMA 把 OFM 写到本核 IFB region (0x80000000 + core_id*0x10000000),
+    //     经 axi crossbar 路由到这里. ring 反压依赖 line_buffer.rows_consumed.
+    //     evt_start_layer 用 cfg_start_layer_pulse 同步重置 wptr / rows_pushed.
+    // =========================================================================
+    ifb_axi_slave #(
+        .ADDR_W (BUS_ADDR_W),
+        .DATA_W (BUS_DATA_W),
+        .ID_W   (AXI_M_ID + AXI_M_WIDTH + 1),
+        .SRAM_AW($clog2(SRAM_DEPTH)),
+        .IFB_W  (IFB_WIDTH)
+    ) u_ifb_axi_slv (
+        .clk(clk), .rstn(rst_n),
+        .AWID(rmt_ifb_awid), .AWADDR(rmt_ifb_awaddr), .AWLEN(rmt_ifb_awlen),
+        .AWSIZE(rmt_ifb_awsize), .AWBURST(rmt_ifb_awburst),
+        .AWLOCK(rmt_ifb_awlock), .AWCACHE(rmt_ifb_awcache),
+        .AWPROT(rmt_ifb_awprot), .AWQOS(rmt_ifb_awqos),
+        .AWVALID(rmt_ifb_awvalid), .AWREADY(rmt_ifb_awready),
+        .WDATA(rmt_ifb_wdata), .WSTRB(rmt_ifb_wstrb), .WLAST(rmt_ifb_wlast),
+        .WVALID(rmt_ifb_wvalid), .WREADY(rmt_ifb_wready),
+        .BID(rmt_ifb_bid), .BRESP(rmt_ifb_bresp),
+        .BVALID(rmt_ifb_bvalid), .BREADY(rmt_ifb_bready),
+        .ARID(rmt_ifb_arid), .ARADDR(rmt_ifb_araddr), .ARLEN(rmt_ifb_arlen),
+        .ARSIZE(rmt_ifb_arsize), .ARBURST(rmt_ifb_arburst),
+        .ARLOCK(rmt_ifb_arlock), .ARCACHE(rmt_ifb_arcache),
+        .ARPROT(rmt_ifb_arprot), .ARQOS(rmt_ifb_arqos),
+        .ARVALID(rmt_ifb_arvalid), .ARREADY(rmt_ifb_arready),
+        .RID(rmt_ifb_rid), .RDATA(rmt_ifb_rdata), .RRESP(rmt_ifb_rresp),
+        .RLAST(rmt_ifb_rlast), .RVALID(rmt_ifb_rvalid), .RREADY(rmt_ifb_rready),
+        .evt_start_layer  (cfg_start_layer_pulse),
+        .cfg_skip_idma    (cfg_skip_idma),
+        .rows_consumed    (rows_consumed),
+        .cfg_ifb_strip_rows(cfg_ifb_strip_rows),
+        .cfg_ifb_ring_words(cfg_ifb_ring_words[$clog2(SRAM_DEPTH)-1:0]),
+        .ifb_we    (rmt_ifb_we),
+        .ifb_waddr (rmt_ifb_waddr),
+        .ifb_wdata (rmt_ifb_wdata_int),
+        .rows_pushed_out(rmt_rows_pushed)
     );
 
 endmodule

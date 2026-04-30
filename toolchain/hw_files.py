@@ -15,6 +15,19 @@ hw_files.py — 硬件 DDR 文件 I/O 共享层
 """
 
 import os
+import sys
+
+# 引入 params.py 作为参数 single source of truth
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_THIS_DIR))   # 项目根目录 (c:/_Project/FLUX_CNN)
+from params import (
+    NUM_PE as _PARAMS_NUM_PE,
+    NUM_COL as _PARAMS_NUM_COL,
+    IFB_DEPTH as _PARAMS_IFB_DEPTH,
+    OFB_DEPTH as _PARAMS_OFB_DEPTH,
+    CSR_ADDR_MAP as _PARAMS_CSR_ADDR_MAP,
+    BOOT_REG_ADDRS as _PARAMS_BOOT_REG_ADDRS,
+)
 
 
 def _out_path(out_dir, fname):
@@ -441,38 +454,9 @@ FLAG_IS_FIRST     = 1 << 0
 FLAG_IS_LAST      = 1 << 1
 FLAG_STREAMING_EN = 1 << 2
 
-# cfg_regs.sv address map (mirror RTL ADDR_* constants).
-# 仅 sequencer CFG_WRITE 路径可写的字段 (host AXI-Lite 路径只写 boot regs).
-CFG_ADDR_MAP = {
-    'H_OUT'              : 0x100, 'W_OUT'             : 0x104, 'W_IN'              : 0x108,
-    'K'                  : 0x10C, 'STRIDE'            : 0x110,
-    'CIN_SLICES'         : 0x114, 'COUT_SLICES'       : 0x118,
-    'TILE_W'             : 0x11C, 'NUM_TILES'         : 0x120, 'LAST_VALID_W'      : 0x124,
-    'TOTAL_WRF'          : 0x128, 'KY'                : 0x12C, 'KK'                : 0x130,
-    'ROUNDS_PER_CINS'    : 0x134, 'ROUND_LEN_LAST'    : 0x138,
-    'IFB_BASE'           : 0x13C, 'WB_BASE'           : 0x140, 'OFB_BASE'          : 0x144,
-    'IFB_ROW_STEP'       : 0x14C, 'WB_COUT_STEP'      : 0x154, 'TILE_IN_STEP'      : 0x15C,
-    'SDP_SHIFT'          : 0x160, 'SDP_RELU_EN'       : 0x164,
-    'H_IN_TOTAL'         : 0x168, 'IFB_STRIP_ROWS'    : 0x16C, 'OFB_STRIP_ROWS'    : 0x170,
-    'DDR_IFM_ROW_STRIDE' : 0x174, 'DDR_OFM_ROW_STRIDE': 0x178,
-    'SDP_MULT'           : 0x188, 'SDP_ZP_OUT'        : 0x18C,
-    'SDP_CLIP_MIN'       : 0x190, 'SDP_CLIP_MAX'      : 0x194, 'SDP_ROUND_EN'      : 0x198,
-    'IFB_RING_WORDS'     : 0x1A0, 'OFB_ROW_WORDS'     : 0x1A4, 'OFB_RING_WORDS'    : 0x1A8,
-    'IFB_ISS_STEP'       : 0x1AC, 'IFB_KY_STEP'       : 0x1B0,
-    'TILE_PIX_STEP'      : 0x1B4, 'ARF_REUSE_EN'      : 0x1B8,
-    'RESIDUAL_EN'        : 0x1BC, 'SHORTCUT_MULT'     : 0x1C0,
-    'SHORTCUT_SHIFT'     : 0x1C4, 'BIAS_BASE'         : 0x1C8,
-    'IDMA_SRC_BASE'      : 0x200, 'IDMA_BYTE_LEN'     : 0x204,
-    'WDMA_SRC_BASE'      : 0x210, 'WDMA_BYTE_LEN'     : 0x214,
-    'ODMA_DST_BASE'      : 0x220, 'ODMA_BYTE_LEN'     : 0x224,
-    'RDMA_SRC_BASE'      : 0x230, 'RDMA_BYTE_LEN'     : 0x234,
-}
-
-# 这些走 host AXI-Lite (csr_w 路径), 不进 CFG_WRITE descriptor:
-#   CTRL  = 0x000  (pulse, not register)
-#   DMA_MODE = 0x17C
-#   DESC_LIST_BASE = 0x180, DESC_COUNT = 0x184
-BOOT_REG_ADDRS = {0x000, 0x17C, 0x180, 0x184}
+# cfg_regs.sv address map: 直接来自 params.py (single source of truth)
+CFG_ADDR_MAP   = _PARAMS_CSR_ADDR_MAP
+BOOT_REG_ADDRS = _PARAMS_BOOT_REG_ADDRS
 
 
 def _pack_desc(type_, flags, pad_t, pad_b, pad_l, pad_r,
@@ -578,6 +562,92 @@ def write_descriptors(
 
 
 # ---------------------------------------------------------------------------
+# 多层 desc list 拼接 (M2.5 P0): 一个核跑多 layer 的 desc list.
+#   layout: [L0 CFG_WRITEs + CONV strips] BARRIER [L1 ...] BARRIER ... [Last] END
+#   sequencer 内部 S_BARRIER → S_FETCH 自动消费下一段 desc.
+# ---------------------------------------------------------------------------
+def build_layer_desc_segment(cfg_dict, H_IN, W_IN, H_OUT, W_OUT,
+                              cin_slices, cout_slices,
+                              pad_top, pad_bot, pad_left, pad_right,
+                              strip_rows=0):
+    """
+    返回一个 layer 的 desc list (CFG_WRITE 段 + CONV strips), 不含 END.
+    cfg_dict 来自 hw_files.cfg_to_dict(), 已含正确的 IDMA/ODMA/SKIP_IDMA/SDP cfg.
+    """
+    descs = []
+
+    # CFG_WRITE 段
+    for key, val in cfg_dict.items():
+        if key.startswith('_META_'):
+            continue
+        if key not in CFG_ADDR_MAP:
+            continue
+        addr = CFG_ADDR_MAP[key]
+        descs.append(_pack_cfg_desc(addr, val & 0xFFFFFFFF))
+
+    # CONV 段
+    strip_rows_eff = strip_rows if (strip_rows > 0 and strip_rows < H_OUT) else H_OUT
+    n_strips = (H_OUT + strip_rows_eff - 1) // strip_rows_eff
+
+    AXI_BYTES = 16
+    ifb_bytes_per_row   = W_IN  * AXI_BYTES
+    ifb_bytes_per_slice = H_IN  * ifb_bytes_per_row
+    ifb_total_bytes     = ifb_bytes_per_slice * cin_slices
+    ofb_bytes_per_row   = W_OUT * AXI_BYTES
+    ofb_bytes_per_slice = H_OUT * ofb_bytes_per_row
+    ofb_total_bytes     = ofb_bytes_per_slice * cout_slices
+
+    for i in range(n_strips):
+        strip_y_start = i * strip_rows_eff
+        n_yout        = min(strip_rows_eff, H_OUT - strip_y_start)
+        is_first      = (i == 0)
+        is_last       = (i == n_strips - 1)
+        local_pad_top = pad_top  if is_first else 0
+        local_pad_bot = pad_bot  if is_last  else 0
+
+        if n_strips == 1:
+            ifb_off, ifb_len = 0, ifb_total_bytes
+            ofb_off, ofb_len = 0, ofb_total_bytes
+        else:
+            ifb_off, ifb_len = 0, ifb_total_bytes
+            ofb_off = strip_y_start * ofb_bytes_per_row
+            ofb_len = n_yout * ofb_bytes_per_row * cout_slices
+
+        flags = FLAG_STREAMING_EN
+        if is_first: flags |= FLAG_IS_FIRST
+        if is_last:  flags |= FLAG_IS_LAST
+
+        descs.append(_pack_desc(
+            TYPE_CONV, flags,
+            local_pad_top, local_pad_bot, pad_left, pad_right,
+            strip_y_start, n_yout,
+            ifb_off, ifb_len, ofb_off, ofb_len))
+    return descs
+
+
+def write_multilayer_desc_list(out_path, layer_segments):
+    """
+    写一个核的多 layer desc list.
+    layer_segments: list of desc lists (来自 build_layer_desc_segment)
+    每两层之间插 BARRIER, 末尾加 END.
+    """
+    descs = []
+    for i, seg in enumerate(layer_segments):
+        descs.extend(seg)
+        if i < len(layer_segments) - 1:
+            # BARRIER 隔开层 (sequencer 等所有 done 后进 S_FETCH 拉下层)
+            descs.append(_pack_desc(TYPE_BARRIER, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    # 末尾 END
+    descs.append(_pack_desc(TYPE_END, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
+    with open(out_path, 'w') as f:
+        for (beat0, beat1) in descs:
+            f.write(f"{beat0:032X}\n")
+            f.write(f"{beat1:032X}\n")
+    return len(descs)
+
+
+# ---------------------------------------------------------------------------
 # sim_params.f
 # ---------------------------------------------------------------------------
 def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
@@ -591,9 +661,11 @@ def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
 # Derived cfg helpers (shared derive logic)
 # ---------------------------------------------------------------------------
 def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
-                     pad_top, pad_left, TILE_W=32, HW_PE=16, HW_COL=16,
+                     pad_top, pad_left, TILE_W=32,
+                     HW_PE=_PARAMS_NUM_PE, HW_COL=_PARAMS_NUM_COL,
                      WRF_DEPTH=32, ARF_DEPTH=32,
-                     IFB_SRAM_WORDS=8192, OFB_SRAM_WORDS=8192,
+                     IFB_SRAM_WORDS=_PARAMS_IFB_DEPTH,
+                     OFB_SRAM_WORDS=_PARAMS_OFB_DEPTH,
                      streaming=None, KY=None):
     """
     派生 conv layer 的所有硬件 cfg 字段。返回 dict。
@@ -678,7 +750,9 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         ifb_strip = min(ifb_strip_rows_min + 2, ifb_strip_rows_max)
 
     ofb_row_words_calc = W_OUT * cout_slices
-    ofb_strip_rows_max = OFB_SRAM_WORDS // ofb_row_words_calc
+    # 留至少 1 行 slack: 防止 ring_words == OFB_SRAM_WORDS 时 wptr=rptr 二义性死锁.
+    # ring_words 必须 < OFB_DEPTH, 不能 == OFB_DEPTH (即使理论上整图装得下).
+    ofb_strip_rows_max = (OFB_SRAM_WORDS - 1) // ofb_row_words_calc
     if ofb_strip_rows_max < 2:
         raise ValueError(
             f"OFB SRAM 容量不足: W_OUT*cout_slices={ofb_row_words_calc}, "
@@ -728,7 +802,8 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
                 ddr_ofb_base=None, ddr_desc_base=None, ddr_rdma_base=None,
                 skip_ifb_preload=0, skip_ofb_clear=0,
                 residual_en=0, shortcut_mult=0, shortcut_shift=0,
-                rdma_words_total=None):
+                rdma_words_total=None,
+                skip_idma=0):
     """
     把 derive_layer_cfg 的结果转成 config.txt 用的有序 dict。
     包含 SDP 量化参数（F-1a/F-1b 补齐）。
@@ -805,6 +880,8 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'SHORTCUT_MULT'  : shortcut_mult,                   # signed INT16
         'SHORTCUT_SHIFT' : shortcut_shift,
         'BIAS_BASE'      : 0,                                # bias 在 Shortcut Bank word index 0
+        # --- M2: 跨核 consumer 跳过本地 IDMA, 等远端核 push 进 IFB ---
+        'SKIP_IDMA'      : 1 if skip_idma else 0,
         'RDMA_BYTE_LEN'  : (rdma_words_total if rdma_words_total is not None
                             else cfg.get('rdma_words', 0)) * 16,
         # --- DMA base/len (descriptor-driven, per-layer) ---

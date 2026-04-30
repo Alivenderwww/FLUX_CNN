@@ -33,7 +33,12 @@ module axi_m_mux #(
     input  logic [(2**M_WIDTH)-1:0] [M_ID-1:0]     M_AWID,
     input  logic [(2**M_WIDTH)-1:0] [ADDR_W-1:0]   M_AWADDR,
     input  logic [(2**M_WIDTH)-1:0] [7:0]          M_AWLEN,
+    input  logic [(2**M_WIDTH)-1:0] [2:0]          M_AWSIZE,
     input  logic [(2**M_WIDTH)-1:0] [1:0]          M_AWBURST,
+    input  logic [(2**M_WIDTH)-1:0]                M_AWLOCK,
+    input  logic [(2**M_WIDTH)-1:0] [3:0]          M_AWCACHE,
+    input  logic [(2**M_WIDTH)-1:0] [2:0]          M_AWPROT,
+    input  logic [(2**M_WIDTH)-1:0] [3:0]          M_AWQOS,
     input  logic [(2**M_WIDTH)-1:0]                M_AWVALID,
     output logic [(2**M_WIDTH)-1:0]                M_AWREADY,
 
@@ -51,7 +56,12 @@ module axi_m_mux #(
     input  logic [(2**M_WIDTH)-1:0] [M_ID-1:0]     M_ARID,
     input  logic [(2**M_WIDTH)-1:0] [ADDR_W-1:0]   M_ARADDR,
     input  logic [(2**M_WIDTH)-1:0] [7:0]          M_ARLEN,
+    input  logic [(2**M_WIDTH)-1:0] [2:0]          M_ARSIZE,
     input  logic [(2**M_WIDTH)-1:0] [1:0]          M_ARBURST,
+    input  logic [(2**M_WIDTH)-1:0]                M_ARLOCK,
+    input  logic [(2**M_WIDTH)-1:0] [3:0]          M_ARCACHE,
+    input  logic [(2**M_WIDTH)-1:0] [2:0]          M_ARPROT,
+    input  logic [(2**M_WIDTH)-1:0] [3:0]          M_ARQOS,
     input  logic [(2**M_WIDTH)-1:0]                M_ARVALID,
     output logic [(2**M_WIDTH)-1:0]                M_ARREADY,
 
@@ -66,7 +76,12 @@ module axi_m_mux #(
     output logic [M_ID+M_WIDTH-1:0]   B_AWID,
     output logic [ADDR_W-1:0]         B_AWADDR,
     output logic [7:0]                B_AWLEN,
+    output logic [2:0]                B_AWSIZE,
     output logic [1:0]                B_AWBURST,
+    output logic                      B_AWLOCK,
+    output logic [3:0]                B_AWCACHE,
+    output logic [2:0]                B_AWPROT,
+    output logic [3:0]                B_AWQOS,
     output logic                      B_AWVALID,
     input  logic                      B_AWREADY,
 
@@ -84,7 +99,12 @@ module axi_m_mux #(
     output logic [M_ID+M_WIDTH-1:0]   B_ARID,
     output logic [ADDR_W-1:0]         B_ARADDR,
     output logic [7:0]                B_ARLEN,
+    output logic [2:0]                B_ARSIZE,
     output logic [1:0]                B_ARBURST,
+    output logic                      B_ARLOCK,
+    output logic [3:0]                B_ARCACHE,
+    output logic [2:0]                B_ARPROT,
+    output logic [3:0]                B_ARQOS,
     output logic                      B_ARVALID,
     input  logic                      B_ARREADY,
 
@@ -141,7 +161,12 @@ module axi_m_mux #(
     assign B_AWID    = {wr_addr_master_sel, M_AWID   [wr_addr_master_sel]};
     assign B_AWADDR  =                       M_AWADDR [wr_addr_master_sel];
     assign B_AWLEN   =                       M_AWLEN  [wr_addr_master_sel];
+    assign B_AWSIZE  =                       M_AWSIZE [wr_addr_master_sel];
     assign B_AWBURST =                       M_AWBURST[wr_addr_master_sel];
+    assign B_AWLOCK  =                       M_AWLOCK [wr_addr_master_sel];
+    assign B_AWCACHE =                       M_AWCACHE[wr_addr_master_sel];
+    assign B_AWPROT  =                       M_AWPROT [wr_addr_master_sel];
+    assign B_AWQOS   =                       M_AWQOS  [wr_addr_master_sel];
     assign B_AWVALID =                       M_AWVALID[wr_addr_master_sel];
 
     always_comb begin
@@ -182,7 +207,12 @@ module axi_m_mux #(
     assign B_ARID    = {rd_addr_master_sel, M_ARID   [rd_addr_master_sel]};
     assign B_ARADDR  =                       M_ARADDR [rd_addr_master_sel];
     assign B_ARLEN   =                       M_ARLEN  [rd_addr_master_sel];
+    assign B_ARSIZE  =                       M_ARSIZE [rd_addr_master_sel];
     assign B_ARBURST =                       M_ARBURST[rd_addr_master_sel];
+    assign B_ARLOCK  =                       M_ARLOCK [rd_addr_master_sel];
+    assign B_ARCACHE =                       M_ARCACHE[rd_addr_master_sel];
+    assign B_ARPROT  =                       M_ARPROT [rd_addr_master_sel];
+    assign B_ARQOS   =                       M_ARQOS  [rd_addr_master_sel];
     assign B_ARVALID =                       M_ARVALID[rd_addr_master_sel];
 
     always_comb begin

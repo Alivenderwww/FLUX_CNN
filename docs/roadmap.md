@@ -100,6 +100,16 @@ combined_ch[c] = residual_en ? (psum_ch[c] + residual_ch[c]) : psum_ch[c];
 - 性能模型（Roofline）：算术强度 vs 带宽
 - 多层自动调度器：ONNX → 多层 descriptor 链
 
+## 编译器前端 (推后)
+
+### MLIR / TVM 整合 (M3+)
+当前 `compile_layer.py` 手工每层映射. 长期目标接 PyTorch graph:
+- **首选**: PyTorch → torch-mlir → linalg dialect → 自定义 `flux_cnn` dialect lowering → cfg_dict + desc
+- 备选: TVM Relay BYOC, ONNX 解析后我们做 codegen
+- 同类工业参考: AMD AIE Compiler (iree-amd-aie), Tenstorrent Buda
+- 工作量: dialect + lowering ~2 周, partition pass (多核 mapping) ~1 周
+- **触发时机**: 多核调度器 (M2.5) 落地后再做, 因为 MLIR pass 也需要懂多核切分语义
+
 ---
 
 ## 优先级建议

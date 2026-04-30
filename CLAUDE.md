@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Claude Code 工作指引。项目概览请见 `README.md`，细节分散在 `docs/`。
+Claude Code 工作指引。项目概览请见 `README.md`, 细节分散在 `docs/`,
+**当前进度 + 任务交接见 `STATUS.md`**, 历史经验 / 踩坑记录见 `memory/`.
 
 ## 项目总览
 
@@ -53,7 +54,11 @@ python models/run_model.py --model mnist_allconv --image-dir models/images/mnist
 ## 配置 & 代码约定
 
 - **SystemVerilog IEEE 1800**；无 packages；packed struct + enum
-- 核心参数：`NUM_COL=NUM_PE=16` / `WRF=ARF=PARF=32` / `DATA=8` / `PSUM=32` / `SRAM=8192` / `ADDR_W=20`
+- **参数表 single source: `params.py`** (项目根). 改硬件常量在这里改, 跑 `python params.py`
+  自动重生成 `RTL/flux_cnn_params.svh`. RTL 用 `\`include` + `\`FLUX_*` 宏, Python 用 `from params import *`. 详见 `docs/params.md`.
+- 核心参数 (`params.py`)：`NUM_COL=NUM_PE=16` / `WRF=ARF=PARF=32` / `DATA=8` / `PSUM=32` /
+  `IFB=8192` / `WB=1024` / `OFB=2048` / `BUS_DATA_W=128` / `CSR_DATA_W=32`
+- 多核地址映射: DDR `0x0000_0000-0x7FFF_FFFF`, Core[i] IFB `0x8000_0000+i*0x1000_0000`
 - AXI：内部 `BUS_DATA_W=128`，外部 1 主口 (axi_m_mux 聚合 axi_dm.MM2S/S2MM + DFE) + CSR `32` 位 slave
 - `gen_isa_test.py` 是 derived 值的 source of truth；`hw_files.derive_layer_cfg()` 共享 cfg 派生
 - Commit prefix 用中文：`Feat:` / `Perf:` / `Docs:` / `Fix:` / `Refactor:`
@@ -72,3 +77,5 @@ python models/run_model.py --model mnist_allconv --image-dir models/images/mnist
 - `docs/synthesis.md` — 综合（参考）
 - `RTL代码编写原则.md` — RTL 风格指南
 - `model_analysis.md` — 目标模型 PE 利用率分析
+- `STATUS.md` — 当前进度 + 任务交接清单 (2026-04-29)
+- `memory/` — 设计经验小文档, 踩过的坑 + 当时不明显的设计决策

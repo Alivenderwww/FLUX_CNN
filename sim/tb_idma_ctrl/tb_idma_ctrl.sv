@@ -99,12 +99,13 @@ module tb_idma_ctrl;
         .err                (idma_err),
         .src_base           (SRC_BASE),
         .byte_len           ('0),
-        .cfg_h_in_total     (16'(H_IN)),
-        .cfg_ifb_strip_rows (8'(H_IN)),                     // 整图都装得下, ring 不 wrap
-        .cfg_ifb_ky_step    (20'(KY_STEP)),
-        .cfg_ifb_ring_words (20'(RING_WORDS)),
-        .rows_consumed      (rows_consumed),
-        .rows_available     (rows_available),
+        .cfg_h_in_total         (16'(H_IN)),
+        .cfg_ifb_strip_rows     (8'(H_IN)),                 // 整图都装得下, ring 不 wrap
+        .cfg_ifb_ky_step        (20'(KY_STEP)),
+        .cfg_ifb_ring_words     (20'(RING_WORDS)),
+        .cfg_ddr_ifm_row_stride (ADDR_W'(KY_STEP * (DATA_W/8))),  // single-tile = cmd_btt
+        .rows_consumed          (rows_consumed),
+        .rows_available         (rows_available),
 
         .mm2s_cmd_tvalid    (cmd_tvalid),
         .mm2s_cmd_tready    (cmd_tready),

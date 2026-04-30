@@ -61,6 +61,11 @@ module idma_ctrl #(
     input  logic [7:0]              cfg_ifb_strip_rows,
     input  logic [19:0]             cfg_ifb_ky_step,    // 每行 beats 数 (NHWC: W_IN × cin_slices)
     input  logic [19:0]             cfg_ifb_ring_words, // ring wrap 模数
+    // Mode C W slice: 每行 DDR stride 跟 cmd_btt 解耦.
+    //   single core / cout slice: stride == cmd_btt (sub_W == full_W)
+    //   W slice: stride = full_W × cin_slices × 16 字节, cmd_btt = sub_W × cin_slices × 16
+    // 编译器在 cfg_regs 写 ADDR_DDR_IFM_ROW_STRIDE, core_top 接到这里.
+    input  logic [ADDR_W-1:0]       cfg_ddr_ifm_row_stride,
     input  logic [15:0]             rows_consumed,
     output logic [15:0]             rows_available,
 
@@ -195,10 +200,10 @@ module idma_ctrl #(
     // =========================================================================
     // 数据路径寄存器 (无复位, start 初始化)
     // =========================================================================
-    // cur_addr: cmd_fire 后跳到下一行
+    // cur_addr: cmd_fire 后跳到下一行 (用 row_stride, 不用 cmd_btt — W slice 二者不等)
     always_ff @(posedge clk) begin
         if      (start)    cur_addr <= src_base;
-        else if (cmd_fire) cur_addr <= cur_addr + (ADDR_W'(cmd_btt));
+        else if (cmd_fire) cur_addr <= cur_addr + cfg_ddr_ifm_row_stride;
         else               cur_addr <= cur_addr;
     end
 

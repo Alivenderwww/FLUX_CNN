@@ -666,7 +666,8 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
                      WRF_DEPTH=32, ARF_DEPTH=32,
                      IFB_SRAM_WORDS=_PARAMS_IFB_DEPTH,
                      OFB_SRAM_WORDS=_PARAMS_OFB_DEPTH,
-                     streaming=None, KY=None):
+                     streaming=None, KY=None,
+                     pad_right=None, pad_bot=None):
     """
     派生 conv layer 的所有硬件 cfg 字段。返回 dict。
 
@@ -674,11 +675,15 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     KY       = 卷积核 Ky 维, 默认 = K (方形核). Ky-fold 时 < K 缩短 Ky 迭代
     kk       = K * KY (虚拟 kk, 用于 wgt_buffer/parf 时间迭代)
 
+    pad_right / pad_bot : 默认 None = 对称 pad (= pad_left / pad_top).
+                          非对称 pad 用于 W slice / H slice 多核场景, 每核两侧 pad 不同.
+
     J-1 起，单一数据路径 = streaming。
     """
     if KY is None:
         KY = K
-    pad_bot, pad_right = pad_top, pad_left
+    if pad_bot   is None: pad_bot   = pad_top
+    if pad_right is None: pad_right = pad_left
 
     cin_slices  = (NUM_CIN  + HW_PE  - 1) // HW_PE
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
@@ -795,6 +800,100 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     }
 
 
+def compute_w_slice_geom(W_full, K, stride, pad_left_full, my_core, n_split):
+    """
+    Mode C.2 W slice 几何: 给定整层 (W_full, K, stride, pad_left_full) 和切片
+    (n_split, my_core), 算出本核的 (sub_W, pad_l, pad_r, w_in_start, w_out_start, my_w_out)
+    满足 (sub_W + pad_l + pad_r - K)/stride + 1 == my_w_out.
+
+    切片策略: w_out_full / n_split 等分 (最后一核拿余数), 反推 IFM 段含 halo,
+    边界核两侧用整层 pad, 中间核两侧用 halo (= 邻居核重叠区, computed redundancy).
+    """
+    pad_right_full = pad_left_full
+    w_out_full = (W_full + pad_left_full + pad_right_full - K) // stride + 1
+    if w_out_full <= 0:
+        raise ValueError(f"W slice: W_OUT={w_out_full} ≤ 0")
+
+    w_out_per = w_out_full // n_split
+    w_out_start = my_core * w_out_per
+    w_out_end   = (my_core + 1) * w_out_per if my_core < n_split - 1 else w_out_full
+    my_w_out    = w_out_end - w_out_start
+
+    # IFM x 范围: 输出 ox ∈ [w_out_start, w_out_end) 时, 输入 x = stride*ox + kx - pad_left_full
+    in_lo_unb = stride * w_out_start         - pad_left_full
+    in_hi_unb = stride * (w_out_end - 1) + (K - 1) - pad_left_full
+
+    pad_l = max(0, -in_lo_unb)
+    pad_r = max(0, in_hi_unb - (W_full - 1))
+    in_lo = max(0, in_lo_unb)
+    in_hi = min(W_full - 1, in_hi_unb)
+    sub_W = in_hi - in_lo + 1
+    if sub_W <= 0:
+        raise ValueError(f"W slice core {my_core}/{n_split}: sub_W={sub_W} ≤ 0")
+
+    # Sanity check
+    expect_my_w_out = (sub_W + pad_l + pad_r - K) // stride + 1
+    if expect_my_w_out != my_w_out:
+        raise ValueError(
+            f"W slice geom mismatch core {my_core}/{n_split}: "
+            f"sub_W={sub_W} pad_l={pad_l} pad_r={pad_r} K={K} stride={stride} "
+            f"→ {expect_my_w_out}, expected {my_w_out}")
+
+    return {
+        'sub_W'         : sub_W,
+        'pad_left'      : pad_l,
+        'pad_right'     : pad_r,
+        'w_in_start'    : in_lo,
+        'w_out_start'   : w_out_start,
+        'my_w_out'      : my_w_out,
+        'w_full'        : W_full,
+        'w_out_full'    : w_out_full,
+    }
+
+
+def derive_w_slice_cfg(H_IN, W_full, K, NUM_CIN, NUM_COUT, stride,
+                        pad_top, pad_left_full,
+                        my_core, n_split,
+                        TILE_W=32, KY=None, **kwargs):
+    """
+    Mode C.2 W slice 的 per-core layer cfg 派生.
+    返回 cfg dict, 兼容 cfg_to_dict, 额外携带 _W_SLICE_* 字段告诉
+    cfg_to_dict 用整层 W 算 DDR_*_ROW_STRIDE.
+
+    H 不切片 (每核跑全 H). W_OUT 按 n_split 等分, 输入含 halo (computed redundancy).
+    Asymmetric pad: 边界核两侧用 pad_left_full, 中间核两侧用 0 (halo 已包含输入).
+
+    返回 cfg dict + 新增 keys:
+        '_W_SLICE_W_IN_START'   per-core IFM 起点 (W 列)
+        '_W_SLICE_W_OUT_START'  per-core OFM 起点 (W 列)
+        '_W_SLICE_W_FULL'       整层 W (用于 DDR_IFM_ROW_STRIDE)
+        '_W_SLICE_W_OUT_FULL'   整层 W_OUT (用于 DDR_OFM_ROW_STRIDE)
+    """
+    geom = compute_w_slice_geom(W_full, K, stride, pad_left_full, my_core, n_split)
+
+    cfg = derive_layer_cfg(
+        H_IN=H_IN, W_IN=geom['sub_W'], K=K,
+        NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT, stride=stride,
+        pad_top=pad_top, pad_left=geom['pad_left'],
+        pad_bot=pad_top, pad_right=geom['pad_right'],
+        TILE_W=min(TILE_W, geom['my_w_out']),
+        KY=KY,
+        **kwargs,
+    )
+
+    # Sanity: derive_layer_cfg 算的 W_OUT 必须等于 my_w_out (asymmetric pad 已传入)
+    if cfg['W_OUT'] != geom['my_w_out']:
+        raise ValueError(
+            f"derive_w_slice_cfg: W_OUT mismatch core {my_core}/{n_split}: "
+            f"derive={cfg['W_OUT']}, geom={geom['my_w_out']}")
+
+    cfg['_W_SLICE_W_IN_START']  = geom['w_in_start']
+    cfg['_W_SLICE_W_OUT_START'] = geom['w_out_start']
+    cfg['_W_SLICE_W_FULL']      = geom['w_full']
+    cfg['_W_SLICE_W_OUT_FULL']  = geom['w_out_full']
+    return cfg
+
+
 def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
                 sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1,
                 case_name="",
@@ -865,8 +964,9 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'H_IN_TOTAL'     : cfg['H_IN'],
         'IFB_STRIP_ROWS' : cfg['ifb_strip'],
         'OFB_STRIP_ROWS' : cfg['ofb_strip'],
-        'DDR_IFM_ROW_STRIDE' : cfg['W_IN']  * cfg['cin_slices']  * 16,
-        'DDR_OFM_ROW_STRIDE' : cfg['W_OUT'] * cfg['cout_slices'] * 16,
+        # W slice 下 DDR row stride 用整层 W (DDR 存全图, 每核只读自己一段)
+        'DDR_IFM_ROW_STRIDE' : cfg.get('_W_SLICE_W_FULL',     cfg['W_IN'])  * cfg['cin_slices']  * 16,
+        'DDR_OFM_ROW_STRIDE' : cfg.get('_W_SLICE_W_OUT_FULL', cfg['W_OUT']) * cfg['cout_slices'] * 16,
         'DMA_MODE'       : 3,   # 统一 streaming (J-1)
         'IFB_RING_WORDS' : cfg['ifb_ring_words'],
         'OFB_ROW_WORDS'  : cfg['ofb_row_words'],

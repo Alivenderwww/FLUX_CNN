@@ -83,6 +83,10 @@ class DDRPlanner:
     def core_desc_ddr(self, core_id):
         return self.region['DESC'] + core_id * self.desc_offset
 
+    def core_layer_desc_ddr(self, core_id, layer_idx, per_layer_size=0x4000):
+        """Per-(core, layer) desc list base. 16 KB / (core, layer) 默认, 256 KB / core 上限."""
+        return self.region['DESC'] + core_id * self.desc_offset + layer_idx * per_layer_size
+
 
 # ---------------------------------------------------------------------------
 # 跑 chain 拿每层 IFM/WB/OFM 数据 (single-core 模式, 用作 DDR 数据)
@@ -141,123 +145,43 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
 # ---------------------------------------------------------------------------
 # 给单核单层算 cfg_dict (考虑 mode A/C, push/DDR, W 切片含 halo)
 #
-# Mode C.2 W 切片下的 cfg 计算 (computed redundancy halo, 每核多算 halo 列):
-#   原 layer: H × W_full × c_in -> H_out × W_out_full × c_out
-#   切到 N 核, halo = (K-1)/2, 每核负责 W_out 段:
-#     core i 主要 W_out 段:  [i*W/N, (i+1)*W/N)
-#     core i 含 halo W_in 段: [i*W/N - halo, (i+1)*W/N + halo) (clip 到 [0, W))
-#   每核独立跑这个 sub-conv. DDR_*_ROW_STRIDE 仍是全图 W stride.
+# Mode C.2 W 切片几何在 hw_files.compute_w_slice_geom + derive_w_slice_cfg 内.
+# 本文件只负责: per-core ifb_w_start/ofb_w_start 偏移 → IDMA/ODMA DDR 基址.
 # ---------------------------------------------------------------------------
-def compute_w_slice_geometry(layer, my_core, n_split):
-    """返回 (w_in_local, w_out_local, w_in_start, w_out_start, pad_left_local, pad_right_local)."""
-    # 期望 W_out 段
-    w_out_full = layer.w_out
-    w_out_per_core = w_out_full // n_split
-    w_out_start = my_core * w_out_per_core
-    w_out_end = (my_core + 1) * w_out_per_core if my_core < n_split - 1 else w_out_full
-    w_out_local = w_out_end - w_out_start
-
-    # W_in 段含 halo:
-    # 反推: W_in 索引 = stride * W_out 索引 + (kx - pad_left)
-    # 每核 W_in 起点 = stride * w_out_start - pad_left (整层 pad)
-    # 每核 W_in 终点 = stride * (w_out_end - 1) + (K - pad_left - 1) + 1 = stride * w_out_end + K - pad_left - stride
-    pad_left_full = layer.pad
-    pad_right_full = layer.pad
-
-    w_in_start_unbounded = layer.stride * w_out_start - pad_left_full
-    w_in_end_unbounded   = layer.stride * (w_out_end - 1) + layer.k - pad_left_full
-
-    # Clip 到 [0, layer.w_in), 计算实际 pad
-    if w_in_start_unbounded < 0:
-        pad_left_local = -w_in_start_unbounded
-        w_in_start = 0
-    else:
-        pad_left_local = 0
-        w_in_start = w_in_start_unbounded
-
-    if w_in_end_unbounded > layer.w_in:
-        pad_right_local = w_in_end_unbounded - layer.w_in
-        w_in_end = layer.w_in
-    else:
-        pad_right_local = 0
-        w_in_end = w_in_end_unbounded
-
-    w_in_local = w_in_end - w_in_start
-
-    return {
-        'w_in_local'      : w_in_local,
-        'w_out_local'     : w_out_local,
-        'w_in_start'      : w_in_start,
-        'w_out_start'     : w_out_start,
-        'pad_left_local'  : pad_left_local,
-        'pad_right_local' : pad_right_local,
-        'w_in_full'       : layer.w_in,
-        'w_out_full'      : layer.w_out,
-    }
-
-
 def build_step_cfg_dict(step, layers, ddr_planner, n_layers):
     """生成 step 对应 layer 的 cfg_dict (考虑 mode A / mode C 切片, push/DDR)."""
     layer = step.layer
     layer_idx = step.layer_idx
+    n_split = len(step.cores_all)
 
-    # 决定本核实际跑的 sub-layer 维度
-    if step.mode == 'C_w_slice':
-        geom = compute_w_slice_geometry(layer, step.my_core, len(step.cores_all))
-        my_w_in       = geom['w_in_local']
-        my_w_out      = geom['w_out_local']
-        my_pad_left   = geom['pad_left_local']
-        my_pad_right_unused = geom['pad_right_local']  # gen_isa_test 用 pad_left 单值
-        my_pad_top    = layer.pad
-        # IDMA SRC 偏到自己 W 段
-        ifb_w_start = geom['w_in_start']
-        # ODMA DST 偏到自己 W_out 段
-        ofb_w_start = geom['w_out_start']
-    elif step.mode == 'C_cout_slice':
-        # cout 切: 每核完整 W_in/W_out 但 cout 段
-        my_w_in    = layer.w_in
-        my_w_out   = layer.w_out
-        my_pad_left = layer.pad
-        my_pad_top  = layer.pad
-        ifb_w_start = 0
-        ofb_w_start = 0
-        # cout segment 处理: TBD (P1 先做 W slice, cout slice 是 P2)
-        raise NotImplementedError("Cout slice 实现 P2 再做")
-    else:  # mode A
-        my_w_in    = layer.w_in
-        my_w_out   = layer.w_out
-        my_pad_left = layer.pad
-        my_pad_top  = layer.pad
-        ifb_w_start = 0
-        ofb_w_start = 0
-
-    # 派生 sub-layer cfg.
-    # W slice 下 derive 不支持 asymmetric pad, 我们用 (W_IN + halo*2) + symmetric_pad
-    # 让 derive 算出 W_OUT 跟我们期望的 my_w_out 一致.
-    # Trick: 通过 pad_left = halo 让 derive 把 halo 部分当 pad 算掉.
-    # 但更简单: 直接 override cfg 字段.
-    cfg = hw_files.derive_layer_cfg(
-        H_IN=layer.h_in, W_IN=my_w_in, K=layer.k,
-        NUM_CIN=layer.c_in, NUM_COUT=layer.c_out,
-        stride=layer.stride, pad_top=my_pad_top, pad_left=my_pad_left,
-        TILE_W=min(16, my_w_out), streaming=True,
-    )
-    # Override: W slice 下 my_w_out 来自 geometry 计算 (含 asymmetric pad)
-    if step.mode == 'C_w_slice':
-        cfg['W_OUT'] = my_w_out
-        # pad_right 需要根据 geometry 设 (asymmetric)
-        cfg['pad_right'] = my_pad_right_unused
-        # 重新计算 W slice 下的 derived 字段
-        cfg['num_tiles'] = (my_w_out + cfg['TILE_W'] - 1) // cfg['TILE_W']
-        cfg['last_valid_w'] = my_w_out - (cfg['num_tiles'] - 1) * cfg['TILE_W']
-        # ofb_words 重算
-        cfg['ofb_words'] = layer.h_out * my_w_out * cfg['cout_slices']
-
-    # IDMA SRC 跟 ODMA DST 的精确偏移
-    # 注: cin_slices 用 layer 原值 (因为 cin 没切)
     cin_slices  = (layer.c_in  + 16 - 1) // 16
     cout_slices = (layer.c_out + 16 - 1) // 16
 
+    # 决定本核实际跑的 sub-layer 维度 + per-core IDMA/ODMA 偏移
+    if step.mode == 'C_w_slice':
+        cfg = hw_files.derive_w_slice_cfg(
+            H_IN=layer.h_in, W_full=layer.w_in, K=layer.k,
+            NUM_CIN=layer.c_in, NUM_COUT=layer.c_out, stride=layer.stride,
+            pad_top=layer.pad, pad_left_full=layer.pad,
+            my_core=step.my_core, n_split=n_split,
+            TILE_W=32, streaming=True,
+        )
+        ifb_w_start = cfg['_W_SLICE_W_IN_START']
+        ofb_w_start = cfg['_W_SLICE_W_OUT_START']
+    elif step.mode == 'C_cout_slice':
+        # cout 切: 每核完整 W_in/W_out 但 cout 段 — P2 再做.
+        raise NotImplementedError("Cout slice 实现 P2 再做")
+    else:  # mode A
+        cfg = hw_files.derive_layer_cfg(
+            H_IN=layer.h_in, W_IN=layer.w_in, K=layer.k,
+            NUM_CIN=layer.c_in, NUM_COUT=layer.c_out,
+            stride=layer.stride, pad_top=layer.pad, pad_left=layer.pad,
+            TILE_W=32, streaming=True,
+        )
+        ifb_w_start = 0
+        ofb_w_start = 0
+
+    # IDMA SRC 跟 ODMA DST 的精确偏移
     if step.input_from == 'push':
         idma_src = core_ifb_axi_base(step.my_core)  # 自己核 IFB region (push 进来)
     else:
@@ -285,20 +209,22 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers):
         skip_idma=step.skip_idma,
     )
 
-    # W slice 下覆写 DDR_*_ROW_STRIDE 用全图 W (不是 my_w_in/out)
-    if step.mode == 'C_w_slice':
-        cfg_dict['DDR_IFM_ROW_STRIDE'] = layer.w_in  * cin_slices  * 16
-        cfg_dict['DDR_OFM_ROW_STRIDE'] = layer.w_out * cout_slices * 16
-
     return cfg_dict, cfg
 
 
 # ---------------------------------------------------------------------------
-# 给每核生成 desc list
+# 给每核生成 per-layer desc list (host stage barrier 模式)
+#   - 每 (core, layer) 一个独立 desc list, 末尾 END
+#   - host 一层一层串: 写 DESC_LIST_BASE → start_dfe → start_layer → wait done
+#   - W slice 跨核数据依赖通过 host barrier 解决: 上层所有核都写完 DDR OFM
+#     后, 才让下层 IDMA 启动. 比 sequencer BARRIER (只看本核) 更安全.
 # ---------------------------------------------------------------------------
-def gen_core_desc_list(core_id, steps, layers, ddr_planner, n_layers):
-    """生成核的多 layer desc list (concat with BARRIER), 返回 list of (beat0, beat1)."""
-    layer_segments = []
+def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers):
+    """
+    返回 dict: layer_idx → list of (beat0, beat1) descs (每个独立 desc list, 末尾 END).
+    若该 (core, layer) 在 plan 里没分到任务, key 不在 dict 中.
+    """
+    out = {}
     for step in steps:
         cfg_dict, cfg = build_step_cfg_dict(step, layers, ddr_planner, n_layers)
         seg = hw_files.build_layer_desc_segment(
@@ -310,8 +236,8 @@ def gen_core_desc_list(core_id, steps, layers, ddr_planner, n_layers):
             pad_left=cfg['pad_left'], pad_right=cfg['pad_right'],
             strip_rows=0,
         )
-        layer_segments.append(seg)
-    return layer_segments
+        out[step.layer_idx] = seg
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -335,18 +261,22 @@ def run_multicore_chain(layers, n_cores, out_dir):
     os.makedirs(chain_data_dir, exist_ok=True)
     chain_data = run_chain_data_gen(layers, chain_data_dir, ddr)
 
-    # 4. 给每核生成 desc list
-    print(f"\n[Step 2] Generating per-core desc lists for {n_cores} cores...")
-    core_desc_counts = {}
+    # 4. 给每核生成 per-layer desc lists (host stage barrier 模式)
+    print(f"\n[Step 2] Generating per-(core,layer) desc lists for {n_cores} cores...")
+    # core_layer_descs[core_id][layer_idx] = n_descs (0 表示该 core 该层没活)
+    core_layer_descs = [[0] * len(layers) for _ in range(n_cores)]
     for core_id in range(n_cores):
         steps = per_core_plan[core_id]
-        layer_segments = gen_core_desc_list(core_id, steps, layers, ddr, len(layers))
+        per_layer_segs = gen_core_per_layer_desc_lists(core_id, steps, layers, ddr, len(layers))
         core_dir = os.path.join(out_dir, f'core{core_id}')
         os.makedirs(core_dir, exist_ok=True)
-        desc_path = os.path.join(core_dir, 'desc_list.hex')
-        n_descs = hw_files.write_multilayer_desc_list(desc_path, layer_segments)
-        core_desc_counts[core_id] = n_descs
-        print(f"  Core {core_id}: {len(steps)} layers, {n_descs} descs (incl. {len(steps)-1} BARRIER + 1 END)")
+        for layer_idx, seg in per_layer_segs.items():
+            desc_path = os.path.join(core_dir, f'layer{layer_idx:02d}_desc_list.hex')
+            n_descs = hw_files.write_multilayer_desc_list(desc_path, [seg])
+            core_layer_descs[core_id][layer_idx] = n_descs
+        active_layers = [l for l in range(len(layers)) if core_layer_descs[core_id][l] > 0]
+        print(f"  Core {core_id}: layers={active_layers}, "
+              f"descs/layer={[core_layer_descs[core_id][l] for l in active_layers]}")
 
     # 5. 写 multicore_meta.txt 给 TB 用
     meta_path = os.path.join(out_dir, 'multicore_meta.txt')
@@ -355,11 +285,15 @@ def run_multicore_chain(layers, n_cores, out_dir):
         f.write(f"NUM_LAYERS = {len(layers)}\n")
         f.write(f"DDR_INPUT_BASE = 0x{ddr.region['INPUT']:08x}\n")
         f.write(f"DDR_FINAL_OFM_BASE = 0x{ddr.region['FINAL_OFM']:08x}\n")
+        # 每 (core, layer) desc base + count
         for core_id in range(n_cores):
-            steps = per_core_plan[core_id]
-            f.write(f"CORE_{core_id}_DESC_BASE = 0x{ddr.core_desc_ddr(core_id):08x}\n")
-            f.write(f"CORE_{core_id}_N_LAYERS = {len(steps)}\n")
-            f.write(f"CORE_{core_id}_DESC_COUNT = {core_desc_counts[core_id]}\n")
+            for layer_idx in range(len(layers)):
+                n_descs = core_layer_descs[core_id][layer_idx]
+                if n_descs == 0:
+                    continue   # 该核该层没活, 跳过
+                base = ddr.core_layer_desc_ddr(core_id, layer_idx)
+                f.write(f"CORE_{core_id}_LAYER_{layer_idx}_DESC_BASE = 0x{base:08x}\n")
+                f.write(f"CORE_{core_id}_LAYER_{layer_idx}_DESC_COUNT = {n_descs}\n")
         # final layer 信息 (TB 比对用)
         last_layer = layers[-1]
         f.write(f"FINAL_H_OUT = {last_layer.h_out}\n")
@@ -388,8 +322,10 @@ if __name__ == '__main__':
     parser.add_argument('--case_name', default='multicore_demo',
                         help='输出目录名 (在 sim/tb_multicore/cases 下)')
     parser.add_argument('--n_cores', type=int, default=2)
-    parser.add_argument('--demo', choices=['wslice1', 'simple2', 'simple3', 'resnet11'], default='wslice1',
-                        help='simple3: 3 层 chain demo / resnet11: 11 层 ResNet')
+    parser.add_argument('--demo',
+                        choices=['wslice1', 'simple2', 'simple3', 'wslice4', 'wslice5', 'wslice_mixed', 'resnet11'],
+                        default='wslice1',
+                        help='wslice4/5: 4/5 层 conv chain (W slice 验证) | wslice_mixed: 多 K/stride')
     args = parser.parse_args()
 
     if args.demo == 'wslice1':
@@ -409,6 +345,28 @@ if __name__ == '__main__':
             scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
             scheduler.Layer('L1', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
             scheduler.Layer('L2', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'wslice5':
+        # 5 层等尺寸 conv chain (W slice 多层验证, 无 stride / 无 residual)
+        layers = [
+            scheduler.Layer(f'L{i}', k=3, c_in=16, c_out=16,
+                            h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2)
+            for i in range(5)
+        ]
+    elif args.demo == 'wslice4':
+        layers = [
+            scheduler.Layer(f'L{i}', k=3, c_in=16, c_out=16,
+                            h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2)
+            for i in range(4)
+        ]
+    elif args.demo == 'wslice_mixed':
+        # 混合 K (3, 5) / stride 1, 多层 W slice 验证 (linear chain 不变 H/W)
+        # 注: stride>1 + 中间层不一致会让 chain 输入尺寸不匹配, 这里全部 stride=1
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L1', k=5, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=2, sdp_shift=3),
+            scheduler.Layer('L2', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
+            scheduler.Layer('L3', k=1, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=0, sdp_shift=2),
         ]
     elif args.demo == 'resnet11':
         from run_regression import CASES

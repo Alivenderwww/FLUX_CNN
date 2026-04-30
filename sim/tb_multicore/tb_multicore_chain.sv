@@ -122,11 +122,8 @@ module tb_multicore_chain;
 
     // ----------------- multicore_meta.txt 解析 -----------------
     int n_layers;
-    int core_n_layers [0:7];
-    int core_desc_count [0:7];
     longint ddr_input_base;
     longint ddr_final_ofm_base;
-    longint core_desc_base [0:7];
     int final_h_out, final_w_out, final_c_out;
     int layer_ifb_words [0:31];
     int layer_wb_words  [0:31];
@@ -137,17 +134,27 @@ module tb_multicore_chain;
     longint layer_ddr_rdma[0:31];
     string  layer_dirs    [0:31];
 
+    // Per-(core, layer) desc list base + count. count==0 表示该 core 该层不参与.
+    longint core_layer_desc_base  [0:7][0:31];
+    int     core_layer_desc_count [0:7][0:31];
+
     task automatic parse_meta(input string case_dir);
         int     fd;
         string  line, key, val_s, suffix;
         longint val;
-        int     layer_id, core_id, p, p1, i_ch;
+        int     layer_id, core_id, p, p1, p2, i_ch;
         string  path;
         bit     parsed_num;
 
         path = $sformatf("%s/multicore_meta.txt", case_dir);
         fd = $fopen(path, "r");
         if (fd == 0) begin $display("FATAL: cannot open %s", path); $stop; end
+        // 初始化 desc count 为 0
+        for (int c = 0; c < 8; c++)
+            for (int l = 0; l < 32; l++) begin
+                core_layer_desc_base[c][l]  = 0;
+                core_layer_desc_count[c][l] = 0;
+            end
         while (!$feof(fd)) begin
             void'($fgets(line, fd));
             parsed_num = 1'b0;
@@ -180,16 +187,24 @@ module tb_multicore_chain;
                 "FINAL_W_OUT"       : final_w_out = val;
                 "FINAL_C_OUT"       : final_c_out = val;
                 default: begin
-                    if (key.len() > 5 && key.substr(0, 4) == "CORE_") begin
-                        p = -1;
+                    // CORE_<c>_LAYER_<l>_DESC_BASE / DESC_COUNT
+                    if (key.len() > 11 && key.substr(0, 4) == "CORE_") begin
+                        // 找 _LAYER_
+                        p1 = -1; p2 = -1;
                         for (int i = 5; i < key.len(); i++)
-                            if (key.getc(i) == "_") begin p = i; break; end
-                        if (p > 0) begin
-                            core_id = key.substr(5, p-1).atoi();
-                            suffix = key.substr(p+1, key.len()-1);
-                            if (suffix == "DESC_BASE") core_desc_base[core_id] = val;
-                            else if (suffix == "N_LAYERS") core_n_layers[core_id] = val;
-                            else if (suffix == "DESC_COUNT") core_desc_count[core_id] = val;
+                            if (key.getc(i) == "_") begin p1 = i; break; end
+                        if (p1 > 0 && p1 + 6 < key.len() &&
+                            key.substr(p1+1, p1+5) == "LAYER" && key.getc(p1+6) == "_") begin
+                            // CORE_<c>_LAYER_<l>_<suffix>
+                            for (int j = p1+7; j < key.len(); j++)
+                                if (key.getc(j) == "_") begin p2 = j; break; end
+                            if (p2 > 0) begin
+                                core_id  = key.substr(5,    p1-1).atoi();
+                                layer_id = key.substr(p1+7, p2-1).atoi();
+                                suffix   = key.substr(p2+1, key.len()-1);
+                                if      (suffix == "DESC_BASE")  core_layer_desc_base [core_id][layer_id] = val;
+                                else if (suffix == "DESC_COUNT") core_layer_desc_count[core_id][layer_id] = val;
+                            end
                         end
                     end else if (key.len() > 6 && key.substr(0, 5) == "LAYER_") begin
                         p = -1;
@@ -215,8 +230,12 @@ module tb_multicore_chain;
         end
         $fclose(fd);
         $display("[META] n_layers=%0d, n_cores=%0d", n_layers, NUM_CORES);
-        for (int c = 0; c < NUM_CORES; c++)
-            $display("  Core %0d: %0d layers, desc_base=0x%h", c, core_n_layers[c], core_desc_base[c]);
+        for (int c = 0; c < NUM_CORES; c++) begin
+            for (int l = 0; l < n_layers; l++)
+                if (core_layer_desc_count[c][l] > 0)
+                    $display("  Core %0d Layer %0d: desc_base=0x%h count=%0d",
+                             c, l, core_layer_desc_base[c][l], core_layer_desc_count[c][l]);
+        end
         for (int l = 0; l < n_layers; l++)
             $display("  Layer %0d: ifb=%0d wb=%0d ofb=%0d  ifb_addr=0x%h wb_addr=0x%h ofb_addr=0x%h",
                      l, layer_ifb_words[l], layer_wb_words[l], layer_ofb_words[l],
@@ -248,11 +267,18 @@ module tb_multicore_chain;
         for (int i = 0; i < 32; i++) u_ddr.mem[base_w + i] = rdma_arr[i];
     endtask
 
-    task automatic preload_desc(input string case_dir, input int core_id, input longint base);
-        int base_w = base / 16;
-        $readmemh($sformatf("%s/core%0d/desc_list.hex", case_dir, core_id), desc_arr);
-        // 用一个大上界, 实际跑不超过 8191 beats
-        for (int i = 0; i < 8192; i++) u_ddr.mem[base_w + i] = desc_arr[i];
+    // Per-layer per-core desc list preload. base 是该 (core, layer) 的 DDR base.
+    // ModelSim 的 $sformatf("%02d") 用空格 pad (不是 0 pad), 手动拼 0X 前缀.
+    task automatic preload_layer_desc(input string case_dir, input int core_id,
+                                       input int layer_idx, input longint base);
+        string path, l2;
+        int    base_w = base / 16;
+        if (layer_idx < 10) l2 = $sformatf("0%0d", layer_idx);
+        else                l2 = $sformatf("%0d",  layer_idx);
+        path = $sformatf("%s/core%0d/layer%s_desc_list.hex", case_dir, core_id, l2);
+        $readmemh(path, desc_arr);
+        // 一个 (core, layer) 的 desc 用 1024 beats 的上界 (16 KB / 16 B/beat = 1024)
+        for (int i = 0; i < 1024; i++) u_ddr.mem[base_w + i] = desc_arr[i];
     endtask
 
     // ----------------- AXI-Lite write helper -----------------
@@ -271,12 +297,22 @@ module tb_multicore_chain;
         csr_bready  <= 1'b0;
     endtask
 
-    // 启核: 写 boot regs + start_dfe + 等 desc 灌完 + start_layer
-    // desc_count 用一个保守大上界 (driver 传入实际值, 这里假设没 over)
-    task automatic start_core(input bit core_id, input longint desc_base, input int desc_count);
-        axi_lite_write(core_id, ADDR_DESC_LIST_BASE, desc_base);
-        axi_lite_write(core_id, ADDR_DESC_COUNT, desc_count);
-        axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0010);   // start_dfe
+    // ----------------- per-layer dfe + start_layer 同步 -----------------
+    // 每一 stage:
+    //   1. host 给每个参与的 core 写 DESC_LIST_BASE / DESC_COUNT
+    //   2. host 触发所有 core 的 start_dfe (并行触发, 各核独立拉 desc)
+    //   3. host 等所有 core dfe_done
+    //   4. host 触发所有 core 的 start_layer (同时触发 → 并行计算)
+    //   5. host 等 done_per_core 全 1 (sticky 已被 start_layer 清掉, 现在重新置 1 表示 layer_done)
+    task automatic axi_lite_write_dfe_start(input bit core_id);
+        axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0010);
+    endtask
+
+    task automatic axi_lite_write_layer_start(input bit core_id);
+        axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0020);
+    endtask
+
+    task automatic wait_dfe_done(input bit core_id);
         if (core_id == 1'b0) begin
             wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b1);
             wait (u_dut.gen_core[0].u_core.dfe_busy == 1'b0);
@@ -284,7 +320,6 @@ module tb_multicore_chain;
             wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b1);
             wait (u_dut.gen_core[1].u_core.dfe_busy == 1'b0);
         end
-        axi_lite_write(core_id, ADDR_CTRL, 32'h0000_0020);   // start_layer
     endtask
 
     // ----------------- 比对 final OFM -----------------
@@ -292,8 +327,9 @@ module tb_multicore_chain;
         // 最后一层 expected_ofm.txt 在 chain_data/layer<N-1>/
         string final_dir;
         int ofb_base_w;
-        int n_words = layer_ofb_words[n_layers - 1];
+        int n_words;
         logic [NUM_COL*DATA_WIDTH-1:0] expected, got;
+        n_words = layer_ofb_words[n_layers - 1];
         final_dir = layer_dirs[n_layers - 1];
         if (final_dir == "") final_dir = $sformatf("%s/chain_data/layer%02d", case_dir, n_layers - 1);
         ofb_base_w = ddr_final_ofm_base / 16;
@@ -312,10 +348,12 @@ module tb_multicore_chain;
 
     // ----------------- 主流程 -----------------
     initial begin
-        string case_dir;
-        string ldir;
-        int    mismatches;
+        string  case_dir;
+        string  ldir;
+        int     mismatches;
         longint t_start;
+        longint t_layer_start;
+        logic [NUM_CORES-1:0] expected_done_mask;
 
         case_dir = "cases/multicore_demo";
 
@@ -325,60 +363,95 @@ module tb_multicore_chain;
         #20 rst_n = 1;
         #10;
 
-        $display("== tb_multicore_chain: multi-layer chain N=%0d ==", NUM_CORES);
+        $display("== tb_multicore_chain: multi-layer chain N=%0d (host stage barrier) ==", NUM_CORES);
 
         parse_meta(case_dir);
 
-        // 各层数据 preload
+        // 各层数据 preload (IFB/WB/RDMA, 第一层 IFB 是整网入口, 中间层 IFB 由上层 OFM 写)
         for (int l = 0; l < n_layers; l++) begin
             ldir = layer_dirs[l];
             if (ldir == "") ldir = $sformatf("%s/chain_data/layer%02d", case_dir, l);
-            // 第一层 IFB 必须 preload (整网入口); 中间层 IFB 由上层 OFM 写入 DDR 形成
             if (l == 0)
                 preload_ifb(ldir, layer_ddr_ifb[l], layer_ifb_words[l]);
             preload_wb(ldir, layer_ddr_wb[l], layer_wb_words[l]);
             preload_rdma(ldir, layer_ddr_rdma[l]);
         end
 
-        // 各核 desc preload
+        // 各核每层 desc list 都 preload (host stage barrier 模式: 每层 host 切换 DESC_LIST_BASE)
         for (int c = 0; c < NUM_CORES; c++)
-            preload_desc(case_dir, c, core_desc_base[c]);
+            for (int l = 0; l < n_layers; l++)
+                if (core_layer_desc_count[c][l] > 0)
+                    preload_layer_desc(case_dir, c, l, core_layer_desc_base[c][l]);
 
         // 清 final OFM 区
         for (int i = 0; i < layer_ofb_words[n_layers - 1]; i++)
             u_ddr.mem[ddr_final_ofm_base/16 + i] = '0;
 
-        $display("  DDR preload done. Starting all cores (consumer-first by core_id desc)...");
-
+        $display("  DDR preload done. Stage barrier loop start.");
         t_start = $time;
 
-        // 启动策略: 所有核**同时**启动 (race start), 然后 wait 全部 done.
-        // mode C 切片下各核独立从 DDR 读自己段, 互不依赖, 同时跑.
-        // (旧 P0 sequential 启动已废弃, 没有并发收益)
-        for (int c = 0; c < NUM_CORES; c++) begin
-            start_core(c[0], core_desc_base[c], core_desc_count[c]);
-            $display("  Core %0d started @ t=%0t (desc_count=%0d)", c, $time, core_desc_count[c]);
-        end
-        wait (&done_per_core);
-        $display("  ALL cores done @ t=%0t", $time);
+        // ---- 主 stage barrier 循环: host 一层一层串 ----
+        for (int l = 0; l < n_layers; l++) begin
+            t_layer_start = $time;
 
-        // 等所有核 done
-        wait (&done_per_core);
-        $display("  ALL cores done @ t=%0t (cycles=%0d)", $time, ($time - t_start) / 10);
+            // 哪些 core 参与本层 (count > 0 即参与)
+            expected_done_mask = '0;
+            for (int c = 0; c < NUM_CORES; c++)
+                if (core_layer_desc_count[c][l] > 0)
+                    expected_done_mask[c] = 1'b1;
 
-        @(posedge clk); @(posedge clk);
+            // 1) 每核串行: 写 boot regs + start_dfe + 等 dfe_done.
+            //   并行触发 dfe 会让 dfe_busy 1→0 错过 wait, 串行最稳 (DFE ~1000 cy 短开销).
+            for (int c = 0; c < NUM_CORES; c++) begin
+                if (core_layer_desc_count[c][l] > 0) begin
+                    axi_lite_write(c[0], ADDR_DESC_LIST_BASE, core_layer_desc_base[c][l]);
+                    axi_lite_write(c[0], ADDR_DESC_COUNT,     core_layer_desc_count[c][l]);
+                    axi_lite_write_dfe_start(c[0]);
+                    wait_dfe_done(c[0]);
+                end
+            end
 
-        // DEBUG: dump core 1 IFB SRAM 头几个 word vs L1 expected ifb (= L0 expected ofm)
-        begin
-            string ldir;
-            ldir = layer_dirs[0];
-            if (ldir == "") ldir = $sformatf("%s/chain_data/layer00", case_dir);
-            $readmemh($sformatf("%s/expected_ofm.txt", ldir), exp_arr);
-            for (int i = 0; i < 3; i++) begin
-                $display("  C1.IFB.SRAM[%0d] = %h", i, u_dut.gen_core[1].u_core.u_ifb.mem[i]);
-                $display("  L0.expected_ofm[%0d] = %h", i, exp_arr[i]);
+            // 2) 所有 desc 都进 FIFO 了, 现在并行触发 start_layer (clear sticky + 启计算)
+            for (int c = 0; c < NUM_CORES; c++)
+                if (core_layer_desc_count[c][l] > 0)
+                    axi_lite_write_layer_start(c[0]);
+
+            // 5) 等所有参与 core 的 done_per_core (= core_done_sticky)
+            wait ((done_per_core & expected_done_mask) == expected_done_mask);
+            $display("  Layer %0d done @ t=%0t (cycles=%0d, mask=%b)",
+                     l, $time, ($time - t_layer_start) / 10, expected_done_mask);
+
+            @(posedge clk); @(posedge clk);
+
+            // 每 layer 完成后立刻 check 自己的 OFM (intermediate or final).
+            // 这是关键诊断点: 多层 chain 的 Layer 2+ 当前会在这里报 mismatch
+            // (单层 wslice1 OK, 多层 chain 有未解 bug 见 memory/multilayer_chain_bug.md).
+            begin
+                automatic string ldir2;
+                automatic int    ofb_base_w2;
+                automatic int    n_w2;
+                automatic int    mm2;
+                automatic longint ofb_addr;
+                automatic logic [NUM_COL*DATA_WIDTH-1:0] expected2, got2;
+                n_w2 = layer_ofb_words[l];
+                mm2  = 0;
+                ldir2 = layer_dirs[l];
+                if (ldir2 == "") ldir2 = $sformatf("%s/chain_data/layer%02d", case_dir, l);
+                if (l == n_layers - 1) ofb_addr = ddr_final_ofm_base;
+                else                   ofb_addr = layer_ddr_ofb[l];
+                ofb_base_w2 = ofb_addr / 16;
+                $readmemh($sformatf("%s/expected_ofm.txt", ldir2), exp_arr);
+                for (int i = 0; i < n_w2; i++) begin
+                    expected2 = exp_arr[i];
+                    got2      = u_ddr.mem[ofb_base_w2 + i][NUM_COL*DATA_WIDTH-1:0];
+                    if (got2 !== expected2) mm2++;
+                end
+                $display("    POST-LAYER %0d OFM check @ 0x%h: mismatches=%0d/%0d",
+                         l, ofb_addr, mm2, n_w2);
             end
         end
+
+        $display("  ALL layers done @ t=%0t (total cycles=%0d)", $time, ($time - t_start) / 10);
 
         // DEBUG: 比对每层中间 OFM
         begin
@@ -405,6 +478,7 @@ module tb_multicore_chain;
                          exp_arr[0]);
             end
         end
+
 
         check_final_ofb(case_dir, mismatches);
 

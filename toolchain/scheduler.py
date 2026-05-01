@@ -51,6 +51,20 @@ class Layer:
     pad: int = 0
     has_residual: bool = False
     sdp_shift: int = 0
+    # 链 / residual 数据流: ResNet 不是线性 chain. 每 layer 独立指明输入跟 (可选) shortcut
+    # 来源 (按 layer name). input_src=='' 表示整网入口 (gen 用 random ifm).
+    input_src: str = ''
+    shortcut_src: str = ''
+    # SDP per-layer 量化参数 (默认 multicore_chain 风格 clip[0,255] no round, 跟 RTL 对齐)
+    sdp_mult: int = 1
+    sdp_zp_out: int = 0
+    sdp_clip_min: int = 0
+    sdp_clip_max: int = 255
+    sdp_round_en: int = 0
+    sdp_relu_en: int = 1
+    # Residual 缩放
+    shortcut_mult: int = 0
+    shortcut_shift: int = 0
 
     @property
     def h_out(self) -> int:
@@ -654,20 +668,34 @@ def print_schedule(stages: List[Stage], n_cores: int) -> None:
           f"{1e9/(wall*10):.1f} fps)")
     print(f"  Speedup vs 1 core: {total_cycles/wall:.2f}x (ideal {n_cores}x)")
 def chain_to_layers(chain_cases: list) -> List[Layer]:
-    """把 run_regression.py 的 Chain.cases (list of dict) 转成 Layer 序列."""
+    """把 run_regression.py 的 Chain.cases (list of dict) 转成 Layer 序列.
+    保留 input_src / shortcut_src / 全部 SDP 参数 — ResNet residual + 维度变化都靠它链起来.
+    """
     layers = []
     for c in chain_cases:
+        has_res = bool(c.get('shortcut_src', ''))
         layers.append(Layer(
-            name     = c['name'],
-            k        = c['k'],
-            c_in     = c['c_in'],
-            c_out    = c['c_out'],
-            h_in     = c['h_in'],
-            w_in     = c['w_in'],
-            stride   = c['stride'],
-            pad      = c['pad'],
-            has_residual = bool(c.get('shortcut_src', '')),
-            sdp_shift = c['sdp_shift'],
+            name           = c['name'],
+            k              = c['k'],
+            c_in           = c['c_in'],
+            c_out          = c['c_out'],
+            h_in           = c['h_in'],
+            w_in           = c['w_in'],
+            stride         = c['stride'],
+            pad            = c['pad'],
+            has_residual   = has_res,
+            sdp_shift      = c['sdp_shift'],
+            input_src      = c.get('input_src', ''),
+            shortcut_src   = c.get('shortcut_src', ''),
+            sdp_mult       = c.get('sdp_mult', 1),
+            sdp_zp_out     = c.get('sdp_zp_out', 0),
+            sdp_clip_min   = c.get('sdp_clip_min', 0),
+            sdp_clip_max   = c.get('sdp_clip_max', 255),
+            sdp_round_en   = c.get('sdp_round_en', 0),
+            sdp_relu_en    = c.get('sdp_relu_en', 1),
+            # 用户可选; ResNet 默认 mult=1 shift=0
+            shortcut_mult  = 1 if has_res else 0,
+            shortcut_shift = 0,
         ))
     return layers
 

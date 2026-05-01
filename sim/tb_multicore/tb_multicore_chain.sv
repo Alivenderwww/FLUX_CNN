@@ -114,11 +114,11 @@ module tb_multicore_chain;
     );
 
     // ----------------- Preload buffers -----------------
-    logic [BUS_DATA_W-1:0]   ifb_arr  [0:65535];
+    logic [BUS_DATA_W-1:0]   ifb_arr  [0:524287];   // ResNet Patch IFB 960×540×1 = 518400 words
     logic [NUM_COL*NUM_PE*DATA_WIDTH-1:0] wb_arr [0:4095];
     logic [NUM_COL*DATA_WIDTH-1:0]        exp_arr [0:65535];
     logic [BUS_DATA_W-1:0]   desc_arr [0:8191];
-    logic [BUS_DATA_W-1:0]   rdma_arr [0:1023];
+    logic [BUS_DATA_W-1:0]   rdma_arr [0:65535];   // residual: bias + H_OUT*W_OUT*cout_slices
 
     // ----------------- multicore_meta.txt 解析 -----------------
     int n_layers;
@@ -132,11 +132,15 @@ module tb_multicore_chain;
     longint layer_ddr_wb  [0:31];
     longint layer_ddr_ofb [0:31];
     longint layer_ddr_rdma[0:31];
+    int     layer_rdma_words [0:31];   // bias + opt shortcut (residual layer 时变大)
     string  layer_dirs    [0:31];
 
     // Per-(core, layer) desc list base + count. count==0 表示该 core 该层不参与.
     longint core_layer_desc_base  [0:7][0:31];
     int     core_layer_desc_count [0:7][0:31];
+    // Per-(core, layer) sliced RDMA (residual + W slice 时每核独立 rdma_data 文件)
+    longint core_layer_rdma_base  [0:7][0:31];
+    int     core_layer_rdma_words [0:7][0:31];
 
     task automatic parse_meta(input string case_dir);
         int     fd;
@@ -154,6 +158,8 @@ module tb_multicore_chain;
             for (int l = 0; l < 32; l++) begin
                 core_layer_desc_base[c][l]  = 0;
                 core_layer_desc_count[c][l] = 0;
+                core_layer_rdma_base[c][l]  = 0;
+                core_layer_rdma_words[c][l] = 0;
             end
         while (!$feof(fd)) begin
             void'($fgets(line, fd));
@@ -204,6 +210,8 @@ module tb_multicore_chain;
                                 suffix   = key.substr(p2+1, key.len()-1);
                                 if      (suffix == "DESC_BASE")  core_layer_desc_base [core_id][layer_id] = val;
                                 else if (suffix == "DESC_COUNT") core_layer_desc_count[core_id][layer_id] = val;
+                                else if (suffix == "RDMA_BASE")  core_layer_rdma_base [core_id][layer_id] = val;
+                                else if (suffix == "RDMA_WORDS") core_layer_rdma_words[core_id][layer_id] = val;
                             end
                         end
                     end else if (key.len() > 6 && key.substr(0, 5) == "LAYER_") begin
@@ -217,6 +225,7 @@ module tb_multicore_chain;
                                 "IFB_WORDS"  : layer_ifb_words[layer_id] = val;
                                 "WB_WORDS"   : layer_wb_words[layer_id] = val;
                                 "OFB_WORDS"  : layer_ofb_words[layer_id] = val;
+                                "RDMA_WORDS" : layer_rdma_words[layer_id] = val;
                                 "DDR_IFB"    : layer_ddr_ifb[layer_id] = val;
                                 "DDR_WB"     : layer_ddr_wb[layer_id] = val;
                                 "DDR_OFB"    : layer_ddr_ofb[layer_id] = val;
@@ -257,14 +266,25 @@ module tb_multicore_chain;
                 u_ddr.mem[base_w + i*16 + b] = wb_arr[i][b*BUS_DATA_W +: BUS_DATA_W];
     endtask
 
-    task automatic preload_rdma(input string layer_dir, input longint base);
+    task automatic preload_rdma(input string layer_dir, input longint base, input int n_words);
         int base_w = base / 16;
         int fd = $fopen($sformatf("%s/rdma_data.txt", layer_dir), "r");
         if (fd == 0) return;
         $fclose(fd);
+        for (int i = 0; i < 65536; i++) rdma_arr[i] = '0;
         $readmemh($sformatf("%s/rdma_data.txt", layer_dir), rdma_arr);
-        // 读取 cout_slices × 4 word; 这里偷懒读 1024
-        for (int i = 0; i < 32; i++) u_ddr.mem[base_w + i] = rdma_arr[i];
+        for (int i = 0; i < n_words; i++) u_ddr.mem[base_w + i] = rdma_arr[i];
+    endtask
+
+    // Per-(core, layer) sliced RDMA: residual + W slice 时每核独立 rdma_data_c<core>.txt
+    task automatic preload_core_layer_rdma(input string layer_dir, input int core_id,
+                                            input longint base, input int n_words);
+        string path;
+        int    base_w = base / 16;
+        path = $sformatf("%s/rdma_data_c%0d.txt", layer_dir, core_id);
+        for (int i = 0; i < 65536; i++) rdma_arr[i] = '0;
+        $readmemh(path, rdma_arr);
+        for (int i = 0; i < n_words; i++) u_ddr.mem[base_w + i] = rdma_arr[i];
     endtask
 
     // Per-layer per-core desc list preload. base 是该 (core, layer) 的 DDR base.
@@ -390,7 +410,12 @@ module tb_multicore_chain;
             if (l == 0)
                 preload_ifb(ldir, layer_ddr_ifb[l], layer_ifb_words[l]);
             preload_wb(ldir, layer_ddr_wb[l], layer_wb_words[l]);
-            preload_rdma(ldir, layer_ddr_rdma[l]);
+            preload_rdma(ldir, layer_ddr_rdma[l], layer_rdma_words[l]);
+            // Per-(core, layer) sliced RDMA (residual + W slice)
+            for (int c = 0; c < NUM_CORES; c++)
+                if (core_layer_rdma_words[c][l] > 0)
+                    preload_core_layer_rdma(ldir, c, core_layer_rdma_base[c][l],
+                                              core_layer_rdma_words[c][l]);
         end
 
         // 各核每层 desc list 都 preload (host stage barrier 模式: 每层 host 切换 DESC_LIST_BASE)

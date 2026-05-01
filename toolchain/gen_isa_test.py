@@ -333,12 +333,13 @@ def generate_random(
     print(f"Files  : ifb.txt  wb.txt  expected_ofm.txt  config.txt  sim_params.f  desc_list.hex")
     # 链式调用需要 ofm_arr (作下层 ifm) + 输出维度
     return {
-        'ofm_arr'  : ofm_arr,
-        'H_OUT'    : H_OUT,
-        'W_OUT'    : W_OUT,
-        'ifb_words': cfg['ifb_words'],
-        'wb_words' : cfg['wb_words'],
-        'ofb_words': cfg['ofb_words'],
+        'ofm_arr'   : ofm_arr,
+        'H_OUT'     : H_OUT,
+        'W_OUT'     : W_OUT,
+        'ifb_words' : cfg['ifb_words'],
+        'wb_words'  : cfg['wb_words'],
+        'ofb_words' : cfg['ofb_words'],
+        'rdma_words': n_rdma_lines,
     }
 
 

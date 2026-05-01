@@ -325,10 +325,18 @@ def write_wb(out_dir, w_arr, K, NUM_CIN, NUM_COUT, HW_PE, HW_COL, KY=None):
 # shortcut 布局: NHWC, 每 (yout, x, cs) 1 个 128-bit 字 = 16 × INT8 (低位先).
 # ---------------------------------------------------------------------------
 def write_rdma_data(out_dir, bias_arr, shortcut_arr,
-                    NUM_COUT, HW_COL, H_OUT=0, W_OUT=0):
-    """生成 rdma_data.txt. 返回 (n_lines, n_bias_lines)."""
+                    NUM_COUT, HW_COL, H_OUT=0, W_OUT=0,
+                    out_filename='rdma_data.txt',
+                    w_slice_start=0, w_slice_end=None):
+    """生成 rdma_data.txt. 返回 (n_lines, n_bias_lines).
+
+    W slice (residual + 多核) 用: w_slice_start/end 限定 shortcut 写第 [start, end) 列.
+    每核独立 rdma 文件, ofb_writer 的 SB 按 sub_W_OUT 寻址自动对齐.
+    """
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
     hex_chars   = HW_COL * 2                 # 128 bit = 32 hex chars
+    if w_slice_end is None:
+        w_slice_end = W_OUT
 
     lines = []
 
@@ -348,9 +356,10 @@ def write_rdma_data(out_dir, bias_arr, shortcut_arr,
     n_bias_lines = len(lines)
 
     # ---- shortcut section: NHWC, 每 (yout, x, cs) 1 行 ----
+    #   (yout, x ∈ [w_slice_start, w_slice_end), cs) — W slice 时只写本核段
     if shortcut_arr is not None:
         for yout in range(H_OUT):
-            for x in range(W_OUT):
+            for x in range(w_slice_start, w_slice_end):
                 for cs in range(cout_slices):
                     local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
                     word = 0
@@ -360,7 +369,7 @@ def write_rdma_data(out_dir, bias_arr, shortcut_arr,
                         word |= v << (lc * 8)
                     lines.append(f"{word:0{hex_chars}X}")
 
-    with open(_out_path(out_dir, 'rdma_data.txt'), 'w') as f:
+    with open(_out_path(out_dir, out_filename), 'w') as f:
         f.writelines(d + '\n' for d in lines)
     return len(lines), n_bias_lines
 

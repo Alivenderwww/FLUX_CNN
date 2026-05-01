@@ -203,6 +203,20 @@ ResNet N=4 切片决策: layer 0-9 全 W slice (4 push 边界 + 6 DDR 边界), F
 整体: **20/20 切片 case 全 bit-exact PASS** (覆盖 K∈{1,3,5,7}, stride∈{1,2}, W∈{8,32,33},
 单层/多层, N∈{2,4}, mode A/W slice 混合, LPT 并行 stage).
 
+#### ResNet residual chain (P1.1)
+| 测试 | 结果 |
+|---|---|
+| resnet_block1 N=1/2/4 (3 层 mode A + residual) | ✅ 23407 / 13994 / 10520 cycles |
+| resnet_residual_wslice N=1/2/4 (3 层 K=3 + residual + W slice) | ✅ 31852 / 17733 / 12511 cycles |
+
+residual + W slice 关键改造:
+- driver: 后处理生成 per-(core, layer) sliced rdma_data.txt (按 main path geom 切 shortcut 列)
+- DDRPlanner: 加 core_layer_rdma_ddr (per-core 1MB / N 段)
+- TB: parse `CORE_<i>_LAYER_<l>_RDMA_BASE/WORDS`, preload `rdma_data_c<i>.txt` per (core, layer)
+- ofb_writer 不需要改 — SB 按 sub_W_OUT 寻址自动对齐 sliced shortcut.
+
+整体 P1 验证: **48 cases 全 bit-exact PASS** (26 单核 + 16 N=2/4 切片 + 6 ResNet residual).
+
 ### 单层 W slice 关键点
 
 W slice 几何 (computed redundancy halo):

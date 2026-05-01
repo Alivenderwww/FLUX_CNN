@@ -133,6 +133,7 @@ module tb_multicore_chain;
     longint layer_ddr_ofb [0:31];
     longint layer_ddr_rdma[0:31];
     int     layer_rdma_words [0:31];   // bias + opt shortcut (residual layer 时变大)
+    int     layer_preload_ifb[0:31];   // 1 表示该 layer IFB 是 root (random) 需 host preload
     string  layer_dirs    [0:31];
 
     // Per-(core, layer) desc list base + count. count==0 表示该 core 该层不参与.
@@ -226,6 +227,7 @@ module tb_multicore_chain;
                                 "WB_WORDS"   : layer_wb_words[layer_id] = val;
                                 "OFB_WORDS"  : layer_ofb_words[layer_id] = val;
                                 "RDMA_WORDS" : layer_rdma_words[layer_id] = val;
+                                "PRELOAD_IFB": layer_preload_ifb[layer_id] = val;
                                 "DDR_IFB"    : layer_ddr_ifb[layer_id] = val;
                                 "DDR_WB"     : layer_ddr_wb[layer_id] = val;
                                 "DDR_OFB"    : layer_ddr_ofb[layer_id] = val;
@@ -407,7 +409,7 @@ module tb_multicore_chain;
         for (int l = 0; l < n_layers; l++) begin
             ldir = layer_dirs[l];
             if (ldir == "") ldir = $sformatf("%s/chain_data/layer%02d", case_dir, l);
-            if (l == 0)
+            if (l == 0 || layer_preload_ifb[l] == 1)
                 preload_ifb(ldir, layer_ddr_ifb[l], layer_ifb_words[l]);
             preload_wb(ldir, layer_ddr_wb[l], layer_wb_words[l]);
             preload_rdma(ldir, layer_ddr_rdma[l], layer_rdma_words[l]);
@@ -570,9 +572,9 @@ module tb_multicore_chain;
         end
     end
 
-    // 总 watchdog
+    // 总 watchdog (ResNet11 Patch ~8M cycles + 11 层 ~50M total at 10ns/cy = 500M ns 安全余量)
     initial begin
-        #5_000_000;
+        #1_000_000_000;
         $display("FATAL: watchdog timeout @ %0t", $time);
         $stop;
     end

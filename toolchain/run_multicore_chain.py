@@ -52,17 +52,19 @@ class DDRPlanner:
         # OFM 区跟 RDMA 区也变大: residual 层 shortcut 数据 ≈ H_OUT*W_OUT*cout_slices*16 byte,
         # ResNet L1.B2.ds shortcut = 120*68*1*16 ≈ 130 KB, 64 KB region 不够; bump 到 1 MB / layer.
         self.region = {
-            'INPUT'      : 0x0000_0000,   # 0-16MB  (16MB) — 大输入
+            'INPUT'      : 0x0000_0000,   # 0-16MB  (16MB) — 大输入 (整网入口)
             'OFM_LAYER'  : 0x0100_0000,   # 16-48MB (32MB, 16 层 × 2MB)
             'WB'         : 0x0300_0000,   # 48-56MB (8MB, 16 层 × 512KB)
             'RDMA'       : 0x0380_0000,   # 56-72MB (16MB, 16 层 × 1MB / 含 residual shortcut)
             'DESC'       : 0x0480_0000,   # 72-80MB (8MB, 16 核 × 512KB)
             'FINAL_OFM'  : 0x0500_0000,   # 80-82MB (2MB)
+            'ROOT_IFB'   : 0x0510_0000,   # 81MB+ (16MB / 16 根 layer × 1MB) — ResNet FC 等 root layer
         }
         self.ofm_offset  = 0x0020_0000   # 2 MB / layer
         self.wb_offset   = 0x0008_0000   # 512 KB / layer
         self.rdma_offset = 0x0010_0000   # 1 MB / layer (residual shortcut data 大)
         self.desc_offset = 0x0008_0000   # 512 KB / core
+        self.root_ifb_offset = 0x0010_0000  # 1 MB / root layer
 
     def layer_input_ddr(self, layer_idx):
         """layer i 的 IFM 来源 DDR base. layer 0 = INPUT, 否则 = layer i-1 的 OFM."""
@@ -88,6 +90,12 @@ class DDRPlanner:
     def core_layer_desc_ddr(self, core_id, layer_idx, per_layer_size=0x8000):
         """Per-(core, layer) desc list base. 32 KB / (core, layer) 默认, 512 KB / core 上限."""
         return self.region['DESC'] + core_id * self.desc_offset + layer_idx * per_layer_size
+
+    def root_ifb_ddr(self, root_idx):
+        """Root layer (input_src='' 且非链式) 的 IFB region.
+        i 个 root layer 顺序分配, 跟 OFM_LAYER 区互不重叠.
+        """
+        return self.region['ROOT_IFB'] + root_idx * self.root_ifb_offset
 
     def core_layer_rdma_ddr(self, core_id, layer_idx, n_cores=4):
         """Per-(core, layer) RDMA region base. residual + W slice 时每核 rdma_data 不同 (sliced shortcut).
@@ -118,13 +126,20 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
             shutil.rmtree(layer_dir)
         os.makedirs(layer_dir, exist_ok=True)
 
-        # ifm 来源: input_src 优先, 否则用 prev_ofm (老 demo), 第一层为 None (gen 用 random)
+        # ifm 来源:
+        #   input_src 非空 → 按名字查 ofm_dict (ResNet block / 链式 case)
+        #   input_src 空 → 当 root layer (gen 用 random ifm, 跟 run_regression _chain.root 语义一致)
+        #   兼容老 demo (没设 input_src 的 simple3 等): i>0 时用 prev_ofm
         if layer.input_src:
             if layer.input_src not in ofm_dict:
                 raise ValueError(f"layer {layer.name}: input_src='{layer.input_src}' "
                                  f"not in ofm_dict {list(ofm_dict.keys())}")
             ifm_arr_in = ofm_dict[layer.input_src]
         elif i == 0:
+            ifm_arr_in = None
+        elif layer.h_in != (chain_data[-1]['h_out'] if chain_data else 0) \
+             or layer.w_in != (chain_data[-1]['w_out'] if chain_data else 0):
+            # 维度不匹配 prev → 当 root, 用 random ifm (e.g. ResNet FC 接 GAP/Flatten)
             ifm_arr_in = None
         else:
             ifm_arr_in = prev_ofm
@@ -163,6 +178,9 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
         )
         prev_ofm = ret['ofm_arr']
         ofm_dict[layer.name] = ret['ofm_arr']
+        # ifb_is_root: 该 layer IFB 是 gen 用 random 现造的, TB 需要 preload (而不是依赖
+        # 上一层 ODMA 写). 整网入口 (i==0) + ResNet FC 这种维度跟上层不匹配的 root layer 都是.
+        ifb_is_root = (ifm_arr_in is None)
         chain_data.append({
             'layer_idx'      : i,
             'layer_dir'      : layer_dir,
@@ -175,6 +193,7 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
             # 保留 shortcut_arr 给 W slice + residual 用 (后处理切片)
             'shortcut_arr'   : shortcut_arr_in,
             'has_residual'   : residual,
+            'ifb_is_root'    : ifb_is_root,
         })
         residual_tag = f' (+res from {layer.shortcut_src})' if residual else ''
         print(f"  Layer {i:>2} {layer.name:<14} {layer.h_in}x{layer.w_in}x{layer.c_in} -> "
@@ -192,12 +211,14 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
 # ---------------------------------------------------------------------------
 def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
                          name_to_idx=None, chain_data=None,
-                         core_layer_rdma_words=None, n_cores_total=None):
+                         core_layer_rdma_words=None, n_cores_total=None,
+                         root_ifb_idx=None):
     """生成 step 对应 layer 的 cfg_dict (考虑 mode A / mode C 切片, push/DDR).
 
     name_to_idx: layer.name → list index (用 layer.input_src / shortcut_src 查 DDR 区).
     chain_data:  list of dicts from run_chain_data_gen.
     core_layer_rdma_words: 二维数组, 非 0 表示该 (core, layer) 用 sliced rdma 文件.
+    root_ifb_idx: layer_idx → root slot, 给 ifb_is_root 层用 ROOT_IFB 区 (避开上层 OFM).
     """
     layer = step.layer
     layer_idx = step.layer_idx
@@ -233,14 +254,19 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         ifb_w_start = 0
         ofb_w_start = 0
 
-    # IDMA SRC: ResNet 非线性 chain — input_src 优先 (按名字查上游 layer 的 OFM region).
-    # 老 demo (input_src=='') fallback 到 layer_input_ddr(layer_idx) 的位置查找.
+    # IDMA SRC:
+    #   push: 自己核 IFB region
+    #   input_src 非空: 上游 layer OFM 区
+    #   ifb_is_root (i>0): 独立 ROOT_IFB slot
+    #   layer 0 / 线性链: layer_input_ddr(i)
     if step.input_from == 'push':
         idma_src = core_ifb_axi_base(step.my_core)  # 自己核 IFB region (push 进来)
     else:
         if layer.input_src and name_to_idx is not None and layer.input_src in name_to_idx:
             src_idx = name_to_idx[layer.input_src]
             idma_base = ddr_planner.layer_output_ddr(src_idx, n_layers)
+        elif root_ifb_idx is not None and layer_idx in root_ifb_idx:
+            idma_base = ddr_planner.root_ifb_ddr(root_ifb_idx[layer_idx])
         else:
             idma_base = ddr_planner.layer_input_ddr(layer_idx)
         idma_src = idma_base + ifb_w_start * cin_slices * 16
@@ -295,7 +321,8 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
 # ---------------------------------------------------------------------------
 def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
                                     name_to_idx=None, chain_data=None,
-                                    core_layer_rdma_words=None, n_cores_total=None):
+                                    core_layer_rdma_words=None, n_cores_total=None,
+                                    root_ifb_idx=None):
     """
     返回 dict: layer_idx → list of (beat0, beat1) descs (每个独立 desc list, 末尾 END).
     若该 (core, layer) 在 plan 里没分到任务, key 不在 dict 中.
@@ -305,7 +332,8 @@ def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
         cfg_dict, cfg = build_step_cfg_dict(step, layers, ddr_planner, n_layers,
                                               name_to_idx=name_to_idx, chain_data=chain_data,
                                               core_layer_rdma_words=core_layer_rdma_words,
-                                              n_cores_total=n_cores_total)
+                                              n_cores_total=n_cores_total,
+                                              root_ifb_idx=root_ifb_idx)
         seg = hw_files.build_layer_desc_segment(
             cfg_dict,
             H_IN=cfg['H_IN'], W_IN=cfg['W_IN'],
@@ -342,6 +370,15 @@ def run_multicore_chain(layers, n_cores, out_dir):
 
     # name → layer index 索引 (ResNet 用 input_src/shortcut_src 找上游 layer 的 DDR 区)
     name_to_idx = {l.name: i for i, l in enumerate(layers)}
+
+    # Root layer (i>0 但 ifb_is_root=True) 各自独占 ROOT_IFB 区, 避开上层 OFM 覆盖.
+    # layer 0 (整网入口) 用 INPUT 区, 不归 ROOT_IFB.
+    root_ifb_idx = {}   # layer_idx → root slot
+    n_roots = 0
+    for i, cd in enumerate(chain_data):
+        if i > 0 and cd['ifb_is_root']:
+            root_ifb_idx[i] = n_roots
+            n_roots += 1
 
     # 后处理: residual + W slice 层, 生成 per-(core, layer) sliced rdma_data.txt.
     # core_layer_rdma_words[core_id][layer_idx] = 该核该层的 rdma word 数 (含 bias + sliced shortcut)
@@ -387,7 +424,8 @@ def run_multicore_chain(layers, n_cores, out_dir):
                                                         name_to_idx=name_to_idx,
                                                         chain_data=chain_data,
                                                         core_layer_rdma_words=core_layer_rdma_words,
-                                                        n_cores_total=n_cores)
+                                                        n_cores_total=n_cores,
+                                                        root_ifb_idx=root_ifb_idx)
         core_dir = os.path.join(out_dir, f'core{core_id}')
         os.makedirs(core_dir, exist_ok=True)
         for layer_idx, seg in per_layer_segs.items():
@@ -433,9 +471,15 @@ def run_multicore_chain(layers, n_cores, out_dir):
             f.write(f"LAYER_{i}_WB_WORDS = {cd['wb_words']}\n")
             f.write(f"LAYER_{i}_OFB_WORDS = {cd['ofb_words']}\n")
             f.write(f"LAYER_{i}_RDMA_WORDS = {cd['rdma_words']}\n")  # bias + opt shortcut
-            # IDMA SRC 用 layer.input_src 找上游 OFM 区 (ResNet 非线性), 老 demo fallback
+            f.write(f"LAYER_{i}_PRELOAD_IFB = {1 if cd['ifb_is_root'] else 0}\n")
+            # IDMA SRC:
+            #   1. input_src 非空 → 上游 layer 的 OFM 区 (ResNet block 内链)
+            #   2. ifb_is_root && i>0 → 独立 ROOT_IFB slot (避免被上层 OFM 覆盖)
+            #   3. 其他 (layer 0 或线性 chain) → layer_input_ddr(i)
             if layer.input_src and layer.input_src in name_to_idx:
                 idma_ddr = ddr.layer_output_ddr(name_to_idx[layer.input_src], len(layers))
+            elif i in root_ifb_idx:
+                idma_ddr = ddr.root_ifb_ddr(root_ifb_idx[i])
             else:
                 idma_ddr = ddr.layer_input_ddr(i)
             f.write(f"LAYER_{i}_DDR_IFB = 0x{idma_ddr:08x}\n")

@@ -67,6 +67,28 @@ class Layer:
     shortcut_shift: int = 0
 
     @property
+    def force_s2d(self) -> bool:
+        """stride>=3 + K>=stride: line_buffer 不原生支持, 强制 S2D 转 stride=1 conv.
+        Patch (K=4 s=4) 这种触发, 跟 run_regression force_s2d 同条件."""
+        return self.stride >= 3 and self.k >= self.stride
+
+    def s2d_eff(self) -> tuple:
+        """S2D 后的等效维度 (h_in, w_in, k, c_in, stride). 没 s2d 就返回原值."""
+        if not self.force_s2d:
+            return (self.h_in, self.w_in, self.k, self.c_in, self.stride)
+        # K_new = ceil(K/stride), c_in_new = stride² × c_in, stride_new = 1
+        # H_in_eff = H_in (s2d 把空间折到 cin, 但实际 RTL 用的还是 pre-s2d 的 H_in
+        # 因为 hw_files.s2d_input 重排时 pad 后再展开). 看 hw_files.compute_s2d_params 实现.
+        # 实际 gen_isa_test 内部把 ifm 重排成新维度: H_IN, W_IN 都被 hw_files.s2d_input
+        # 改成 s2d 后的 H/W. 这里返回 s2d 后的等效值.
+        k_new = (self.k + self.stride - 1) // self.stride
+        cin_new = self.stride * self.stride * self.c_in
+        # h/w_in 经 s2d_input 重排后的实际尺寸: ceil((h+2*pad)/stride) (后续 pad=0)
+        h_eff = (self.h_in + 2 * self.pad + self.stride - 1) // self.stride
+        w_eff = (self.w_in + 2 * self.pad + self.stride - 1) // self.stride
+        return (h_eff, w_eff, k_new, cin_new, 1)
+
+    @property
     def h_out(self) -> int:
         return (self.h_in + 2 * self.pad - self.k) // self.stride + 1
 

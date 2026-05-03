@@ -208,9 +208,18 @@ ResNet N=4 切片决策: layer 0-9 全 W slice (4 push 边界 + 6 DDR 边界), F
 |---|---|
 | resnet_block1 N=1/2/4 (3 层 mode A + residual) | ✅ 23407 / 13994 / 10520 cycles |
 | resnet_residual_wslice N=1/2/4 (3 层 K=3 + residual + W slice) | ✅ 31852 / 17733 / 12511 cycles |
-| **ResNet11 N=1 (full ResNet-18-like)** | ✅ **1,115,067 cycles, 168 fps @ 100MHz** |
-| **ResNet11 N=2** | ✅ **843,350 cycles (1.32×), 222 fps** |
-| **ResNet11 N=4** | ✅ **749,882 cycles (1.49×), 250 fps** |
+| **ResNet11 N=1 (full ResNet-18-like)** | ✅ **596,088 cycles, 313 fps @ 100MHz** (s2d 后) |
+| **ResNet11 N=2** | ✅ **450,469 cycles (1.32×), 444 fps** |
+| **ResNet11 N=4** | ✅ **354,555 cycles (1.68×), 564 fps** |
+
+**S2D (Space-to-Depth) 自动启用** (Patch K=4 stride=4 → K=1 stride=1 c_in=64):
+- Patch 单层 cycles: 654,404 → **129,594** (5.05× 加速)
+- 整网 N=1: 1,115K → **596K** (1.87× 加速, 168→313 fps)
+- N=4: 750K → **355K** (2.11× 加速, 250→**564 fps**)
+
+scheduler.Layer.force_s2d 自动判断 stride≥3 ∧ K≥stride 触发 (跟 run_regression 一致).
+driver build_step_cfg_dict 用 layer.s2d_eff() 返回的等效维度算 cfg, 跟 gen_isa_test
+内部 s2d 重排 ifb/wb 一致.
 
 ResNet11 完整网络 (Patch 960×540×4 → ... → FC 522 类输出):
 - 11 层混合: K∈{1,3,4}, stride∈{1,2,4}, 维度从 240×135×16 → 1×1×522

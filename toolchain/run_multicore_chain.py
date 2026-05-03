@@ -163,7 +163,7 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
             HW_PE=16, HW_COL=16, streaming=True,
             pad_top=layer.pad, pad_left=layer.pad, strip_rows=0,
             out_dir=layer_dir, case_name=full_name,
-            ky_fold=False, s2d=False, residual=residual,
+            ky_fold=False, s2d=layer.force_s2d, residual=residual,
             ifm_arr_in=ifm_arr_in,
             shortcut_arr_in=shortcut_arr_in,
             shortcut_mult=layer.shortcut_mult, shortcut_shift=layer.shortcut_shift,
@@ -224,7 +224,12 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
     layer_idx = step.layer_idx
     n_split = len(step.cores_all)
 
-    cin_slices  = (layer.c_in  + 16 - 1) // 16
+    # S2D 等效维度: force_s2d 时用 s2d 后的 H/W/K/c_in/stride 算 cfg, 不变就用原值.
+    # gen_isa_test 内部也做同 s2d 重排, 两边维度必须一致 → DDR 数据 ↔ cfg 才匹配.
+    h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
+    pad_e = 0 if layer.force_s2d else layer.pad
+
+    cin_slices  = (c_in_e      + 16 - 1) // 16
     cout_slices = (layer.c_out + 16 - 1) // 16
 
     # 决定本核实际跑的 sub-layer 维度 + per-core IDMA/ODMA 偏移.
@@ -233,9 +238,9 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
     if step.mode == 'C_w_slice':
         slice_idx = step.cores_all.index(step.my_core)
         cfg = hw_files.derive_w_slice_cfg(
-            H_IN=layer.h_in, W_full=layer.w_in, K=layer.k,
-            NUM_CIN=layer.c_in, NUM_COUT=layer.c_out, stride=layer.stride,
-            pad_top=layer.pad, pad_left_full=layer.pad,
+            H_IN=h_in_e, W_full=w_in_e, K=k_e,
+            NUM_CIN=c_in_e, NUM_COUT=layer.c_out, stride=stride_e,
+            pad_top=pad_e, pad_left_full=pad_e,
             my_core=slice_idx, n_split=n_split,
             TILE_W=32, streaming=True,
         )
@@ -246,9 +251,9 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         raise NotImplementedError("Cout slice 实现 P2 再做")
     else:  # mode A
         cfg = hw_files.derive_layer_cfg(
-            H_IN=layer.h_in, W_IN=layer.w_in, K=layer.k,
-            NUM_CIN=layer.c_in, NUM_COUT=layer.c_out,
-            stride=layer.stride, pad_top=layer.pad, pad_left=layer.pad,
+            H_IN=h_in_e, W_IN=w_in_e, K=k_e,
+            NUM_CIN=c_in_e, NUM_COUT=layer.c_out,
+            stride=stride_e, pad_top=pad_e, pad_left=pad_e,
             TILE_W=32, streaming=True,
         )
         ifb_w_start = 0

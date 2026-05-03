@@ -727,14 +727,18 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         if W_OUT <= max_tile_w:
             TILE_W = W_OUT
         else:
-            best_tw, best_imbalance = TILE_W, max_tile_w
+            # 优先 TILE_W 大 + 短尾不严重 (last_valid_w ≥ tw/2). 这样:
+            #   * num_tiles 小, parf_accum fill/drain 切换 overhead 低
+            #   * 短尾 tile 不会让 drain_stall_fill 占比高
+            # reverse iter 让我们拿到第一个满足条件的最大 tw.
+            # W_OUT 是质数也不会退化到 tw=1 (W_OUT=67 → tw=23 nt=3 lvw=21).
+            best_tw = 1
             for tw in range(max_tile_w, 0, -1):
                 nt  = (W_OUT + tw - 1) // tw
                 lvw = W_OUT - (nt - 1) * tw
-                imb = tw - lvw
-                if imb < best_imbalance:
-                    best_imbalance = imb
+                if lvw * 2 >= tw:           # 短尾 ≥ 半个 tile
                     best_tw = tw
+                    break
             TILE_W = best_tw
 
     num_tiles    = (W_OUT + TILE_W - 1) // TILE_W

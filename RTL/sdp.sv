@@ -2,28 +2,32 @@
 // File        : sdp.sv
 // Description : Single Data Processor (SDP) — bias add + per-tensor quant + residual
 //
-// 流水化 (J-3): 2-stage pipeline (valid 跟数据 lockstep 流动, 无 sideband delay)
+// 流水化 (J-4): 3-stage pipeline (valid 跟数据 lockstep 流动, 无 sideband delay)
 //
 //   stage 0 (输入 comb): psum_in + bias_in = biased (33-bit signed)
-//   stage 1 latch: prod_d = biased * mult            // DSP48 input + M reg
-//                  shortcut_d = shortcut_in          // 跟 prod 同拍 align
-//                  valid_d    = valid_in
-//   stage 2 comb (输出): prod_d + round_bias →>> shift → +zp_out → +sc_ext
-//                       relu → clip → trunc → ofm_data
-//                       valid_out = valid_d
+//   stage 1 latch     : prod_d     = biased * mult       // DSP48 input + M reg
+//                        shortcut_d = shortcut_in
+//                        valid_d
+//   stage 2a (comb)   : 主路径 round + shift + zp
+//                        shortcut path: sc_prod = shortcut_d * shortcut_mult,
+//                                        sc_shifted = sc_prod >>> shortcut_shift,
+//                                        sc_ext = residual_en ? ext : 0
+//   stage 2a latch    : q_zp_d, sc_ext_d, valid_dd
+//   stage 2b (comb out): summed = q_zp_d + sc_ext_d, relu + clip + trunc → ofm_data
+//                        valid_out = valid_dd
 //
 // cfg signals (mult/shift/clip/zp/relu/round/residual/shortcut_mult/shortcut_shift)
 // 在 layer 内 stable, sequencer 跨 layer 切换前会 wait pipeline drained, 所以
 // SDP pipeline 内部用 cfg 直连 (不 latch), 不会出现 mid-pipeline cfg 变化.
 //
-// total latency: 1 cycle (input fire → output valid 1 拍后)
-//   ofb_writer 不需要再为 sideband 加 delay, 用 valid_out 当 ofb_we 即可 (sideband
-//   寄存器跟 valid 同源 pipe).
+// total latency: 2 cycles (input fire → output valid 2 拍后)
+//   ofb_writer 用 valid_out 当 ofb_we, in_flight 计数器扩到 [2:0] 容纳 max 3.
 //
-// pre-pipeline 实现 critical path 14.1ns (CARRY4=31 + DSP48=2). pipeline 后:
-//   stage 1: bias add (33-bit) + mult (33×32) → DSP48 自带 input/M reg, ~5ns
-//   stage 2: round + variable shift + add + clip → ~6ns
-//   预期 WNS 从 -4.345ns 提升到 +0~+1ns (100 MHz met).
+// J-3 → J-4 timing 演进:
+//   J-3 (1-stage SDP): WNS +0.781 ns @ 100 MHz, critical path stage 2 全链
+//                       (round + shift + zp + sc + relu + clip), 45 levels CARRY4=33
+//   J-4 (2-stage SDP): 拆点在 q_zp_d / sc_ext_d, stage 2a 含变量移位是大开销,
+//                      stage 2b 只剩 add + relu + clip + trunc, 应能 met 125 MHz
 // -----------------------------------------------------------------------------
 `timescale 1ns/1ps
 
@@ -54,7 +58,7 @@ module sdp #(
     input  logic [NUM_COL*8-1:0]              shortcut_in,
     input  logic                              valid_in,
 
-    // --- 输出 (stage 2, 1 cycle latency) ---
+    // --- 输出 (stage 2b, 2 cycle latency) ---
     output logic [NUM_COL*8-1:0]              ofm_data,
     output logic                              valid_out
 );
@@ -73,7 +77,7 @@ module sdp #(
     end
 
     // =========================================================================
-    // Stage 1 latch: prod = biased * mult, shortcut 透传, valid
+    // Stage 1 latch: prod_d = biased * mult, shortcut 透传, valid
     //   prod_d 让 Vivado 推 DSP48E1 with input + M register (1-cycle mult).
     // =========================================================================
     logic signed [63:0]    prod_d      [0:NUM_COL-1];
@@ -81,15 +85,11 @@ module sdp #(
     logic                  valid_d;
 
     always_ff @(posedge clk) begin
-        if (!rst_n) begin
-            valid_d <= 1'b0;
-        end else begin
-            valid_d <= valid_in;
-        end
+        if (!rst_n) valid_d <= 1'b0;
+        else        valid_d <= valid_in;
     end
 
     always_ff @(posedge clk) begin
-        // 数据路径: 不 reset, 跟 valid 一起流动 (valid=0 时数据无效, 不被消费)
         for (int c = 0; c < NUM_COL; c++) begin
             prod_d[c]     <= $signed(biased_ch[c]) * $signed(mult);
             shortcut_d[c] <= $signed(shortcut_in[c*8 +: 8]);
@@ -97,7 +97,9 @@ module sdp #(
     end
 
     // =========================================================================
-    // Stage 2 (comb output): round + shift + zp + sc + relu + clip + trunc
+    // Stage 2a (comb after stage 1):
+    //   主路径 prod_d → +round_bias → >>> shift → +zp_out  → q_zp_ch
+    //   shortcut path shortcut_d → × mult → >>> sc_shift → ext (residual gate) → sc_ext_ch
     // =========================================================================
     logic signed [63:0]      round_bias;
     assign round_bias = (round_en && shift_amt != 6'd0) ?
@@ -108,31 +110,55 @@ module sdp #(
     assign clip_min_ext = EXT_W'(clip_min);
     assign clip_max_ext = EXT_W'(clip_max);
 
-    logic signed [63:0]       round_ch     [0:NUM_COL-1];
-    logic signed [63:0]       shifted_ch   [0:NUM_COL-1];
-    logic signed [EXT_W-1:0]  q_zp_ch      [0:NUM_COL-1];
-    logic signed [23:0]       sc_prod_ch   [0:NUM_COL-1];
-    logic signed [23:0]       sc_shifted_ch[0:NUM_COL-1];
-    logic signed [EXT_W-1:0]  sc_ext_ch    [0:NUM_COL-1];
-    logic signed [EXT_W-1:0]  summed_ch    [0:NUM_COL-1];
-    logic signed [EXT_W-1:0]  act_ch       [0:NUM_COL-1];
-    logic signed [EXT_W-1:0]  clip_ch      [0:NUM_COL-1];
+    logic signed [63:0]       round_ch      [0:NUM_COL-1];
+    logic signed [63:0]       shifted_ch    [0:NUM_COL-1];
+    logic signed [EXT_W-1:0]  q_zp_ch       [0:NUM_COL-1];
+    logic signed [23:0]       sc_prod_ch    [0:NUM_COL-1];
+    logic signed [23:0]       sc_shifted_ch [0:NUM_COL-1];
+    logic signed [EXT_W-1:0]  sc_ext_ch     [0:NUM_COL-1];
 
     always_comb begin
-        valid_out = valid_d;
         for (int c = 0; c < NUM_COL; c++) begin
-            // 主路径: prod_d → +round → >> shift → +zp_out
-            round_ch[c]   = prod_d[c] + round_bias;
-            shifted_ch[c] = round_ch[c] >>> shift_amt;
-            q_zp_ch[c]    = shifted_ch[c][EXT_W-1:0] + zp_out_ext;
+            round_ch[c]      = prod_d[c] + round_bias;
+            shifted_ch[c]    = round_ch[c] >>> shift_amt;
+            q_zp_ch[c]       = shifted_ch[c][EXT_W-1:0] + zp_out_ext;
 
-            // shortcut 路径: shortcut_d × shortcut_mult >> shortcut_shift
             sc_prod_ch[c]    = shortcut_d[c] * shortcut_mult;
             sc_shifted_ch[c] = sc_prod_ch[c] >>> shortcut_shift;
             sc_ext_ch[c]     = residual_en ? EXT_W'(sc_shifted_ch[c]) : '0;
+        end
+    end
 
-            // 合并 + relu + clip + trunc
-            summed_ch[c] = q_zp_ch[c] + sc_ext_ch[c];
+    // =========================================================================
+    // Stage 2a latch: q_zp_d, sc_ext_d, valid_dd
+    // =========================================================================
+    logic signed [EXT_W-1:0]  q_zp_d   [0:NUM_COL-1];
+    logic signed [EXT_W-1:0]  sc_ext_d [0:NUM_COL-1];
+    logic                     valid_dd;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) valid_dd <= 1'b0;
+        else        valid_dd <= valid_d;
+    end
+
+    always_ff @(posedge clk) begin
+        for (int c = 0; c < NUM_COL; c++) begin
+            q_zp_d[c]   <= q_zp_ch[c];
+            sc_ext_d[c] <= sc_ext_ch[c];
+        end
+    end
+
+    // =========================================================================
+    // Stage 2b (comb output): summed + relu + clip + trunc
+    // =========================================================================
+    logic signed [EXT_W-1:0]  summed_ch [0:NUM_COL-1];
+    logic signed [EXT_W-1:0]  act_ch    [0:NUM_COL-1];
+    logic signed [EXT_W-1:0]  clip_ch   [0:NUM_COL-1];
+
+    always_comb begin
+        valid_out = valid_dd;
+        for (int c = 0; c < NUM_COL; c++) begin
+            summed_ch[c] = q_zp_d[c] + sc_ext_d[c];
             act_ch[c]    = (relu_en && summed_ch[c] < 0) ? '0 : summed_ch[c];
             if      (act_ch[c] < clip_min_ext) clip_ch[c] = clip_min_ext;
             else if (act_ch[c] > clip_max_ext) clip_ch[c] = clip_max_ext;

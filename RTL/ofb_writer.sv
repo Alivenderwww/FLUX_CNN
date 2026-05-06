@@ -299,35 +299,45 @@ module ofb_writer #(
     );
 
     // =========================================================================
-    // Stage 1 → 2: sideband 跟 SDP.valid_out 同拍 align (lockstep)
-    //   SDP 自己 latch valid, 这里 latch ofb_waddr / evt_cs_wrap.
+    // Sideband pipeline (跟 SDP 内部 valid_d → valid_dd → valid_out lockstep)
+    //   SDP J-4 内部 3-stage (input → stage1 → stage2a latch → stage2b out),
+    //   即 pipe_valid 后过 2 拍 sdp_valid_out 才 high. sideband 也加 2 级 latch:
+    //     pipe   (Stage 0→1, 已有)
+    //     pipe2  (Stage 1→2 latch, 跟 SDP.valid_d 同拍)
+    //     pipe3  (Stage 2→2b latch, 跟 SDP.valid_dd / valid_out 同拍)
     //   valid=0 时 sideband 不被消费 (ofb_we=0), 不需要 reset.
     // =========================================================================
+    logic [ADDR_W-1:0]  pipe3_ofb_waddr;
+    logic               pipe3_evt_cs_wrap;
     always_ff @(posedge clk) begin
         pipe2_ofb_waddr   <= pipe_ofb_waddr;
         pipe2_evt_cs_wrap <= pipe_evt_cs_wrap;
+        pipe3_ofb_waddr   <= pipe2_ofb_waddr;
+        pipe3_evt_cs_wrap <= pipe2_evt_cs_wrap;
     end
 
     // =========================================================================
-    // OFB 写 (Stage 2, 用 SDP.valid_out + pipe2_* sideband)
+    // OFB 写 (Stage 2b 出, 用 SDP.valid_out + pipe3_* sideband)
     // =========================================================================
     assign ofb_we    = sdp_valid_out;
-    assign ofb_waddr = pipe2_ofb_waddr[AW-1:0];
+    assign ofb_waddr = pipe3_ofb_waddr[AW-1:0];
     assign ofb_wdata = sdp_out;
 
     // =========================================================================
     // 三段式 FSM
     // =========================================================================
-    // SDP pipeline (J-3): in_flight 跟踪 Stage 0..2 内 valid 数, 让 S_FLUSH 等 drain.
+    // SDP pipeline (J-4): SDP 内部 3-stage (input → stage1 latch → stage2a latch → stage2b out).
+    // ofb_writer 自身 1-stage (Stage 0→1 latch) + SDP 2-stage = 总 3 stage, max in_flight=3.
+    // in_flight 跟踪 Stage 0..2b 内 valid 数, 让 S_FLUSH 等 drain.
     //   acc_fire (Stage 0 入)   → in_flight++
-    //   sdp_valid_out (Stage 2 出) → in_flight--
-    logic [1:0] in_flight;
+    //   sdp_valid_out (Stage 2b 出) → in_flight--
+    logic [2:0] in_flight;
     always_ff @(posedge clk) begin
-        if (!rst_n || evt_start) in_flight <= 2'd0;
+        if (!rst_n || evt_start) in_flight <= 3'd0;
         else begin
             case ({acc_fire, sdp_valid_out})
-                2'b10: in_flight <= in_flight + 2'd1;
-                2'b01: in_flight <= in_flight - 2'd1;
+                2'b10: in_flight <= in_flight + 3'd1;
+                2'b01: in_flight <= in_flight - 3'd1;
                 default: in_flight <= in_flight;
             endcase
         end
@@ -339,7 +349,7 @@ module ofb_writer #(
         case (state)
             S_IDLE : if (start)                  state_next = S_RUN;
             S_RUN  : if (acc_fire && all_done)   state_next = S_FLUSH;
-            S_FLUSH: if (in_flight == 2'd0)      state_next = S_DONE;
+            S_FLUSH: if (in_flight == 3'd0)      state_next = S_DONE;
             S_DONE : if (start)                  state_next = S_RUN;   // 多 strip / 多 case 重启
             default:                              state_next = S_IDLE;
         endcase
@@ -409,13 +419,13 @@ module ofb_writer #(
     //                   已经写到 OFB SRAM)
     //   rows_written:   累计 yout 数（控制路径，复位必须）
     // =========================================================================
-    assign row_done_pulse = pipe2_evt_cs_wrap && sdp_valid_out;
+    assign row_done_pulse = pipe3_evt_cs_wrap && sdp_valid_out;
 
     logic [15:0] r_rows_written;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                 r_rows_written <= 16'd0;
         else if (evt_start)                              r_rows_written <= 16'd0;
-        else if (pipe2_evt_cs_wrap && sdp_valid_out)     r_rows_written <= r_rows_written + 16'd1;
+        else if (pipe3_evt_cs_wrap && sdp_valid_out)     r_rows_written <= r_rows_written + 16'd1;
         else                                             r_rows_written <= r_rows_written;
     end
     assign rows_written = r_rows_written;

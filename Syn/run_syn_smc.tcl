@@ -129,7 +129,7 @@ report_utilization -file "$RPT_DIR/utilization_synth.rpt" \
                    -hierarchical -hierarchical_depth 4
 puts "Written: $RPT_DIR/utilization_synth.rpt"
 
-report_timing_summary -file "$RPT_DIR/timing_synth.rpt" -max_paths 5
+report_timing_summary -file "$RPT_DIR/timing_synth.rpt" -max_paths 10
 puts "Written: $RPT_DIR/timing_synth.rpt"
 
 # Console snapshot of utilization
@@ -138,8 +138,11 @@ puts "=== Synth utilization snapshot ==="
 report_utilization
 
 # -----------------------------------------------------------------------------
-# 6. Implementation (P&R)
+# 6. Implementation (P&R)  -- 默认 skip, 只看 synth-stage 报告确认 critical path 结构
+#    需要跑完整 P&R 时 set RUN_IMPL = 1 (会 +20-30 min)
 # -----------------------------------------------------------------------------
+set RUN_IMPL 0
+if {$RUN_IMPL} {
 puts "=== Starting Implementation ==="
 opt_design
 place_design
@@ -156,9 +159,10 @@ puts "Written: $RPT_DIR/utilization.rpt"
 
 report_timing_summary -file "$RPT_DIR/timing_summary.rpt" -max_paths 10
 puts "Written: $RPT_DIR/timing_summary.rpt"
+}
 
 # -----------------------------------------------------------------------------
-# 8. Console summary
+# 8. Console summary (synth-stage WNS, 估算; 真正 routed WNS 需 RUN_IMPL=1)
 # -----------------------------------------------------------------------------
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 

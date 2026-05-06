@@ -666,9 +666,15 @@ def write_multilayer_desc_list(out_path, layer_segments):
 # ---------------------------------------------------------------------------
 def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
                      desc_count, sram_depth, num_cin, num_cout):
-    """只留 SRAM_DEPTH 作编译期 -g 参数；其它 meta 走 config.txt 供 TB 运行期读"""
+    """只留 SRAM_DEPTH / SHORTCUT_DEPTH 作编译期 -g 参数；
+    其它 meta 走 config.txt 供 TB 运行期读.
+    单核 tb_core_dma 整图模式 SHB 段需装整图 shortcut (H_OUT*W_OUT*cs ≤ 8192).
+    SMC tb_smc_chain W slice 模式 SHB 段只装本核段 (≤ 2560 trim 后).
+    所以 sim 时给 SHORTCUT_DEPTH = 8192 让单核大 case 也能跑.
+    综合 / 真硬件用 svh 默认 (SHORTCUT_DEPTH=2560), 因为部署是 SMC W slice."""
     with open(_out_path(out_dir, 'sim_params.f'), 'w') as f:
         f.write(f"-gSRAM_DEPTH={sram_depth}\n")
+        f.write(f"-gSHORTCUT_DEPTH=8192\n")
 
 
 # ---------------------------------------------------------------------------

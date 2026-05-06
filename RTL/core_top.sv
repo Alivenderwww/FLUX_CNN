@@ -26,9 +26,10 @@ module core_top #(
     parameter int WRF_DEPTH   = `FLUX_WRF_DEPTH,
     parameter int ARF_DEPTH   = `FLUX_ARF_DEPTH,
     parameter int PARF_DEPTH  = `FLUX_PARF_DEPTH,
-    parameter int SRAM_DEPTH  = `FLUX_IFB_DEPTH,    // IFB 物理深度 (= SHB 物理深度)
-    parameter int WB_DEPTH    = `FLUX_WB_DEPTH,
-    parameter int OFB_DEPTH   = `FLUX_OFB_DEPTH,
+    parameter int SRAM_DEPTH       = `FLUX_IFB_DEPTH,    // IFB 物理深度
+    parameter int WB_DEPTH         = `FLUX_WB_DEPTH,
+    parameter int OFB_DEPTH        = `FLUX_OFB_DEPTH,
+    parameter int SHORTCUT_DEPTH   = `FLUX_SHORTCUT_DEPTH,  // SHB 物理深度 (独立于 IFB)
     parameter int CSR_ADDR_W  = `FLUX_CSR_ADDR_W,
     parameter int CSR_DATA_W  = `FLUX_CSR_DATA_W,
     parameter int BUS_ADDR_W  = `FLUX_BUS_ADDR_W,
@@ -178,6 +179,7 @@ module core_top #(
     localparam int WB_WIDTH  = NUM_COL * NUM_PE * DATA_WIDTH;
     localparam int OFB_WIDTH = NUM_COL * DATA_WIDTH;
     localparam int AW        = $clog2(SRAM_DEPTH);
+    localparam int SB_AW     = $clog2(SHORTCUT_DEPTH);  // SHB 独立地址宽
 
     // =========================================================================
     // 1. AXI-Lite CSR bridge + 共享配置寄存器
@@ -703,7 +705,7 @@ module core_top #(
 
     // R.1: ofb_writer ↔ Shortcut Bank ↔ bias_rf 之间的接线
     logic                  ow_sb_re;
-    logic [AW-1:0]         ow_sb_raddr;
+    logic [SB_AW-1:0]      ow_sb_raddr;
     logic [OFB_WIDTH-1:0]  ow_sb_rdata;          // shortcut data (1 拍延迟回到 ofb_writer)
     logic [5:0]            ow_cs_cnt;            // ofb_writer 当前 cs, 给 bias_rf
     logic [NUM_COL*PSUM_WIDTH-1:0] bias_vec_wire; // bias_rf → ofb_writer (= SDP bias_in)
@@ -714,7 +716,8 @@ module core_top #(
         .DATA_WIDTH(DATA_WIDTH),
         .PSUM_WIDTH(PSUM_WIDTH),
         .SRAM_DEPTH(SRAM_DEPTH),
-        .ADDR_W    (ADDR_W)
+        .ADDR_W    (ADDR_W),
+        .SB_ADDR_W (SB_AW)         // SHB 独立宽
     ) u_ofb_writer (
         .clk              (clk),
         .rst_n            (rst_n),
@@ -765,17 +768,17 @@ module core_top #(
     //   bias_ready=0 时 ofb_writer 已被 stall, 不会同拍发 sb_re
     // =========================================================================
     logic                  rdma_sb_we;
-    logic [AW-1:0]         rdma_sb_waddr;
+    logic [SB_AW-1:0]      rdma_sb_waddr;
     logic [OFB_WIDTH-1:0]  rdma_sb_wdata;
 
     logic                  br_re;
-    logic [AW-1:0]         br_raddr;
+    logic [SB_AW-1:0]      br_raddr;
     logic [OFB_WIDTH-1:0]  br_rdata;
 
     // 读端口 mux: bias_rf 用 br_re, ofb_writer 用 ow_sb_re; 两路同拍 mutually exclusive
     // (bias_ready=0 → ow_sb_re=0; bias_ready=1 → br_re=0)
     logic                  sb_re_mux;
-    logic [AW-1:0]         sb_raddr_mux;
+    logic [SB_AW-1:0]      sb_raddr_mux;
     logic [OFB_WIDTH-1:0]  sb_rdata_shared;
     assign sb_re_mux    = br_re | ow_sb_re;
     assign sb_raddr_mux = br_re ? br_raddr : ow_sb_raddr;
@@ -783,7 +786,7 @@ module core_top #(
     assign br_rdata     = sb_rdata_shared;
     assign ow_sb_rdata  = sb_rdata_shared;
 
-    sram_model #(.DEPTH(SRAM_DEPTH), .DATA_WIDTH(OFB_WIDTH)) u_shortcut_bank (
+    sram_model #(.DEPTH(SHORTCUT_DEPTH), .DATA_WIDTH(OFB_WIDTH), .ADDR_W(SB_AW)) u_shortcut_bank (
         .clk(clk),
         .we(rdma_sb_we),
         .waddr(rdma_sb_waddr),
@@ -800,7 +803,7 @@ module core_top #(
         .NUM_COL    (NUM_COL),
         .PSUM_WIDTH (PSUM_WIDTH),
         .SRAM_DATA_W(OFB_WIDTH),
-        .SRAM_ADDR_W(AW)
+        .SRAM_ADDR_W(SB_AW)        // SHB 地址宽 (独立于 IFB 的 AW)
     ) u_bias_rf (
         .clk           (clk),
         .rst_n         (rst_n),
@@ -1117,7 +1120,7 @@ module core_top #(
     // =========================================================================
     rdma_ctrl #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
-        .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+        .SRAM_ADDR_W(SB_AW), .LEN_W(DMA_LEN_W)   // sb_waddr 用 SHB 独立宽
     ) u_rdma (
         .clk(clk), .rst_n(rst_n),
         .start(seq_start_rdma_pulse), .done(rdma_done), .busy(rdma_busy), .err(rdma_err_w),

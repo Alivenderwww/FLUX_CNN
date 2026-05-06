@@ -20,7 +20,8 @@ module tb_core_dma;
     localparam NUM_PE     = 16;
     localparam DATA_WIDTH = 8;
     localparam PSUM_WIDTH = 32;
-    parameter  SRAM_DEPTH = 8192;
+    parameter  SRAM_DEPTH      = 8192;
+    parameter  SHORTCUT_DEPTH  = 8192;       // 单核整图 SHB 装下整图 shortcut
     localparam CSR_ADDR_W = 12;
     localparam CSR_DATA_W = 32;
     localparam BUS_ADDR_W = 32;
@@ -142,7 +143,8 @@ module tb_core_dma;
     core_top #(
         .NUM_COL(NUM_COL), .NUM_PE(NUM_PE), .DATA_WIDTH(DATA_WIDTH),
         .PSUM_WIDTH(PSUM_WIDTH), .WRF_DEPTH(32), .ARF_DEPTH(32), .PARF_DEPTH(32),
-        .SRAM_DEPTH(SRAM_DEPTH), .CSR_ADDR_W(CSR_ADDR_W), .CSR_DATA_W(CSR_DATA_W),
+        .SRAM_DEPTH(SRAM_DEPTH), .SHORTCUT_DEPTH(SHORTCUT_DEPTH),
+        .CSR_ADDR_W(CSR_ADDR_W), .CSR_DATA_W(CSR_DATA_W),
         .BUS_ADDR_W(BUS_ADDR_W), .BUS_DATA_W(BUS_DATA_W),
         .AXI_M_ID(AXI_M_ID), .AXI_M_WIDTH(AXI_M_W)
     ) u_core (

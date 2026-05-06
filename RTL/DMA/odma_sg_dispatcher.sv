@@ -192,16 +192,14 @@ module odma_sg_dispatcher #(
     logic is_last_cmd_overall;
     assign is_last_cmd_overall = (r_cmd_idx >= cfg_cmd_count);
 
-    // has_work_to_issue: writer 攒够的行 > 已 dispatch 的行 (按 cmd 行数 / cmds_per_row 计)
-    //   r_rows_consumed_from_writer 是 row_done_pulse 计数,
-    //   r_rows_drained 是 dispatcher 已写完的行 (sts 完成).
-    //   注意: 这里只比较 writer 是否准备好下一行的数据 (= dispatcher 已经处理到第几行)
-    logic [15:0] r_rows_dispatched_view;
-    assign r_rows_dispatched_view = (cfg_cmds_per_row == 8'd0)
-                                  ? r_cmds_done
-                                  : (16'(r_cmds_done) / 16'(cfg_cmds_per_row));
+    // has_work_to_issue: writer 攒够的行 > 已 dispatch 的行
+    //   原实现: r_rows_dispatched_view = r_cmds_done / cfg_cmds_per_row (16-bit 除法,
+    //          综合后 45 级 CARRY4 链 + 11 LUT3, 是 critical path 主因 WNS=-6.835ns)
+    //   优化: r_rows_drained 已经在 is_last_cmd_in_row && sts_fire 时累加, 跟
+    //          r_cmds_done/cmds_per_row 在 floor() 意义上等价. 直接用之, 消除除法.
+    //   has_writer_data_ready 在新 row 启动 cmd 前检查, mid-row 时两者都同步推进 OK.
     logic has_writer_data_ready;
-    assign has_writer_data_ready = (r_rows_consumed_from_writer > r_rows_dispatched_view);
+    assign has_writer_data_ready = (r_rows_consumed_from_writer > r_rows_drained);
 
     logic all_cmds_issued;
     assign all_cmds_issued = (r_cmd_idx >= cfg_cmd_count);

@@ -36,8 +36,9 @@ module multicore_top_smc #(
     parameter int NUM_PE      = `FLUX_NUM_PE,
     parameter int DATA_WIDTH  = `FLUX_DATA_WIDTH,
     parameter int PSUM_WIDTH  = `FLUX_PSUM_WIDTH,
-    parameter int SRAM_DEPTH  = `FLUX_IFB_DEPTH,
-    parameter int CSR_DATA_W  = `FLUX_CSR_DATA_W,
+    parameter int SRAM_DEPTH      = `FLUX_IFB_DEPTH,
+    parameter int SHORTCUT_DEPTH  = `FLUX_SHORTCUT_DEPTH,
+    parameter int CSR_DATA_W      = `FLUX_CSR_DATA_W,
     parameter int BUS_ADDR_W  = `FLUX_BUS_ADDR_W,
     parameter int BUS_DATA_W  = `FLUX_BUS_DATA_W,
     parameter int AXI_M_ID    = `FLUX_AXI_M_ID,
@@ -207,7 +208,8 @@ module multicore_top_smc #(
         for (gi = 0; gi < NUM_CORES; gi++) begin : gen_core
             core_top #(
                 .NUM_COL(NUM_COL), .NUM_PE(NUM_PE), .DATA_WIDTH(DATA_WIDTH),
-                .PSUM_WIDTH(PSUM_WIDTH), .SRAM_DEPTH(SRAM_DEPTH),
+                .PSUM_WIDTH(PSUM_WIDTH),
+                .SRAM_DEPTH(SRAM_DEPTH), .SHORTCUT_DEPTH(SHORTCUT_DEPTH),
                 .CSR_ADDR_W(12), .CSR_DATA_W(CSR_DATA_W),
                 .BUS_ADDR_W(BUS_ADDR_W), .BUS_DATA_W(BUS_DATA_W),
                 .AXI_M_ID(AXI_M_ID), .AXI_M_WIDTH(AXI_M_WIDTH),

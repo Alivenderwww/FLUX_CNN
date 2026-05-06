@@ -16,11 +16,11 @@
 `define FLUX_PARF_DEPTH               32  // parf_accum partial sum depth
 
 // ---- SRAM 容量 ----
-`define FLUX_IFB_DEPTH                2048  // 128 KB (1 word = 128 bit)
+`define FLUX_IFB_DEPTH                1024  // 128 KB (1 word = 128 bit)
 `define FLUX_WB_DEPTH                 640  // 256 KB (1 word = 2048 bit)
 `define FLUX_OFB_DEPTH                1024  // 32 KB (1 word = 128 bit)
 `define FLUX_SHORTCUT_DEPTH           2048  // 128 KB Shortcut Bank
-`define FLUX_SRAM_DEPTH               2048  // legacy alias for IFB_DEPTH
+`define FLUX_SRAM_DEPTH               1024  // legacy alias for IFB_DEPTH
 
 // ---- AXI / CSR ----
 `define FLUX_BUS_ADDR_W               32

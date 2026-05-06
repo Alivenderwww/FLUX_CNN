@@ -5,6 +5,8 @@
 Claude Code 工作指引。项目概览请见 `README.md`, 细节分散在 `docs/`,
 **当前进度 + 任务交接见 `STATUS.md`**, 历史经验 / 踩坑记录见 `memory/`.
 
+每次实现重大突破后，需要将相关经验总结成文档，放在 `memory/` 目录下，将进度写在`STATUS.md`中。
+
 ## 项目总览
 
 FLUX_CNN：SystemVerilog CNN 加速器，16×16 int8 MAC 阵列（256 MAC）。顶层结构两层：

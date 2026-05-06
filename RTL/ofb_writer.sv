@@ -32,7 +32,10 @@ module ofb_writer #(
     parameter int DATA_WIDTH = 8,
     parameter int PSUM_WIDTH = 32,
     parameter int SRAM_DEPTH = 8192,
-    parameter int ADDR_W     = 20
+    parameter int ADDR_W     = 20,
+    // SB_ADDR_W = $clog2(SHORTCUT_DEPTH); 默认跟 SRAM_DEPTH 共用 (向后兼容).
+    // core_top 实例化时显式传 SHB 独立宽, 让 IFB / SHB 物理深度可不同.
+    parameter int SB_ADDR_W  = $clog2(SRAM_DEPTH)
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
@@ -75,7 +78,7 @@ module ofb_writer #(
     input  logic                                 bias_ready,         // bias_rf 当前 cs 已就绪
     output logic [5:0]                           cs_cnt_out,         // 给 bias_rf 跟踪
     output logic                                 sb_re,              // Shortcut Bank 读使能
-    output logic [$clog2(SRAM_DEPTH)-1:0]        sb_raddr,           // Shortcut Bank 读地址
+    output logic [SB_ADDR_W-1:0]                 sb_raddr,           // Shortcut Bank 读地址 (SB_ADDR_W 独立)
     input  logic [NUM_COL*DATA_WIDTH-1:0]        sb_rdata,           // Shortcut Bank 读数据 (1 拍延迟)
 
     // ---- upstream: parf_accum ----
@@ -99,9 +102,10 @@ module ofb_writer #(
     // 状态机
     // =========================================================================
     typedef enum logic [1:0] {
-        S_IDLE = 2'd0,
-        S_RUN  = 2'd1,
-        S_DONE = 2'd2
+        S_IDLE  = 2'd0,
+        S_RUN   = 2'd1,
+        S_FLUSH = 2'd2,    // SDP pipeline drain (J-3): 等最后 in-flight 写完
+        S_DONE  = 2'd3
     } state_t;
     state_t state, state_next;
 
@@ -163,23 +167,30 @@ module ofb_writer #(
     end
 
     // =========================================================================
-    // R.1: 1-cycle pipe register (Stage 0 → Stage 1)
+    // R.1+J-3: 2-stage pipeline (Stage 0 → 1 → 2; valid 跟 sideband lockstep)
     //
     // Shortcut Bank SRAM 同步读: 周期 N 发 sb_re, 周期 N+1 sb_rdata 有效.
-    // 因此 SDP 必须在 N+1 拿 (psum @N + bias @N + shortcut @N+1) 同步组合.
-    // pipe register 锁存 N 拍的 acc_out_vec / bias_in / ofb_ptr / cs_cnt /
-    // evt_fire_cs_wrap, 在 N+1 拍跟 sb_rdata 一起进 SDP, 写 OFB.
+    // SDP 流水化 (J-3): mult 进 DSP48 input register (1-cycle), 输出在 N+2 拍 valid.
     //
-    // Stage 0 (cycle N): acc_fire 把 parf 数据吃下, 同时发 shortcut SRAM 读
-    //                     (sb_raddr = sb_ptr).
-    // Stage 1 (cycle N+1): sb_rdata 到达 = shortcut for 上拍 fire 的位置;
-    //                       SDP 组合算 ofm_data; ofb_we = pipe_valid; OFB 写.
+    // Stage 0 (cycle N):   acc_fire → 拉 shortcut (sb_raddr = sb_ptr).
+    //                       counters 推进, 算 evt_fire_cs_wrap.
+    // Stage 1 (cycle N+1): pipe_valid + pipe_psum/bias/ofb_waddr/evt_cs_wrap latch.
+    //                       sb_rdata 到达, SDP 输入 (psum, bias, shortcut, valid).
+    //                       SDP 内部 stage1 latch (prod_d, shortcut_d, valid_d).
+    // Stage 2 (cycle N+2): SDP.valid_out=1, ofm_data 组合输出.
+    //                       pipe2_ofb_waddr / pipe2_evt_cs_wrap 跟 valid_out 同拍 align.
+    //                       ofb_we = SDP.valid_out, ofb_wdata = sdp_out, OFB 写.
+    //                       row_done_pulse = pipe2_evt_cs_wrap & SDP.valid_out.
     // =========================================================================
     logic                                 pipe_valid;
     logic signed [NUM_COL*PSUM_WIDTH-1:0] pipe_psum;
     logic [NUM_COL*PSUM_WIDTH-1:0]        pipe_bias;
     logic [ADDR_W-1:0]                    pipe_ofb_waddr;
     logic                                 pipe_evt_cs_wrap;
+
+    // Stage 1 → 2 latch (SDP 内部已 latch valid/data, 这里 latch sideband 跟 valid lockstep)
+    logic [ADDR_W-1:0]                    pipe2_ofb_waddr;
+    logic                                 pipe2_evt_cs_wrap;
 
     // sb_raddr: Shortcut Bank shortcut 段地址.
     //
@@ -206,10 +217,14 @@ module ofb_writer #(
     end
 
     assign sb_re    = acc_fire;
-    assign sb_raddr = shortcut_section_base
-                    + sb_yout_off[12:0]
-                    + sb_x_off[12:0]
-                    + {{(13-6){1'b0}}, cs_cnt};
+    // sb_raddr 内部按 13-bit 算; 输出端口宽度 = SB_ADDR_W (= $clog2(SHORTCUT_DEPTH))
+    // SHB 最大段地址 driver 限 < 2048 → 12-bit 足以表达, 截高位安全.
+    logic [12:0] sb_raddr_full;
+    assign sb_raddr_full = shortcut_section_base
+                         + sb_yout_off[12:0]
+                         + sb_x_off[12:0]
+                         + {{(13-6){1'b0}}, cs_cnt};
+    assign sb_raddr = sb_raddr_full[SB_ADDR_W-1:0];
 
     // Stage 0 → 1 latch
     always_ff @(posedge clk) begin
@@ -234,10 +249,13 @@ module ofb_writer #(
     // =========================================================================
     logic [NUM_COL*DATA_WIDTH-1:0] sdp_out;
 
+    logic sdp_valid_out;
     sdp #(
         .NUM_COL   (NUM_COL),
         .PSUM_WIDTH(PSUM_WIDTH)
     ) u_sdp (
+        .clk            (clk),
+        .rst_n          (rst_n),
         .shift_amt      (cfg_sdp_shift),
         .mult           (cfg_sdp_mult),
         .zp_out         (cfg_sdp_zp_out),
@@ -253,25 +271,51 @@ module ofb_writer #(
         .shortcut_in    (sb_rdata),
         .valid_in       (pipe_valid),
         .ofm_data       (sdp_out),
-        .valid_out      ()
+        .valid_out      (sdp_valid_out)
     );
 
     // =========================================================================
-    // OFB 写 (Stage 1, 用 pipe_* latched signals)
+    // Stage 1 → 2: sideband 跟 SDP.valid_out 同拍 align (lockstep)
+    //   SDP 自己 latch valid, 这里 latch ofb_waddr / evt_cs_wrap.
+    //   valid=0 时 sideband 不被消费 (ofb_we=0), 不需要 reset.
     // =========================================================================
-    assign ofb_we    = pipe_valid;
-    assign ofb_waddr = pipe_ofb_waddr[AW-1:0];
+    always_ff @(posedge clk) begin
+        pipe2_ofb_waddr   <= pipe_ofb_waddr;
+        pipe2_evt_cs_wrap <= pipe_evt_cs_wrap;
+    end
+
+    // =========================================================================
+    // OFB 写 (Stage 2, 用 SDP.valid_out + pipe2_* sideband)
+    // =========================================================================
+    assign ofb_we    = sdp_valid_out;
+    assign ofb_waddr = pipe2_ofb_waddr[AW-1:0];
     assign ofb_wdata = sdp_out;
 
     // =========================================================================
     // 三段式 FSM
     // =========================================================================
+    // SDP pipeline (J-3): in_flight 跟踪 Stage 0..2 内 valid 数, 让 S_FLUSH 等 drain.
+    //   acc_fire (Stage 0 入)   → in_flight++
+    //   sdp_valid_out (Stage 2 出) → in_flight--
+    logic [1:0] in_flight;
+    always_ff @(posedge clk) begin
+        if (!rst_n || evt_start) in_flight <= 2'd0;
+        else begin
+            case ({acc_fire, sdp_valid_out})
+                2'b10: in_flight <= in_flight + 2'd1;
+                2'b01: in_flight <= in_flight - 2'd1;
+                default: in_flight <= in_flight;
+            endcase
+        end
+    end
+
     // Seg 1: state_next 组合
     always_comb begin
         state_next = state;
         case (state)
             S_IDLE : if (start)                  state_next = S_RUN;
-            S_RUN  : if (acc_fire && all_done)   state_next = S_DONE;
+            S_RUN  : if (acc_fire && all_done)   state_next = S_FLUSH;
+            S_FLUSH: if (in_flight == 2'd0)      state_next = S_DONE;
             S_DONE : if (start)                  state_next = S_RUN;   // 多 strip / 多 case 重启
             default:                              state_next = S_IDLE;
         endcase
@@ -341,13 +385,13 @@ module ofb_writer #(
     //                   已经写到 OFB SRAM)
     //   rows_written:   累计 yout 数（控制路径，复位必须）
     // =========================================================================
-    assign row_done_pulse = pipe_evt_cs_wrap && pipe_valid;
+    assign row_done_pulse = pipe2_evt_cs_wrap && sdp_valid_out;
 
     logic [15:0] r_rows_written;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                 r_rows_written <= 16'd0;
         else if (evt_start)                              r_rows_written <= 16'd0;
-        else if (pipe_evt_cs_wrap && pipe_valid)         r_rows_written <= r_rows_written + 16'd1;
+        else if (pipe2_evt_cs_wrap && sdp_valid_out)     r_rows_written <= r_rows_written + 16'd1;
         else                                             r_rows_written <= r_rows_written;
     end
     assign rows_written = r_rows_written;

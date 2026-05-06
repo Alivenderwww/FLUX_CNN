@@ -203,17 +203,41 @@ module ofb_writer #(
     logic [12:0] shortcut_section_base;
     assign shortcut_section_base = {{(13-8){1'b0}}, cfg_cout_slices, 2'b0};  // cs × 4 = bias section size
 
-    logic [15:0] x_abs;
-    assign x_abs = {8'd0, tile_cnt} * {10'd0, cfg_tile_w} + {10'd0, x_cnt};
+    // sb_x_off / sb_yout_off 全用累加器, 消除 2 个 cascade DSP48 mult (J-3 timing fix):
+    //   原 sb_x_off = (tile_cnt*tile_w + x_cnt) * cout_slices, 12 levels CARRY4=5 +
+    //   DSP48E1=2 + LUTs, critical path 10.6 ns. 累加器替换后 sb_raddr 计算只剩
+    //   2 个 register + 4-input add, 大幅缩短到 ~3-4 levels.
+    logic [19:0] sb_yout_off;            // yout × W_OUT × cs, evt_fire_cs_wrap 推进
+    logic [15:0] sb_x_off;                // (tile*tile_w + x_cnt) × cs, acc_fire 推进
+    logic [15:0] sb_x_off_tile_base;      // tile*tile_w*cs base for current tile
 
-    logic [19:0] sb_yout_off;            // yout × W_OUT × cs (= cfg_ofb_row_words)
-    logic [15:0] sb_x_off;               // x_abs × cout_slices (combinational)
-    assign sb_x_off = x_abs * {10'd0, cfg_cout_slices};
-
-    // yout 偏移用累加器 (避免大 mult)
+    // yout 偏移: 每完整 yout (= cs_wrap) 推进 cfg_ofb_row_words
     always_ff @(posedge clk) begin
         if      (evt_start)             sb_yout_off <= '0;
         else if (evt_fire_cs_wrap)      sb_yout_off <= sb_yout_off + cfg_ofb_row_words;
+    end
+
+    // cfg_tile_w_x_cs = tile_w × cs, 在 layer 内是常量 (cfg 不变).
+    //   evt_start 时 latch 一次, 避免每 cycle comb mult 占 critical path.
+    logic [15:0] cfg_tile_w_x_cs;
+    always_ff @(posedge clk) begin
+        if      (!rst_n)     cfg_tile_w_x_cs <= 16'd0;
+        else if (evt_start)  cfg_tile_w_x_cs <= {10'd0, cfg_tile_w} * {10'd0, cfg_cout_slices};
+    end
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)             sb_x_off_tile_base <= 16'd0;
+        else if (evt_fire_tile_wrap)    sb_x_off_tile_base <= 16'd0;     // cs 推进, x_abs 重置
+        else if (evt_fire_x_wrap)       sb_x_off_tile_base <= sb_x_off_tile_base + cfg_tile_w_x_cs;
+    end
+
+    // sb_x_off: tile_base + x_cnt*cs. x_cnt*cs 也累加 (inner-most, 每 acc_fire +=cs)
+    //   实际等价: tile 内每 cell sb_x_off += cs; tile_wrap 时跳到 tile_base (新 tile 起点).
+    always_ff @(posedge clk) begin
+        if      (evt_start)             sb_x_off <= 16'd0;
+        else if (evt_fire_tile_wrap)    sb_x_off <= 16'd0;
+        else if (evt_fire_x_wrap)       sb_x_off <= sb_x_off_tile_base + cfg_tile_w_x_cs;  // 下个 tile 起点
+        else if (acc_fire)              sb_x_off <= sb_x_off + {10'd0, cfg_cout_slices};
     end
 
     assign sb_re    = acc_fire;

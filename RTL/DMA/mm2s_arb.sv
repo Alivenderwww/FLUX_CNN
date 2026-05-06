@@ -1,20 +1,25 @@
 `timescale 1ns/1ps
 
 // =============================================================================
-// mm2s_arb.sv  --  AXI DataMover MM2S 通道仲裁器 (3 路: idma + wdma + rdma)
+// mm2s_arb.sv  --  AXI DataMover MM2S 通道仲裁器 (4 路: idma + wdma + rdma + ocmd)
 //
 // Pipelined: 利用 DataMover 内部 cmd FIFO 让多 cmd in-flight. cmd 严格按入序
 // 处理, 因此 data / sts 的目的端 (owner) 只需用 FIFO 跟踪 cmd 入序即可.
 //
-// 仲裁优先级 (高→低): idma > rdma > wdma
+// 仲裁优先级 (高→低): idma > rdma > ocmd > wdma
 //   - idma: 流式输入, 实时性最敏感
 //   - rdma: 残差/bias 加载, layer 启动期一次性 (只有 1 条 cmd)
+//   - ocmd: ODMA SG dispatcher 拉 cmd list (Phase 7 SMC + NUMA, 频繁但短)
 //   - wdma: 权重加载, layer 启动期一次性
 // rdma + wdma 都是 batch, 但 rdma 需要在 layer compute 开始前完成 (bias_rf
-// 依赖), 略优先于 wdma.
+// 依赖), 略优先于 wdma. ocmd 介于两者之间: 频度高 (每行 OFM 1-N 条 cmd),
+// 单次很短 (1 beat = 16 byte cmd 元数据).
 //
 // data / sts 各一个 owner FIFO (深度 8). owner 编码: 2'd0=idma, 2'd1=wdma,
-// 2'd2=rdma. push on cmd_fire, pop 各异步.
+// 2'd2=rdma, 2'd3=ocmd. push on cmd_fire, pop 各异步.
+//
+// SG_MODE=0 兼容: 原 IDMA path 不变, ocmd 路 tie 0 即可 (4-th port 没 valid 不
+// 影响其它路仲裁).
 // =============================================================================
 
 module mm2s_arb #(
@@ -63,6 +68,19 @@ module mm2s_arb #(
     input  logic                    rdma_sts_tready,
     output logic [7:0]              rdma_sts_tdata,
 
+    // ---- 端口 3: ocmd (ODMA SG dispatcher 拉 cmd list, SG_MODE 用; SG_MODE=0 tie 0) ----
+    input  logic                    ocmd_cmd_tvalid,
+    output logic                    ocmd_cmd_tready,
+    input  logic [71:0]             ocmd_cmd_tdata,
+    output logic                    ocmd_data_tvalid,
+    input  logic                    ocmd_data_tready,
+    output logic [DATA_W-1:0]       ocmd_data_tdata,
+    output logic [DATA_W/8-1:0]     ocmd_data_tkeep,
+    output logic                    ocmd_data_tlast,
+    output logic                    ocmd_sts_tvalid,
+    input  logic                    ocmd_sts_tready,
+    output logic [7:0]              ocmd_sts_tdata,
+
     // ---- 上游: axi_dm.MM2S ----
     output logic                    mm2s_cmd_tvalid,
     input  logic                    mm2s_cmd_tready,
@@ -77,22 +95,23 @@ module mm2s_arb #(
     input  logic [7:0]              mm2s_sts_tdata
 );
 
-    localparam int OWN_W = 2;     // 0=idma, 1=wdma, 2=rdma
+    localparam int OWN_W = 2;     // 0=idma, 1=wdma, 2=rdma, 3=ocmd
     localparam int PTR_W = $clog2(OFIFO_DEPTH);
     localparam int CNT_W = $clog2(OFIFO_DEPTH + 1);
 
     // =========================================================================
-    // CMD 仲裁 (priority): idma > rdma > wdma
+    // CMD 仲裁 (priority): idma > rdma > ocmd > wdma
     // =========================================================================
     logic [OWN_W-1:0] cmd_owner;
     always_comb begin
         if      (idma_cmd_tvalid) cmd_owner = 2'd0;
         else if (rdma_cmd_tvalid) cmd_owner = 2'd2;
+        else if (ocmd_cmd_tvalid) cmd_owner = 2'd3;
         else                       cmd_owner = 2'd1;     // wdma 默认
     end
 
     logic any_cmd_tvalid;
-    assign any_cmd_tvalid = idma_cmd_tvalid | wdma_cmd_tvalid | rdma_cmd_tvalid;
+    assign any_cmd_tvalid = idma_cmd_tvalid | wdma_cmd_tvalid | rdma_cmd_tvalid | ocmd_cmd_tvalid;
 
     logic data_full, sts_full;
 
@@ -101,6 +120,7 @@ module mm2s_arb #(
             2'd0   : mm2s_cmd_tdata = idma_cmd_tdata;
             2'd1   : mm2s_cmd_tdata = wdma_cmd_tdata;
             2'd2   : mm2s_cmd_tdata = rdma_cmd_tdata;
+            2'd3   : mm2s_cmd_tdata = ocmd_cmd_tdata;
             default: mm2s_cmd_tdata = idma_cmd_tdata;
         endcase
     end
@@ -112,6 +132,7 @@ module mm2s_arb #(
     assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
     assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
     assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+    assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
 
     // =========================================================================
     // owner FIFO × 2 (data / sts), each depth = OFIFO_DEPTH, width = OWN_W
@@ -192,11 +213,17 @@ module mm2s_arb #(
     assign rdma_data_tkeep  = mm2s_data_tkeep;
     assign rdma_data_tlast  = mm2s_data_tlast;
 
+    assign ocmd_data_tvalid = mm2s_data_tvalid && !data_empty && (data_head == 2'd3);
+    assign ocmd_data_tdata  = mm2s_data_tdata;
+    assign ocmd_data_tkeep  = mm2s_data_tkeep;
+    assign ocmd_data_tlast  = mm2s_data_tlast;
+
     always_comb begin
         case (data_head)
             2'd0   : mm2s_data_tready = !data_empty && idma_data_tready;
             2'd1   : mm2s_data_tready = !data_empty && wdma_data_tready;
             2'd2   : mm2s_data_tready = !data_empty && rdma_data_tready;
+            2'd3   : mm2s_data_tready = !data_empty && ocmd_data_tready;
             default: mm2s_data_tready = 1'b0;
         endcase
     end
@@ -213,11 +240,15 @@ module mm2s_arb #(
     assign rdma_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 2'd2);
     assign rdma_sts_tdata  = mm2s_sts_tdata;
 
+    assign ocmd_sts_tvalid = mm2s_sts_tvalid && !sts_empty && (sts_head == 2'd3);
+    assign ocmd_sts_tdata  = mm2s_sts_tdata;
+
     always_comb begin
         case (sts_head)
             2'd0   : mm2s_sts_tready = !sts_empty && idma_sts_tready;
             2'd1   : mm2s_sts_tready = !sts_empty && wdma_sts_tready;
             2'd2   : mm2s_sts_tready = !sts_empty && rdma_sts_tready;
+            2'd3   : mm2s_sts_tready = !sts_empty && ocmd_sts_tready;
             default: mm2s_sts_tready = 1'b0;
         endcase
     end

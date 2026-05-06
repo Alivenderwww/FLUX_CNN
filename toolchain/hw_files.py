@@ -869,6 +869,101 @@ def compute_w_slice_geom(W_full, K, stride, pad_left_full, my_core, n_split):
     }
 
 
+def compute_w_slice_chain_geom(layers, n_cores):
+    """
+    [Phase 6.6 shared-nothing 分区] 反向递推 chain W slice geom (累积 halo overlap).
+
+    假设输入是 linear chain (layer i+1 input = layer i output, 无 cross-layer skip).
+    从 last layer 起每核 W_out 段不含 halo, 倒推每层每核需要的 W_in 段 (= 上层 W_out
+    段 + 本层 halo); 上层 W_out 段 = 下层 W_in 段 (即上层多算 halo overlap 给下层用).
+
+    每核 layer 0 IFM 段就是反向感受野, 包含所有层累积的 halo. 每核完全独立运行
+    chain, mem 之间不需要任何 halo 同步.
+
+    返回 geoms[L][c] = {
+        'w_in_lo'/'w_in_hi': 该核该层 IFM 段在整图坐标的范围
+        'w_out_lo'/'w_out_hi': 该核该层 OFM 段在整图坐标的范围 (含给下层 halo overlap)
+        'sub_W_in': 该核 IFM 段宽度 (= w_in_hi - w_in_lo + 1)
+        'sub_W_out': 该核 OFM 段宽度
+        'pad_l'/'pad_r': 该核左右 padding
+    }
+    """
+    n_layers = len(layers)
+    last_layer = layers[-1]
+    n = n_cores
+
+    # 初始化: last layer 每核 w_out 段 (整图坐标, 不含 halo)
+    w_out_per = last_layer.w_out // n
+    cur_lo = [c * w_out_per for c in range(n)]
+    cur_hi = [(c + 1) * w_out_per if c < n - 1 else last_layer.w_out for c in range(n)]
+
+    geoms = [[None] * n for _ in range(n_layers)]
+    for L in range(n_layers - 1, -1, -1):
+        layer = layers[L]
+        for c in range(n):
+            w_out_lo = cur_lo[c]
+            w_out_hi = cur_hi[c]
+            # 反推 W_in segment (含 halo)
+            #   w_in_x = w_out_x * stride + kx - pad_left  (kx in [0, K-1])
+            w_in_lo_unb = w_out_lo * layer.stride - layer.pad
+            w_in_hi_unb = (w_out_hi - 1) * layer.stride + (layer.k - 1) - layer.pad
+            pad_l = max(0, -w_in_lo_unb)
+            pad_r = max(0, w_in_hi_unb - (layer.w_in - 1))
+            w_in_lo = max(0, w_in_lo_unb)
+            w_in_hi = min(layer.w_in - 1, w_in_hi_unb)
+            sub_W_in = w_in_hi - w_in_lo + 1
+            sub_W_out = w_out_hi - w_out_lo
+
+            geoms[L][c] = {
+                'w_in_lo'  : w_in_lo,   'w_in_hi'  : w_in_hi,
+                'w_out_lo' : w_out_lo,  'w_out_hi' : w_out_hi,
+                'sub_W_in' : sub_W_in,  'sub_W_out': sub_W_out,
+                'pad_l'    : pad_l,     'pad_r'    : pad_r,
+            }
+
+            # 上层 W_out 段 = 当前层 W_in 段 (含本层 halo, 给上层做 overlap 输出参考)
+            cur_lo[c] = w_in_lo
+            cur_hi[c] = w_in_hi + 1
+
+    return geoms
+
+
+def derive_w_slice_cfg_chain(layer, geom_entry, NUM_CIN, NUM_COUT,
+                              TILE_W=32, KY=None, **kwargs):
+    """
+    [Phase 6.6 shared-nothing] 用 compute_w_slice_chain_geom 反向递推的 geom 派生
+    每核 layer cfg, 含 halo overlap, **紧凑本核 layout**.
+
+    跟 derive_w_slice_cfg 的差别:
+      - W_IN 用 geom_entry['sub_W_in'] (含本层 halo + 累积下层 halo overlap)
+      - W_OUT 应等于 geom_entry['sub_W_out'] (含给下层的 halo overlap)
+      - DDR row stride 用本核紧凑段宽 (不是整图 W_full), 让 mem 内每核段从 0 紧凑存
+      - _W_SLICE_W_IN/OUT_START 都设 0 (mem 内本核段从 0 起)
+    """
+    cfg = derive_layer_cfg(
+        H_IN=layer.h_in, W_IN=geom_entry['sub_W_in'], K=layer.k,
+        NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT, stride=layer.stride,
+        pad_top=layer.pad, pad_left=geom_entry['pad_l'],
+        pad_bot=layer.pad, pad_right=geom_entry['pad_r'],
+        TILE_W=min(TILE_W, geom_entry['sub_W_out']),
+        KY=KY,
+        **kwargs,
+    )
+    if cfg['W_OUT'] != geom_entry['sub_W_out']:
+        raise ValueError(
+            f"derive_w_slice_cfg_chain: W_OUT mismatch: "
+            f"derive={cfg['W_OUT']}, geom={geom_entry['sub_W_out']}")
+
+    # 紧凑 layout: 本核 mem 内每核段从 0 起, row stride = 本核段宽 × c_slices × 16
+    cfg['_W_SLICE_W_IN_START']   = 0
+    cfg['_W_SLICE_W_OUT_START']  = 0
+    cfg['_W_SLICE_W_FULL']       = geom_entry['sub_W_in']     # 紧凑: 用本核段宽
+    cfg['_W_SLICE_W_OUT_FULL']   = geom_entry['sub_W_out']
+    cfg['_W_SLICE_GLOBAL_W_IN_LO']  = geom_entry['w_in_lo']   # 整图坐标 (TB preload 切片用)
+    cfg['_W_SLICE_GLOBAL_W_OUT_LO'] = geom_entry['w_out_lo']
+    return cfg
+
+
 def derive_w_slice_cfg(H_IN, W_full, K, NUM_CIN, NUM_COUT, stride,
                         pad_top, pad_left_full,
                         my_core, n_split,
@@ -920,7 +1015,10 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
                 skip_ifb_preload=0, skip_ofb_clear=0,
                 residual_en=0, shortcut_mult=0, shortcut_shift=0,
                 rdma_words_total=None,
-                skip_idma=0):
+                skip_idma=0,
+                # Phase 7 SMC + NUMA: IDMA / ODMA SG cmd list cfg
+                idma_cmd_list_ptr=None, idma_cmd_count=None, idma_cmds_per_row=None,
+                odma_cmd_list_ptr=None, odma_cmd_count=None, odma_cmds_per_row=None):
     """
     把 derive_layer_cfg 的结果转成 config.txt 用的有序 dict。
     包含 SDP 量化参数（F-1a/F-1b 补齐）。
@@ -1012,6 +1110,13 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'ODMA_BYTE_LEN'  : cfg['ofb_words'] * 16,
         'RDMA_SRC_BASE'  : (ddr_rdma_base if ddr_rdma_base is not None else 0),
     }
+    # --- Phase 7 SMC + NUMA: SG cmd list cfg (None 时不写入, simple mode 下硬件不读) ---
+    if idma_cmd_list_ptr is not None: out['IDMA_CMD_LIST_PTR']  = idma_cmd_list_ptr
+    if idma_cmd_count    is not None: out['IDMA_CMD_COUNT']     = idma_cmd_count
+    if idma_cmds_per_row is not None: out['IDMA_CMDS_PER_ROW']  = idma_cmds_per_row
+    if odma_cmd_list_ptr is not None: out['ODMA_CMD_LIST_PTR']  = odma_cmd_list_ptr
+    if odma_cmd_count    is not None: out['ODMA_CMD_COUNT']     = odma_cmd_count
+    if odma_cmds_per_row is not None: out['ODMA_CMDS_PER_ROW']  = odma_cmds_per_row
     # --- META DDR base (Phase G 多层)：None 跳过该 key，TB fallback 到默认 ---
     if ddr_ifb_base  is not None: out['_META_DDR_IFB_BASE']  = ddr_ifb_base
     if ddr_wb_base   is not None: out['_META_DDR_WB_BASE']   = ddr_wb_base

@@ -524,12 +524,17 @@ module line_buffer #(
     //   raw 累加器 = yout 已完成次数 × stride；输出 = max(raw - pad_top, 0)
     //   pad_top 行是虚拟的（未进入 ring），前 pad_top/stride+1 个 yout 重用 row 0，
     //   不能过早释放。rows_consumed 不减掉 pad_top 会导致 IDMA 覆盖尚在使用的行。
+    //
+    //   仅在 evt_start (sequencer 拉 start, 单/多 strip 都触发) 时归零, 不在 strip
+    //   末归零. 因为 dispatcher (idma_sg / idma_ctrl) 跨 strip 累计 rows_pushed,
+    //   line_buffer 也必须跨 strip 累计 rows_consumed 才能保持 ring 反压同步.
+    //   bug 复现: layer 末 evt_iss_yout_wrap reset → dispatcher 仍有 cmd 没推 →
+    //            ring_has_space 算 (rows_pushed - 0) >= strip_rows = false → 死锁.
     // =========================================================================
     logic [15:0] rows_consumed_raw;
     always_ff @(posedge clk) begin
         if      (evt_start)                           rows_consumed_raw <= 16'd0;
-        else if (evt_iss_yout_wrap)                   rows_consumed_raw <= 16'd0;
-        else if (evt_iss_cs_wrap && !yout_is_last)    rows_consumed_raw <= rows_consumed_raw + {13'd0, cfg_stride};
+        else if (evt_iss_cs_wrap)                     rows_consumed_raw <= rows_consumed_raw + {13'd0, cfg_stride};
         else                                          rows_consumed_raw <= rows_consumed_raw;
     end
 

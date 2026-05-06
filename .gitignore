@@ -64,3 +64,14 @@ sim/tb_core_dma/vsim_all.log
 paper
 memory
 STATUS.md
+
+# 项目根 Vivado 临时
+.Xil/
+__pycache__/
+vivado.jou
+vivado.log
+vivado_*.backup.jou
+vivado_*.backup.log
+
+# toolchain transcript 临时
+toolchain/transcript

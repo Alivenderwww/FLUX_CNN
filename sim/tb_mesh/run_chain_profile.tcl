@@ -1,0 +1,21 @@
+# =============================================================================
+# tb_mesh/run_chain_profile.tcl  --  4-core mesh + Mem 多层 chain profile
+# =============================================================================
+
+vlib work
+vmap work work
+
+vlog -sv -work work -mfcu -suppress 2902,13314 \
+    +incdir+../../RTL \
+    ../../RTL/Mesh/router_node.sv \
+    ../../RTL/Mesh/mesh_5x1.sv \
+    ../../RTL/Mesh/axis_packet_rx.sv \
+    ../../RTL/Mesh/axis_packet_tx.sv \
+    ../../RTL/Mesh/conv_core_stub.sv \
+    ../../RTL/Mesh/mem_core_stub.sv \
+    tb_mesh_chain_profile.sv
+
+vsim -c -voptargs="+acc" \
+    work.tb_mesh_chain_profile
+run -all
+quit -f

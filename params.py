@@ -32,10 +32,24 @@ PARF_DEPTH  = 32        # parf_accum 内 partial sum depth
 # =============================================================================
 # 2. SRAM 容量 (word, 1 word = 不同 SRAM 不同位宽, 见注释)
 # =============================================================================
-IFB_DEPTH       = 8192  # IFB SRAM, 1 word = NUM_PE × DATA_WIDTH = 128 bit = 16 byte
-WB_DEPTH        = 1024  # WB SRAM,  1 word = NUM_COL × NUM_PE × DATA_WIDTH = 2048 bit = 256 byte
-OFB_DEPTH       = 2048  # OFB SRAM, 1 word = NUM_COL × DATA_WIDTH = 128 bit = 16 byte
-SHORTCUT_DEPTH  = 8192  # Shortcut Bank, 1 word = 128 bit = 16 byte
+# -- 路径 A 修剪 (2026-05-05): xc7k325t N=4 BRAM 适配 --
+#   ResNet11 N=4 SMC 实际需求 (per core):
+#     IFB  ring max = 396 words (Layer 0 Patch s2d sub_W=33 cs=4, K+3 strip).
+#     WB   max      = 528 words (FC layer 256×522 ÷ 256 cells per word = 528).
+#     OFB  ring max = 264 words (Layer 0 sub_W=33 ofb_strip=8).
+#     SHB  sliced max = 2044 words (Layer 3 ds residual sliced shortcut).
+#   旧值 (8192/1024/2048/8192) 4 核合计 484 BRAM36 超 xc7k325t (445).
+#   修剪后 (1024/640/1024/2560) 4 核估 ~232 BRAM36 = 52% util.
+#
+# 2026-05-05 IFB 1024 必须配合 line_buffer.sv rows_consumed_raw fix:
+#   yout_wrap 不再 reset rows_consumed (跨 strip 累计才能跟 dispatcher 同步).
+#   未修前 ResNet11 layer 3 (K=1 stride=2 cross-mem chunk) 死锁.
+IFB_DEPTH       = 2048  # 8192→2048 省 24 BRAM36/core. RTL SHB 跟 IFB 共用 SRAM_DEPTH,
+                        # 必须 ≥ max(IFB ring 396, SHB segment 2044) → 取 2048 (= 2^11)
+                        # IFB 实际 ring 模式只需 ≤ 396 word, SHB 整段保活需 ≤ 2044 word
+WB_DEPTH        = 640   # 1024→640 (distributed RAM, 不省 BRAM 仅省 LUTRAM)
+OFB_DEPTH       = 1024  # 2048→1024 (LUTRAM, 仅省 LUTRAM)
+SHORTCUT_DEPTH  = 2048  # 跟 IFB_DEPTH 对齐 (RTL 共用 SRAM_DEPTH)
 
 # 兼容: RTL 不少地方用 SRAM_DEPTH 默认指代 IFB
 SRAM_DEPTH = IFB_DEPTH
@@ -135,6 +149,14 @@ CSR_ADDR_MAP = {
     'SHORTCUT_SHIFT'    : 0x1C4,
     'BIAS_BASE'         : 0x1C8,
     'SKIP_IDMA'         : 0x1CC,    # M2: 跨核 consumer 跳过本地 IDMA
+    'OFM_TDEST'         : 0x1D0,    # mesh: ODMA OFM 包目的节点 tdest
+    'OFM_OPCODE'        : 0x1D4,    # mesh: ODMA OFM 包 opcode
+    'IDMA_CMD_LIST_PTR' : 0x1D8,    # SMC: IDMA SG cmd list 在全局地址起点 (32-bit)
+    'IDMA_CMD_COUNT'    : 0x1DC,    # SMC: IDMA SG cmd 总数 (16-bit)
+    'IDMA_CMDS_PER_ROW' : 0x1E0,    # SMC: 每行 IFM 由几条 cmd 组成 (W slice 跨 mem 时 > 1)
+    'ODMA_CMD_LIST_PTR' : 0x1E4,    # SMC: ODMA SG cmd list 在全局地址起点
+    'ODMA_CMD_COUNT'    : 0x1E8,    # SMC: ODMA SG cmd 总数
+    'ODMA_CMDS_PER_ROW' : 0x1EC,    # SMC: 每行 OFM 由几条 cmd 组成 (W/cout 跨 mem 时 > 1)
 
     # ---- DMA cfg (seq_w only) ----
     'IDMA_SRC_BASE'     : 0x200,

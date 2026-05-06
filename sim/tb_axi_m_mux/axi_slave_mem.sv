@@ -145,4 +145,28 @@ module axi_slave_mem #(
         end
     end
 
+    // ---- 利用率计数器 (TB profiling 用; 不参与功能) ----
+    //   aw_fire  : 写突发数 (AWVALID & AWREADY)
+    //   w_beats  : 写 beat 数 (WVALID & WREADY)
+    //   ar_fire  : 读突发数 (ARVALID & ARREADY)
+    //   r_beats  : 读 beat 数 (RVALID & RREADY)
+    //   busy_cyc : 任意通道占用 (W/R 通道非 IDLE) 的周期数 — DDR 利用率指标
+    int aw_fire  = 0;
+    int w_beats  = 0;
+    int ar_fire  = 0;
+    int r_beats  = 0;
+    int busy_cyc = 0;
+    always_ff @(posedge clk) begin
+        if (!rstn) begin
+            aw_fire <= 0; w_beats <= 0; ar_fire <= 0; r_beats <= 0; busy_cyc <= 0;
+        end else begin
+            if (AWVALID && AWREADY)         aw_fire <= aw_fire + 1;
+            if (WVALID  && WREADY)          w_beats <= w_beats + 1;
+            if (ARVALID && ARREADY)         ar_fire <= ar_fire + 1;
+            if (RVALID  && RREADY)          r_beats <= r_beats + 1;
+            if ((wst != WS_IDLE) || (rst_s != RS_IDLE))
+                                            busy_cyc <= busy_cyc + 1;
+        end
+    end
+
 endmodule

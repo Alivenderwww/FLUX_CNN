@@ -294,7 +294,8 @@ def can_cout_slice(layer: Layer, n_split: int) -> bool:
 
 
 def choose_mode(layer: Layer, n_cores: int, target_per_core_cycles: int,
-                prefer_w_slice: bool = True) -> Tuple[str, int]:
+                prefer_w_slice: bool = True,
+                force_multicore: bool = False) -> Tuple[str, int]:
     """
     判定 layer 用哪种模式 + 切多少核. 返回 (mode, n_split).
 
@@ -305,11 +306,19 @@ def choose_mode(layer: Layer, n_cores: int, target_per_core_cycles: int,
     这样保证每 stage 内所有核都干活, 且每 stage = 一个 layer (简单)..
 
     例外: 极小 layer (cycle < target/4) 退化为 mode A 单核 (避免切片 overhead 占比高).
+
+    force_multicore=True: BW-PoC 实验用, 不让任何 layer 走单核 (即使 cycle 很小).
+        让所有 layer 占满 4 个 DDR slot, 量化"BW × 4 + 无空转" 上限.
     """
     cyc = layer.cycles_estimate
 
-    # 极小 layer: mode A 单核
-    if cyc < target_per_core_cycles // 4:
+    # 极小 layer: mode A 单核 (force_multicore=True 时跳过此分支)
+    if not force_multicore and cyc < target_per_core_cycles // 4:
+        return (Mode.A_SINGLE, 1)
+
+    # force_multicore 模式下: W slice 不可行的 layer (W=1 FC) 保持单核
+    # (cout slice driver 路径未实现, 暂避开)
+    if force_multicore and not can_w_slice(layer, n_cores):
         return (Mode.A_SINGLE, 1)
 
     # 默认全 N 核切片. 优先 W 切片, 兜底 cout.
@@ -381,9 +390,11 @@ def make_w_segments(w_in: int, n: int, k: int) -> List[Tuple[int, int]]:
     return segs
 
 
-def analyze_slicing(layers: List[Layer], n_cores: int) -> List[Dict]:
+def analyze_slicing(layers: List[Layer], n_cores: int,
+                    force_multicore: bool = False) -> List[Dict]:
     """
     给出每 layer 的最佳切片决策, 并标记 layer 间是否兼容片上 push 链.
+    force_multicore=True: BW-PoC 用, 强制所有 layer 多核切片 (即使 cycle 小).
     返回 list of dict.
     """
     target = sum(l.cycles_estimate for l in layers) // n_cores
@@ -391,7 +402,8 @@ def analyze_slicing(layers: List[Layer], n_cores: int) -> List[Dict]:
     prev_mode = None
     prev_n = 0
     for i, layer in enumerate(layers):
-        mode, n_split = choose_mode(layer, n_cores, target, prefer_w_slice=True)
+        mode, n_split = choose_mode(layer, n_cores, target, prefer_w_slice=True,
+                                     force_multicore=force_multicore)
         compat = False
         if prev_mode is not None:
             compat = slicing_compatible(prev_mode, prev_n, mode, n_split,
@@ -438,7 +450,8 @@ def print_slicing(decisions: List[Dict], n_cores: int) -> None:
 
 
 def assign_cores_in_stage(stage: Stage, n_cores: int,
-                          target_per_core_cycles: int) -> None:
+                          target_per_core_cycles: int,
+                          force_multicore: bool = False) -> None:
     """
     LPT 算法 (Longest Processing Time first):
     1. 先决定每层 mode + n_split, 算出该层"单核负担" (cycle/n_split if 切片, 否则全 cycle)
@@ -447,11 +460,13 @@ def assign_cores_in_stage(stage: Stage, n_cores: int,
 
     layer 顺序在流水线 steady state 下不影响 wallclock = max(per-core load),
     所以可以自由 reorder 给最闲核.
+    force_multicore=True: BW-PoC 用, 强制 ds 等小 layer 也走多核 (W slice 4 核陪算).
     """
     # 第一步: 决定每层 mode + n_split + 单核负担
     layer_meta = []  # list of (layer, mode, n_split, per_core_cycle)
     for layer in stage.layers:
-        mode, n_split = choose_mode(layer, n_cores, target_per_core_cycles)
+        mode, n_split = choose_mode(layer, n_cores, target_per_core_cycles,
+                                     force_multicore=force_multicore)
         if mode == Mode.A_SINGLE:
             per_core = layer.cycles_estimate
         else:
@@ -641,13 +656,16 @@ def print_per_core_plan(per_core_plan: Dict[int, List[LayerStep]]) -> None:
 # ---------------------------------------------------------------------------
 # 主入口: schedule 整网 → stages
 # ---------------------------------------------------------------------------
-def schedule(layers: List[Layer], n_cores: int) -> List[Stage]:
+def schedule(layers: List[Layer], n_cores: int,
+             force_multicore: bool = False) -> List[Stage]:
+    """force_multicore=True: BW-PoC 用, 让所有 layer 走多核 (无单核空转)."""
     total_cycles = sum(l.cycles_estimate for l in layers)
     target_per_core_cycles = total_cycles // n_cores
 
     stages = split_into_stages(layers, n_cores, target_per_core_cycles)
     for stage in stages:
-        assign_cores_in_stage(stage, n_cores, target_per_core_cycles)
+        assign_cores_in_stage(stage, n_cores, target_per_core_cycles,
+                               force_multicore=force_multicore)
     return stages
 
 

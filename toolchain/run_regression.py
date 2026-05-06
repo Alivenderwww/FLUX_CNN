@@ -424,6 +424,11 @@ def gen_chained_cases(cases, plan, ky_fold_global=False, s2d_global=False):
                 ddr_rdma_base=bases['rdma_base'],
                 skip_ifb_preload=skip_ifb_preload,
                 skip_ofb_clear  =False,
+                # single-core regression 跑整图 stress test, 给 IFB/OFB SRAM 大值
+                # override 让大 case (W=540 等) 不受路径 A trim (IFB=1024) 限制.
+                # 真硬件部署走 SMC W slice, 用 params.py 默认值即可.
+                ifb_sram_words_override=8192,
+                ofb_sram_words_override=2048,
             )
         except (ValueError, AssertionError) as e:
             print(f"  case {i} ({c['name']}) gen ERROR: {e}")

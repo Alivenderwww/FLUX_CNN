@@ -1,0 +1,19 @@
+# axi_smc_4to4 IP ÁîüÊàêÊëòË??
+# Generated: 2026-05-05 20:16:55
+
+IP_NAME      = axi_smc_4to4
+NUM_SI       = 4
+NUM_MI       = 4
+ADDR_WIDTH   = 32
+DATA_WIDTH   = 128
+ID_WIDTH     = 6
+
+xci_file     = c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_smc_4to4/axi_smc_4to4.xci
+src_dir      = c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_smc_4to4
+gen_dir      = c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_smc_4to4
+
+# Âú∞ÂùÄÊò†Â∞Ñ:
+   M0: 0x00000000 - 0x00FFFFFF  (16 MB ‚Ü? mem[0])
+   M1: 0x01000000 - 0x01FFFFFF  (16 MB ‚Ü? mem[1])
+   M2: 0x02000000 - 0x02FFFFFF  (16 MB ‚Ü? mem[2])
+   M3: 0x03000000 - 0x03FFFFFF  (16 MB ‚Ü? mem[3])

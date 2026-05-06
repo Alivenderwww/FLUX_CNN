@@ -16,11 +16,11 @@
 `define FLUX_PARF_DEPTH               32  // parf_accum partial sum depth
 
 // ---- SRAM 容量 ----
-`define FLUX_IFB_DEPTH                8192  // 128 KB (1 word = 128 bit)
-`define FLUX_WB_DEPTH                 1024  // 256 KB (1 word = 2048 bit)
-`define FLUX_OFB_DEPTH                2048  // 32 KB (1 word = 128 bit)
-`define FLUX_SHORTCUT_DEPTH           8192  // 128 KB Shortcut Bank
-`define FLUX_SRAM_DEPTH               8192  // legacy alias for IFB_DEPTH
+`define FLUX_IFB_DEPTH                2048  // 128 KB (1 word = 128 bit)
+`define FLUX_WB_DEPTH                 640  // 256 KB (1 word = 2048 bit)
+`define FLUX_OFB_DEPTH                1024  // 32 KB (1 word = 128 bit)
+`define FLUX_SHORTCUT_DEPTH           2048  // 128 KB Shortcut Bank
+`define FLUX_SRAM_DEPTH               2048  // legacy alias for IFB_DEPTH
 
 // ---- AXI / CSR ----
 `define FLUX_BUS_ADDR_W               32
@@ -90,6 +90,14 @@
 `define FLUX_ADDR_SHORTCUT_SHIFT      12'h1C4
 `define FLUX_ADDR_BIAS_BASE           12'h1C8
 `define FLUX_ADDR_SKIP_IDMA           12'h1CC
+`define FLUX_ADDR_OFM_TDEST           12'h1D0
+`define FLUX_ADDR_OFM_OPCODE          12'h1D4
+`define FLUX_ADDR_IDMA_CMD_LIST_PTR   12'h1D8
+`define FLUX_ADDR_IDMA_CMD_COUNT      12'h1DC
+`define FLUX_ADDR_IDMA_CMDS_PER_ROW   12'h1E0
+`define FLUX_ADDR_ODMA_CMD_LIST_PTR   12'h1E4
+`define FLUX_ADDR_ODMA_CMD_COUNT      12'h1E8
+`define FLUX_ADDR_ODMA_CMDS_PER_ROW   12'h1EC
 `define FLUX_ADDR_IDMA_SRC_BASE       12'h200
 `define FLUX_ADDR_IDMA_BYTE_LEN       12'h204
 `define FLUX_ADDR_WDMA_SRC_BASE       12'h210

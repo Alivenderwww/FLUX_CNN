@@ -72,6 +72,12 @@ def generate_random(
     ddr_ofb_base=None, ddr_desc_base=None, ddr_rdma_base=None,
     skip_ifb_preload=False, skip_ofb_clear=False,
     skip_idma=False,
+    # chain_data single-core 整图跑时, IFB/OFB SRAM 容量需求跟 SMC W slice 段不一样
+    # (W=135 cs=4 整图 row_words=540 > IFB_DEPTH=1024 / 540=1 < K+1). chain_data
+    # 用 IFB/OFB 大值 override 模拟"理想化"硬件容量, 仅生成 expected_ofm.txt golden.
+    # SMC sim 跑 W slice cfg 仍用 params.py 的小值.
+    ifb_sram_words_override=None,
+    ofb_sram_words_override=None,
 ):
     """随机 ifm + weight + SDP 量化的测试生成器。
     单 case CLI 用法: 全 None override → 用 F-1a 默认 SDP 参数 (mult=1, clip[0,255], ReLU).
@@ -84,12 +90,17 @@ def generate_random(
         sys.exit(f"ERROR: stride={stride} out of range [1..7].")
 
     # ---- 派生 cfg ----
+    _cfg_kwargs = dict(
+        H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
+        stride=stride, pad_top=pad_top, pad_left=pad_left,
+        TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
+        streaming=streaming)
+    if ifb_sram_words_override is not None:
+        _cfg_kwargs['IFB_SRAM_WORDS'] = ifb_sram_words_override
+    if ofb_sram_words_override is not None:
+        _cfg_kwargs['OFB_SRAM_WORDS'] = ofb_sram_words_override
     try:
-        cfg = hw_files.derive_layer_cfg(
-            H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
-            stride=stride, pad_top=pad_top, pad_left=pad_left,
-            TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
-            streaming=streaming)
+        cfg = hw_files.derive_layer_cfg(**_cfg_kwargs)
     except ValueError as e:
         sys.exit(f"ERROR: {e}")
 
@@ -215,13 +226,18 @@ def generate_random(
             pad_left = 0
             s2d_active = True
 
-            # 重派生 cfg (新维度)
+            # 重派生 cfg (新维度) — 同样支持 IFB/OFB SRAM override
+            _s2d_kwargs = dict(
+                H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
+                stride=stride, pad_top=pad_top, pad_left=pad_left,
+                TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
+                streaming=streaming)
+            if ifb_sram_words_override is not None:
+                _s2d_kwargs['IFB_SRAM_WORDS'] = ifb_sram_words_override
+            if ofb_sram_words_override is not None:
+                _s2d_kwargs['OFB_SRAM_WORDS'] = ofb_sram_words_override
             try:
-                cfg = hw_files.derive_layer_cfg(
-                    H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
-                    stride=stride, pad_top=pad_top, pad_left=pad_left,
-                    TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
-                    streaming=streaming)
+                cfg = hw_files.derive_layer_cfg(**_s2d_kwargs)
             except ValueError as e:
                 sys.exit(f"ERROR (s2d): {e}")
             # H_OUT/W_OUT 不变 (S2D 是等价变换)
@@ -251,14 +267,19 @@ def generate_random(
         w_virt = hw_files.fold_weights(
             w_arr, K, NUM_CIN, NUM_COUT, groups_y, ky_per_group)
 
-        # 重新派生 cfg: 虚拟维度 (Ky=ky_per_group, Cin=cin_fake)
+        # 重新派生 cfg: 虚拟维度 (Ky=ky_per_group, Cin=cin_fake) — 同样支持 IFB/OFB SRAM override
+        _fold_kwargs = dict(
+            H_IN=H_IN_virt, W_IN=W_IN, K=K,
+            NUM_CIN=cin_fake, NUM_COUT=NUM_COUT,
+            stride=stride, pad_top=pad_top_hw, pad_left=pad_left,
+            TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
+            streaming=streaming, KY=ky_per_group)
+        if ifb_sram_words_override is not None:
+            _fold_kwargs['IFB_SRAM_WORDS'] = ifb_sram_words_override
+        if ofb_sram_words_override is not None:
+            _fold_kwargs['OFB_SRAM_WORDS'] = ofb_sram_words_override
         try:
-            cfg = hw_files.derive_layer_cfg(
-                H_IN=H_IN_virt, W_IN=W_IN, K=K,
-                NUM_CIN=cin_fake, NUM_COUT=NUM_COUT,
-                stride=stride, pad_top=pad_top_hw, pad_left=pad_left,
-                TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
-                streaming=streaming, KY=ky_per_group)
+            cfg = hw_files.derive_layer_cfg(**_fold_kwargs)
         except ValueError as e:
             sys.exit(f"ERROR (fold): {e}")
         assert cfg['W_OUT'] == W_OUT, \

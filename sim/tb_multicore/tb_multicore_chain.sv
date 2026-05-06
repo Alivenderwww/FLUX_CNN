@@ -360,6 +360,116 @@ module tb_multicore_chain;
         endcase
     endtask
 
+    // ----------------- profiling 计数器快照 (per-core / 单 DDR) -----------------
+    // 仿照 tb_core_dma 的 CASE_RESULT/CASE_PROFILE; 单 DDR 版只有 1 个 u_ddr.
+    //   LAYER_PROFILE  l=N cores=mask cycles=X  per-core MAC fire / stall  + DDR busy
+    //   CORE_RESULT    c=N PASS/FAIL cycles=X mac_fire=X mac_util=X arf_w=X parf_f=X ...
+    //   CORE_PROFILE   c=N act/wgt/psum/acc fire/stall/idle (跟 tb_core_dma 一致)
+    //   DDR_PROFILE    d=0 aw_fire=X w_beats=X ar_fire=X r_beats=X busy_cyc=X busy_pct=X
+    typedef struct {
+        int mac_fire;
+        int act_fire, act_stall, act_idle;
+        int wgt_fire, wgt_stall, wgt_idle;
+        int psum_fire, psum_stall, psum_idle;
+        int acc_fire, acc_stall, acc_idle;
+        int arf_w, arf_r;
+        int parf_f, parf_d;
+    } core_snap_t;
+
+    typedef struct {
+        int aw_fire, w_beats, ar_fire, r_beats, busy_cyc;
+    } ddr_snap_t;
+
+    task automatic snap_core(input int c, output core_snap_t s);
+        case (c)
+            0: begin
+                s.mac_fire   = u_dut.gen_core[0].u_core.u_mac_array.mac_fire_cnt;
+                s.act_fire   = u_dut.gen_core[0].u_core.u_mac_array.hs_act_fire;
+                s.act_stall  = u_dut.gen_core[0].u_core.u_mac_array.hs_act_stall;
+                s.act_idle   = u_dut.gen_core[0].u_core.u_mac_array.hs_act_idle;
+                s.wgt_fire   = u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_fire;
+                s.wgt_stall  = u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_stall;
+                s.wgt_idle   = u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_idle;
+                s.psum_fire  = u_dut.gen_core[0].u_core.u_mac_array.hs_psum_fire;
+                s.psum_stall = u_dut.gen_core[0].u_core.u_mac_array.hs_psum_stall;
+                s.psum_idle  = u_dut.gen_core[0].u_core.u_mac_array.hs_psum_idle;
+                s.acc_fire   = u_dut.gen_core[0].u_core.u_ofb_writer.hs_acc_fire;
+                s.acc_stall  = u_dut.gen_core[0].u_core.u_ofb_writer.hs_acc_stall;
+                s.acc_idle   = u_dut.gen_core[0].u_core.u_ofb_writer.hs_acc_idle;
+                s.arf_w      = u_dut.gen_core[0].u_core.u_line_buffer.arf_write_cnt;
+                s.arf_r      = u_dut.gen_core[0].u_core.u_line_buffer.arf_read_cnt;
+                s.parf_f     = u_dut.gen_core[0].u_core.u_parf_accum.fill_fire_cnt;
+                s.parf_d     = u_dut.gen_core[0].u_core.u_parf_accum.drain_fire_cnt;
+            end
+            1: begin
+                s.mac_fire   = u_dut.gen_core[1].u_core.u_mac_array.mac_fire_cnt;
+                s.act_fire   = u_dut.gen_core[1].u_core.u_mac_array.hs_act_fire;
+                s.act_stall  = u_dut.gen_core[1].u_core.u_mac_array.hs_act_stall;
+                s.act_idle   = u_dut.gen_core[1].u_core.u_mac_array.hs_act_idle;
+                s.wgt_fire   = u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_fire;
+                s.wgt_stall  = u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_stall;
+                s.wgt_idle   = u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_idle;
+                s.psum_fire  = u_dut.gen_core[1].u_core.u_mac_array.hs_psum_fire;
+                s.psum_stall = u_dut.gen_core[1].u_core.u_mac_array.hs_psum_stall;
+                s.psum_idle  = u_dut.gen_core[1].u_core.u_mac_array.hs_psum_idle;
+                s.acc_fire   = u_dut.gen_core[1].u_core.u_ofb_writer.hs_acc_fire;
+                s.acc_stall  = u_dut.gen_core[1].u_core.u_ofb_writer.hs_acc_stall;
+                s.acc_idle   = u_dut.gen_core[1].u_core.u_ofb_writer.hs_acc_idle;
+                s.arf_w      = u_dut.gen_core[1].u_core.u_line_buffer.arf_write_cnt;
+                s.arf_r      = u_dut.gen_core[1].u_core.u_line_buffer.arf_read_cnt;
+                s.parf_f     = u_dut.gen_core[1].u_core.u_parf_accum.fill_fire_cnt;
+                s.parf_d     = u_dut.gen_core[1].u_core.u_parf_accum.drain_fire_cnt;
+            end
+            2: if (NUM_CORES > 2) begin
+                s.mac_fire   = u_dut.gen_core[2].u_core.u_mac_array.mac_fire_cnt;
+                s.act_fire   = u_dut.gen_core[2].u_core.u_mac_array.hs_act_fire;
+                s.act_stall  = u_dut.gen_core[2].u_core.u_mac_array.hs_act_stall;
+                s.act_idle   = u_dut.gen_core[2].u_core.u_mac_array.hs_act_idle;
+                s.wgt_fire   = u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_fire;
+                s.wgt_stall  = u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_stall;
+                s.wgt_idle   = u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_idle;
+                s.psum_fire  = u_dut.gen_core[2].u_core.u_mac_array.hs_psum_fire;
+                s.psum_stall = u_dut.gen_core[2].u_core.u_mac_array.hs_psum_stall;
+                s.psum_idle  = u_dut.gen_core[2].u_core.u_mac_array.hs_psum_idle;
+                s.acc_fire   = u_dut.gen_core[2].u_core.u_ofb_writer.hs_acc_fire;
+                s.acc_stall  = u_dut.gen_core[2].u_core.u_ofb_writer.hs_acc_stall;
+                s.acc_idle   = u_dut.gen_core[2].u_core.u_ofb_writer.hs_acc_idle;
+                s.arf_w      = u_dut.gen_core[2].u_core.u_line_buffer.arf_write_cnt;
+                s.arf_r      = u_dut.gen_core[2].u_core.u_line_buffer.arf_read_cnt;
+                s.parf_f     = u_dut.gen_core[2].u_core.u_parf_accum.fill_fire_cnt;
+                s.parf_d     = u_dut.gen_core[2].u_core.u_parf_accum.drain_fire_cnt;
+            end
+            3: if (NUM_CORES > 3) begin
+                s.mac_fire   = u_dut.gen_core[3].u_core.u_mac_array.mac_fire_cnt;
+                s.act_fire   = u_dut.gen_core[3].u_core.u_mac_array.hs_act_fire;
+                s.act_stall  = u_dut.gen_core[3].u_core.u_mac_array.hs_act_stall;
+                s.act_idle   = u_dut.gen_core[3].u_core.u_mac_array.hs_act_idle;
+                s.wgt_fire   = u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_fire;
+                s.wgt_stall  = u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_stall;
+                s.wgt_idle   = u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_idle;
+                s.psum_fire  = u_dut.gen_core[3].u_core.u_mac_array.hs_psum_fire;
+                s.psum_stall = u_dut.gen_core[3].u_core.u_mac_array.hs_psum_stall;
+                s.psum_idle  = u_dut.gen_core[3].u_core.u_mac_array.hs_psum_idle;
+                s.acc_fire   = u_dut.gen_core[3].u_core.u_ofb_writer.hs_acc_fire;
+                s.acc_stall  = u_dut.gen_core[3].u_core.u_ofb_writer.hs_acc_stall;
+                s.acc_idle   = u_dut.gen_core[3].u_core.u_ofb_writer.hs_acc_idle;
+                s.arf_w      = u_dut.gen_core[3].u_core.u_line_buffer.arf_write_cnt;
+                s.arf_r      = u_dut.gen_core[3].u_core.u_line_buffer.arf_read_cnt;
+                s.parf_f     = u_dut.gen_core[3].u_core.u_parf_accum.fill_fire_cnt;
+                s.parf_d     = u_dut.gen_core[3].u_core.u_parf_accum.drain_fire_cnt;
+            end
+            default: s = '{default:0};
+        endcase
+    endtask
+
+    task automatic snap_ddr(output ddr_snap_t s);
+        s.aw_fire  = u_ddr.aw_fire;
+        s.w_beats  = u_ddr.w_beats;
+        s.ar_fire  = u_ddr.ar_fire;
+        s.r_beats  = u_ddr.r_beats;
+        s.busy_cyc = u_ddr.busy_cyc;
+    endtask
+
     // ----------------- 比对 final OFM -----------------
     task automatic check_final_ofb(input string case_dir, output int mismatches);
         // 最后一层 expected_ofm.txt 在 chain_data/layer<N-1>/
@@ -392,6 +502,14 @@ module tb_multicore_chain;
         longint t_start;
         longint t_layer_start;
         logic [NUM_CORES-1:0] expected_done_mask;
+        // Profiling 快照
+        core_snap_t snap_core_t0  [NUM_CORES];
+        core_snap_t snap_core_lst [NUM_CORES];
+        core_snap_t snap_core_now [NUM_CORES];
+        ddr_snap_t  snap_ddr_t0;
+        ddr_snap_t  snap_ddr_lst;
+        ddr_snap_t  snap_ddr_now;
+        int         layer_cycles;
 
         case_dir = "cases/multicore_demo";
 
@@ -432,10 +550,16 @@ module tb_multicore_chain;
 
         $display("  DDR preload done. Stage barrier loop start.");
         t_start = $time;
+        // 整个 run 起点快照
+        for (int c = 0; c < NUM_CORES; c++) snap_core(c, snap_core_t0[c]);
+        snap_ddr(snap_ddr_t0);
 
         // ---- 主 stage barrier 循环: host 一层一层串 ----
         for (int l = 0; l < n_layers; l++) begin
             t_layer_start = $time;
+            // per-layer 起点快照
+            for (int c = 0; c < NUM_CORES; c++) snap_core(c, snap_core_lst[c]);
+            snap_ddr(snap_ddr_lst);
 
             // 哪些 core 参与本层 (count > 0 即参与)
             expected_done_mask = '0;
@@ -461,10 +585,52 @@ module tb_multicore_chain;
 
             // 3) 等所有参与 core 的 done_per_core (= core_done_sticky)
             wait ((done_per_core & expected_done_mask) == expected_done_mask);
+            layer_cycles = ($time - t_layer_start) / 10;
             $display("  Layer %0d done @ t=%0t (cycles=%0d, mask=%b)",
-                     l, $time, ($time - t_layer_start) / 10, expected_done_mask);
+                     l, $time, layer_cycles, expected_done_mask);
 
             @(posedge clk); @(posedge clk);
+
+            // ---- LAYER_PROFILE: per-layer per-core MAC fire + DDR busy ----
+            for (int c = 0; c < NUM_CORES; c++) snap_core(c, snap_core_now[c]);
+            snap_ddr(snap_ddr_now);
+            begin
+                automatic int total_mac_fire = 0;
+                automatic int active_cores   = 0;
+                automatic int dbusy = snap_ddr_now.busy_cyc - snap_ddr_lst.busy_cyc;
+                for (int c = 0; c < NUM_CORES; c++)
+                    if (expected_done_mask[c]) begin
+                        total_mac_fire += (snap_core_now[c].mac_fire - snap_core_lst[c].mac_fire);
+                        active_cores++;
+                    end
+                // mac_pipe_pct: per-core MAC stage-0 join 成功的周期占比平均值
+                //   单核 peak = cycles (mac_fire 是周期数, 不是 ops 数)
+                $display("LAYER_PROFILE l=%0d cores=%b cycles=%0d active_cores=%0d total_mac_fire=%0d mac_pipe_pct=%.2f%% ddr_busy=%0d (%.1f%%)",
+                         l, expected_done_mask, layer_cycles, active_cores, total_mac_fire,
+                         (active_cores == 0) ? 0.0 :
+                            (real'(total_mac_fire) / (real'(layer_cycles) * real'(active_cores))) * 100.0,
+                         dbusy,
+                         (layer_cycles == 0) ? 0.0 : (real'(dbusy) / real'(layer_cycles)) * 100.0);
+                for (int c = 0; c < NUM_CORES; c++)
+                    if (expected_done_mask[c])
+                        $display("  LAYER_CORE l=%0d c=%0d mac_fire=%0d act_fire=%0d act_stall=%0d act_idle=%0d wgt_stall=%0d psum_stall=%0d acc_stall=%0d",
+                                 l, c,
+                                 snap_core_now[c].mac_fire   - snap_core_lst[c].mac_fire,
+                                 snap_core_now[c].act_fire   - snap_core_lst[c].act_fire,
+                                 snap_core_now[c].act_stall  - snap_core_lst[c].act_stall,
+                                 snap_core_now[c].act_idle   - snap_core_lst[c].act_idle,
+                                 snap_core_now[c].wgt_stall  - snap_core_lst[c].wgt_stall,
+                                 snap_core_now[c].psum_stall - snap_core_lst[c].psum_stall,
+                                 snap_core_now[c].acc_stall  - snap_core_lst[c].acc_stall);
+                $display("  LAYER_DDR   l=%0d d=0 aw_fire=%0d w_beats=%0d ar_fire=%0d r_beats=%0d busy_cyc=%0d busy_pct=%.1f%%",
+                         l,
+                         snap_ddr_now.aw_fire  - snap_ddr_lst.aw_fire,
+                         snap_ddr_now.w_beats  - snap_ddr_lst.w_beats,
+                         snap_ddr_now.ar_fire  - snap_ddr_lst.ar_fire,
+                         snap_ddr_now.r_beats  - snap_ddr_lst.r_beats,
+                         dbusy,
+                         (layer_cycles == 0) ? 0.0 : (real'(dbusy) / real'(layer_cycles)) * 100.0);
+            end
 
             // 每 layer 完成后立刻 check 自己的 OFM (intermediate or final).
             begin
@@ -522,6 +688,50 @@ module tb_multicore_chain;
 
 
         check_final_ofb(case_dir, mismatches);
+
+        // ---- 整网 CORE_RESULT / CORE_PROFILE / DDR_PROFILE ----
+        for (int c = 0; c < NUM_CORES; c++) snap_core(c, snap_core_now[c]);
+        snap_ddr(snap_ddr_now);
+        begin
+            automatic int total_cycles = ($time - t_start) / 10;
+            automatic string verdict = (mismatches == 0) ? "PASS" : "FAIL";
+            for (int c = 0; c < NUM_CORES; c++) begin
+                automatic int dmac   = snap_core_now[c].mac_fire - snap_core_t0[c].mac_fire;
+                automatic int darfw  = snap_core_now[c].arf_w    - snap_core_t0[c].arf_w;
+                automatic int darfr  = snap_core_now[c].arf_r    - snap_core_t0[c].arf_r;
+                automatic int dparff = snap_core_now[c].parf_f   - snap_core_t0[c].parf_f;
+                automatic int dparfd = snap_core_now[c].parf_d   - snap_core_t0[c].parf_d;
+                $display("CORE_RESULT c=%0d %s cycles=%0d mac_fire=%0d mac_pipe_pct=%.2f%% arf_w=%0d arf_r=%0d parf_f=%0d parf_d=%0d",
+                         c, verdict, total_cycles, dmac,
+                         (real'(dmac) / real'(total_cycles)) * 100.0,
+                         darfw, darfr, dparff, dparfd);
+            end
+            for (int c = 0; c < NUM_CORES; c++)
+                $display("CORE_PROFILE c=%0d cycles=%0d act_fire=%0d act_stall=%0d act_idle=%0d wgt_fire=%0d wgt_stall=%0d wgt_idle=%0d psum_fire=%0d psum_stall=%0d psum_idle=%0d acc_fire=%0d acc_stall=%0d acc_idle=%0d",
+                         c, total_cycles,
+                         snap_core_now[c].act_fire   - snap_core_t0[c].act_fire,
+                         snap_core_now[c].act_stall  - snap_core_t0[c].act_stall,
+                         snap_core_now[c].act_idle   - snap_core_t0[c].act_idle,
+                         snap_core_now[c].wgt_fire   - snap_core_t0[c].wgt_fire,
+                         snap_core_now[c].wgt_stall  - snap_core_t0[c].wgt_stall,
+                         snap_core_now[c].wgt_idle   - snap_core_t0[c].wgt_idle,
+                         snap_core_now[c].psum_fire  - snap_core_t0[c].psum_fire,
+                         snap_core_now[c].psum_stall - snap_core_t0[c].psum_stall,
+                         snap_core_now[c].psum_idle  - snap_core_t0[c].psum_idle,
+                         snap_core_now[c].acc_fire   - snap_core_t0[c].acc_fire,
+                         snap_core_now[c].acc_stall  - snap_core_t0[c].acc_stall,
+                         snap_core_now[c].acc_idle   - snap_core_t0[c].acc_idle);
+            begin
+                automatic int daw   = snap_ddr_now.aw_fire  - snap_ddr_t0.aw_fire;
+                automatic int dwb   = snap_ddr_now.w_beats  - snap_ddr_t0.w_beats;
+                automatic int dar   = snap_ddr_now.ar_fire  - snap_ddr_t0.ar_fire;
+                automatic int drb   = snap_ddr_now.r_beats  - snap_ddr_t0.r_beats;
+                automatic int dbusy = snap_ddr_now.busy_cyc - snap_ddr_t0.busy_cyc;
+                $display("DDR_PROFILE d=0 cycles=%0d aw_fire=%0d w_beats=%0d ar_fire=%0d r_beats=%0d busy_cyc=%0d busy_pct=%.2f%%",
+                         total_cycles, daw, dwb, dar, drb, dbusy,
+                         (real'(dbusy) / real'(total_cycles)) * 100.0);
+            end
+        end
 
         $display("");
         $display("============================================================");

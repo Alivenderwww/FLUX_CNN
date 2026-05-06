@@ -13,7 +13,11 @@
       "Bash(python gen_isa_test.py --k 7 --h_in 68 --w_in 120 --num_cin 8 --num_cout 8 --stride 1 --shift 2)",
       "Bash(vsim -c -do run.tcl)",
       "Bash(rm -rf work xil_defaultlib transcript modelsim.ini)",
-      "Bash(C:/modeltech64_2020.4/win64/vlog.exe -sv -mfcu -lint -work work ../../RTL/bias_rf.sv)"
+      "Bash(C:/modeltech64_2020.4/win64/vlog.exe -sv -mfcu -lint -work work ../../RTL/bias_rf.sv)",
+      "mcp__elicit__search_papers",
+      "Bash(vsim -c -do run_xcore.tcl)",
+      "Bash(rm -rf cases/case00)",
+      "Bash(cp -r ../tb_multicore/cases/cross00/core0 cases/case00)"
     ]
   }
 }

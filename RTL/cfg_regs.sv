@@ -196,7 +196,24 @@ module cfg_regs #(
     // ---- M2 Multi-core ----
     output logic                     skip_idma,           // 1 = consumer 等远端核 push 进 IFB, 不启本地 IDMA
     output logic [31:0]              rdma_src_base,
-    output logic [23:0]              rdma_byte_len
+    output logic [23:0]              rdma_byte_len,
+
+    // ---- Mesh: ODMA OFM 包目的节点 / opcode (host csr_w 配置) ----
+    output logic [7:0]               ofm_tdest,           // [7:4]=dst_y, [3:0]=dst_x
+    output logic [3:0]               ofm_opcode,
+
+    // ---- SMC + NUMA: IDMA SG cmd list (Phase 7) ----
+    //   driver 编译期把 SG cmd list 写到 mem 某段, ConvCore.idma_sg_dispatcher
+    //   按 cmd_list_ptr 拉 cmd, 顺序跑 burst. 由 seq_w (CFG_WRITE descriptor) 写,
+    //   每层独立配置 (不同 layer cmd list 起点 / 总数 不同).
+    output logic [31:0]              idma_cmd_list_ptr,   // 全局地址 byte
+    output logic [15:0]              idma_cmd_count,
+    output logic [7:0]               idma_cmds_per_row,   // W slice 跨 mem 时 > 1
+
+    // ---- SMC + NUMA: ODMA SG cmd list (Phase 7) ----
+    output logic [31:0]              odma_cmd_list_ptr,
+    output logic [15:0]              odma_cmd_count,
+    output logic [7:0]               odma_cmds_per_row    // W slice / cout slice 跨 mem 时 > 1
 );
 
     // =========================================================================
@@ -255,6 +272,14 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_SHORTCUT_SHIFT   = `FLUX_ADDR_SHORTCUT_SHIFT;
     localparam [ADDR_W-1:0] ADDR_BIAS_BASE        = `FLUX_ADDR_BIAS_BASE;
     localparam [ADDR_W-1:0] ADDR_SKIP_IDMA        = `FLUX_ADDR_SKIP_IDMA;
+    localparam [ADDR_W-1:0] ADDR_OFM_TDEST        = `FLUX_ADDR_OFM_TDEST;
+    localparam [ADDR_W-1:0] ADDR_OFM_OPCODE       = `FLUX_ADDR_OFM_OPCODE;
+    localparam [ADDR_W-1:0] ADDR_IDMA_CMD_LIST_PTR  = `FLUX_ADDR_IDMA_CMD_LIST_PTR;
+    localparam [ADDR_W-1:0] ADDR_IDMA_CMD_COUNT     = `FLUX_ADDR_IDMA_CMD_COUNT;
+    localparam [ADDR_W-1:0] ADDR_IDMA_CMDS_PER_ROW  = `FLUX_ADDR_IDMA_CMDS_PER_ROW;
+    localparam [ADDR_W-1:0] ADDR_ODMA_CMD_LIST_PTR  = `FLUX_ADDR_ODMA_CMD_LIST_PTR;
+    localparam [ADDR_W-1:0] ADDR_ODMA_CMD_COUNT     = `FLUX_ADDR_ODMA_CMD_COUNT;
+    localparam [ADDR_W-1:0] ADDR_ODMA_CMDS_PER_ROW  = `FLUX_ADDR_ODMA_CMDS_PER_ROW;
 
     localparam [ADDR_W-1:0] ADDR_IDMA_SRC_BASE    = `FLUX_ADDR_IDMA_SRC_BASE;
     localparam [ADDR_W-1:0] ADDR_IDMA_BYTE_LEN    = `FLUX_ADDR_IDMA_BYTE_LEN;
@@ -298,11 +323,59 @@ module cfg_regs #(
         else if (csr_w_en && csr_w_addr == ADDR_DMA_MODE)   r_dma_mode_ctrl <= csr_w_data[1:0];
     end
 
-    // SKIP_IDMA (M2 控制路径, 跨核 consumer 标志, seq_w only): 复位 0 默认本地 IDMA 走原路径
+    // SKIP_IDMA (M2 控制路径, 跨核 consumer 标志):
+    //   原本只 seq_w_en 写 (desc 内 CFG_WRITE).
+    //   mesh 模式新增 host (csr_w_en) 也能写, host 在 start_layer 前直接配 1.
     logic r_skip_idma;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                       r_skip_idma <= 1'b0;
+        else if (csr_w_en && csr_w_addr == ADDR_SKIP_IDMA)     r_skip_idma <= csr_w_data[0];
         else if (seq_w_en && seq_w_addr == ADDR_SKIP_IDMA)     r_skip_idma <= seq_w_data[0];
+    end
+
+    // OFM_TDEST / OFM_OPCODE (mesh 控制路径):
+    //   ODMA 出包目的节点和 opcode, host start_layer 前 csr_w 配置一次, 整层用同一目标.
+    //   不进 desc CFG_WRITE 流, 不需要 seq_w 路径.
+    logic [7:0] r_ofm_tdest;
+    logic [3:0] r_ofm_opcode;
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                                       r_ofm_tdest  <= 8'd0;
+        else if (csr_w_en && csr_w_addr == ADDR_OFM_TDEST)     r_ofm_tdest  <= csr_w_data[7:0];
+    end
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                                       r_ofm_opcode <= 4'd0;
+        else if (csr_w_en && csr_w_addr == ADDR_OFM_OPCODE)    r_ofm_opcode <= csr_w_data[3:0];
+    end
+
+    // IFB_STRIP_ROWS / IFB_RING_WORDS (mesh 模式 host 旁路写):
+    //   原本只 seq_w_en 写 (desc CFG_WRITE 内, layer cfg 一部分).
+    //   mesh 模式跨核 consumer 不走自己的 desc list, host start_layer 前需要直接配置
+    //   IFB ring 容量 (否则 ring full → AWREADY=0 → 远端 push 死锁).
+    //   csr_w 优先级高于 seq_w (本核既被 host 配过又恰好有 desc 时取 host 值).
+    //   start_layer_pulse 时清 vld: 多层 chain 时每层 desc 重新接管 (W slice 多核不同
+    //   sub_W → 不同 ring_words, host 写一次不能共享).
+    logic [7:0]              r_ifb_strip_rows_host;
+    logic [CORE_ADDR_W-1:0]  r_ifb_ring_words_host;
+    logic                    r_ifb_strip_rows_host_vld;
+    logic                    r_ifb_ring_words_host_vld;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            r_ifb_strip_rows_host_vld <= 1'b0;
+            r_ifb_ring_words_host_vld <= 1'b0;
+        end else begin
+            if (start_layer_pulse) begin
+                r_ifb_strip_rows_host_vld <= 1'b0;
+                r_ifb_ring_words_host_vld <= 1'b0;
+            end
+            if (csr_w_en && csr_w_addr == ADDR_IFB_STRIP_ROWS) begin
+                r_ifb_strip_rows_host     <= csr_w_data[7:0];
+                r_ifb_strip_rows_host_vld <= 1'b1;
+            end
+            if (csr_w_en && csr_w_addr == ADDR_IFB_RING_WORDS) begin
+                r_ifb_ring_words_host     <= csr_w_data[CORE_ADDR_W-1:0];
+                r_ifb_ring_words_host_vld <= 1'b1;
+            end
+        end
     end
 
     // =========================================================================
@@ -378,6 +451,14 @@ module cfg_regs #(
     logic [12:0]             r_bias_base;
     logic [31:0]             r_rdma_src_base;
     logic [23:0]             r_rdma_byte_len;
+    // SMC + NUMA: IDMA SG cmd list (Phase 7)
+    logic [31:0]             r_idma_cmd_list_ptr;
+    logic [15:0]             r_idma_cmd_count;
+    logic [7:0]              r_idma_cmds_per_row;
+    // SMC + NUMA: ODMA SG cmd list (Phase 7)
+    logic [31:0]             r_odma_cmd_list_ptr;
+    logic [15:0]             r_odma_cmd_count;
+    logic [7:0]              r_odma_cmds_per_row;
 
     // Layer cfg 寄存器 bank (seq_w only, sequencer 消费 CFG_WRITE descriptor 写入).
     //   §4.1 例外 2: 共享 seq_w_en 门控 + addr 解码, 所有 layer cfg 寄存器写在同一
@@ -437,6 +518,12 @@ module cfg_regs #(
                 ADDR_BIAS_BASE       : r_bias_base       <= seq_w_data[12:0];
                 ADDR_RDMA_SRC_BASE   : r_rdma_src_base   <= seq_w_data[31:0];
                 ADDR_RDMA_BYTE_LEN   : r_rdma_byte_len   <= seq_w_data[23:0];
+                ADDR_IDMA_CMD_LIST_PTR : r_idma_cmd_list_ptr  <= seq_w_data[31:0];
+                ADDR_IDMA_CMD_COUNT    : r_idma_cmd_count     <= seq_w_data[15:0];
+                ADDR_IDMA_CMDS_PER_ROW : r_idma_cmds_per_row  <= seq_w_data[7:0];
+                ADDR_ODMA_CMD_LIST_PTR : r_odma_cmd_list_ptr  <= seq_w_data[31:0];
+                ADDR_ODMA_CMD_COUNT    : r_odma_cmd_count     <= seq_w_data[15:0];
+                ADDR_ODMA_CMDS_PER_ROW : r_odma_cmds_per_row  <= seq_w_data[7:0];
                 default              : ;   // 未使用地址
             endcase
         end
@@ -466,7 +553,7 @@ module cfg_regs #(
     assign ifb_row_step    = r_ifb_row_step;
     assign wb_cout_step    = r_wb_cout_step;
     assign tile_in_step    = r_tile_in_step;
-    assign ifb_ring_words  = r_ifb_ring_words;
+    assign ifb_ring_words  = r_ifb_ring_words_host_vld ? r_ifb_ring_words_host : r_ifb_ring_words;
     assign ofb_row_words   = r_ofb_row_words;
     assign ofb_ring_words  = r_ofb_ring_words;
     assign ifb_iss_step    = r_ifb_iss_step;
@@ -476,7 +563,7 @@ module cfg_regs #(
     assign sdp_shift       = r_sdp_shift;
     assign sdp_relu_en     = r_sdp_relu_en;
     assign h_in_total         = r_h_in_total;
-    assign ifb_strip_rows     = r_ifb_strip_rows;
+    assign ifb_strip_rows     = r_ifb_strip_rows_host_vld ? r_ifb_strip_rows_host : r_ifb_strip_rows;
     assign ofb_strip_rows     = r_ofb_strip_rows;
     assign ddr_ifm_row_stride = r_ddr_ifm_row_stride;
     assign ddr_ofm_row_stride = r_ddr_ofm_row_stride;
@@ -501,6 +588,14 @@ module cfg_regs #(
     assign bias_base       = r_bias_base;
     assign rdma_src_base   = r_rdma_src_base;
     assign rdma_byte_len   = r_rdma_byte_len;
+    assign ofm_tdest       = r_ofm_tdest;
+    assign ofm_opcode      = r_ofm_opcode;
+    assign idma_cmd_list_ptr  = r_idma_cmd_list_ptr;
+    assign idma_cmd_count     = r_idma_cmd_count;
+    assign idma_cmds_per_row  = r_idma_cmds_per_row;
+    assign odma_cmd_list_ptr  = r_odma_cmd_list_ptr;
+    assign odma_cmd_count     = r_odma_cmd_count;
+    assign odma_cmds_per_row  = r_odma_cmds_per_row;
 
     // =========================================================================
     // 读 mux：按 reg_r_addr 选择返回数据（组合）
@@ -571,6 +666,14 @@ module cfg_regs #(
             ADDR_RDMA_BYTE_LEN   : reg_r_data = {8'd0, r_rdma_byte_len};
             ADDR_RESIDUAL_EN     : reg_r_data = {31'd0, r_residual_en};
             ADDR_SKIP_IDMA       : reg_r_data = {31'd0, r_skip_idma};
+            ADDR_OFM_TDEST       : reg_r_data = {24'd0, r_ofm_tdest};
+            ADDR_OFM_OPCODE      : reg_r_data = {28'd0, r_ofm_opcode};
+            ADDR_IDMA_CMD_LIST_PTR : reg_r_data = r_idma_cmd_list_ptr;
+            ADDR_IDMA_CMD_COUNT    : reg_r_data = {16'd0, r_idma_cmd_count};
+            ADDR_IDMA_CMDS_PER_ROW : reg_r_data = {24'd0, r_idma_cmds_per_row};
+            ADDR_ODMA_CMD_LIST_PTR : reg_r_data = r_odma_cmd_list_ptr;
+            ADDR_ODMA_CMD_COUNT    : reg_r_data = {16'd0, r_odma_cmd_count};
+            ADDR_ODMA_CMDS_PER_ROW : reg_r_data = {24'd0, r_odma_cmds_per_row};
             ADDR_SHORTCUT_MULT   : reg_r_data = {{16{r_shortcut_mult[15]}}, r_shortcut_mult};
             ADDR_SHORTCUT_SHIFT  : reg_r_data = {27'd0, r_shortcut_shift};
             ADDR_BIAS_BASE       : reg_r_data = {19'd0, r_bias_base};

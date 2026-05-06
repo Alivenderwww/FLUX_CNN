@@ -26,7 +26,7 @@ module core_top #(
     parameter int WRF_DEPTH   = `FLUX_WRF_DEPTH,
     parameter int ARF_DEPTH   = `FLUX_ARF_DEPTH,
     parameter int PARF_DEPTH  = `FLUX_PARF_DEPTH,
-    parameter int SRAM_DEPTH  = `FLUX_IFB_DEPTH,    // IFB 物理深度
+    parameter int SRAM_DEPTH  = `FLUX_IFB_DEPTH,    // IFB 物理深度 (= SHB 物理深度)
     parameter int WB_DEPTH    = `FLUX_WB_DEPTH,
     parameter int OFB_DEPTH   = `FLUX_OFB_DEPTH,
     parameter int CSR_ADDR_W  = `FLUX_CSR_ADDR_W,
@@ -38,7 +38,12 @@ module core_top #(
     parameter int DMA_LEN_W   = `FLUX_DMA_LEN_W,
     // 跨核 IFB AXI4 SI 端口 ID 宽 = multicore_top.EXT_BUS_ID = CORE_BUS_ID + log2(NUM_CORES).
     // 单核 sim (NUM_CORES=1, 跨核口 tie 0) 可用默认 5; multicore_top 显式 override.
-    parameter int RMT_ID_W    = AXI_M_ID + AXI_M_WIDTH + 1
+    parameter int RMT_ID_W    = AXI_M_ID + AXI_M_WIDTH + 1,
+
+    // SG_MODE = 1 时 IDMA 走 Scatter-Gather (idma_sg_dispatcher 替代 idma_ctrl).
+    //   driver 编译期写 cmd list 到 mem 某段, dispatcher 顺序拉 cmd 跑 burst.
+    //   = 0 时 IDMA 用原 idma_ctrl (兼容已有 single-DDR sim, 默认值).
+    parameter int SG_MODE     = 0
 )(
     input  logic                                 clk,
     input  logic                                 rst_n,
@@ -161,7 +166,11 @@ module core_top #(
     output logic signed [NUM_COL*PSUM_WIDTH-1:0] psum_out_vec,
 
     // 顶层 done
-    output logic                                 done
+    output logic                                 done,
+
+    // Mesh: ODMA OFM 包目的节点 / opcode (从 cfg_regs 直通, host 配置)
+    output logic [7:0]                           ofm_tdest,
+    output logic [3:0]                           ofm_opcode
 );
 
     localparam int ADDR_W    = 20;
@@ -258,6 +267,14 @@ module core_top #(
     logic              seq_start_idma_pulse_g;    // gated start pulse (= seq_start_idma_pulse & ~cfg_skip_idma)
     logic              idma_done_eff;              // effective done given sequencer (= idma_done | cfg_skip_idma)
 
+    // SMC + NUMA: IDMA / ODMA SG cmd list cfg (Phase 7, SG_MODE=1 时使用)
+    logic [31:0]       cfg_idma_cmd_list_ptr;
+    logic [15:0]       cfg_idma_cmd_count;
+    logic [7:0]        cfg_idma_cmds_per_row;
+    logic [31:0]       cfg_odma_cmd_list_ptr;
+    logic [15:0]       cfg_odma_cmd_count;
+    logic [7:0]        cfg_odma_cmds_per_row;
+
     // Sequencer → core pipeline + DMA
     logic              seq_start_core_pulse, seq_start_wgt_pulse;
     logic              seq_start_idma_pulse, seq_start_odma_pulse, seq_start_wdma_pulse;
@@ -352,7 +369,17 @@ module core_top #(
         .shortcut_shift(cfg_shortcut_shift),
         .bias_base(cfg_bias_base),
         .rdma_src_base(dma_rdma_src_base),
-        .rdma_byte_len(dma_rdma_byte_len)
+        .rdma_byte_len(dma_rdma_byte_len),
+        // Mesh: ODMA OFM 包目的节点 / opcode (host csr_w 配)
+        .ofm_tdest(ofm_tdest),
+        .ofm_opcode(ofm_opcode),
+        // SMC + NUMA: IDMA / ODMA SG cmd list cfg (Phase 7)
+        .idma_cmd_list_ptr (cfg_idma_cmd_list_ptr),
+        .idma_cmd_count    (cfg_idma_cmd_count),
+        .idma_cmds_per_row (cfg_idma_cmds_per_row),
+        .odma_cmd_list_ptr (cfg_odma_cmd_list_ptr),
+        .odma_cmd_count    (cfg_odma_cmd_count),
+        .odma_cmds_per_row (cfg_odma_cmds_per_row)
     );
 
     // =========================================================================
@@ -1002,6 +1029,15 @@ module core_top #(
     logic                       rdma_sts_tvalid, rdma_sts_tready;
     logic [7:0]                 rdma_sts_tdata;
     logic                       rdma_err_w;
+    // SMC + NUMA: ocmd 通道 (odma_sg_dispatcher 拉 cmd list, mm2s_arb 第 4 路)
+    logic                       ocmd_cmd_tvalid, ocmd_cmd_tready;
+    logic [71:0]                ocmd_cmd_tdata;
+    logic                       ocmd_data_tvalid, ocmd_data_tready;
+    logic [BUS_DATA_W-1:0]      ocmd_data_tdata;
+    logic [BUS_DATA_W/8-1:0]    ocmd_data_tkeep;
+    logic                       ocmd_data_tlast;
+    logic                       ocmd_sts_tvalid, ocmd_sts_tready;
+    logic [7:0]                 ocmd_sts_tdata;
 
     // =========================================================================
     // idma_ctrl
@@ -1011,26 +1047,53 @@ module core_top #(
     assign seq_start_idma_pulse_g = seq_start_idma_pulse & ~cfg_skip_idma;
     assign idma_done_eff          = idma_done | cfg_skip_idma;
 
-    idma_ctrl #(
-        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
-        .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
-    ) u_idma (
-        .clk(clk), .rst_n(rst_n),
-        .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
-        .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
-        .cfg_h_in_total         (cfg_h_in_total),
-        .cfg_ifb_strip_rows     (cfg_ifb_strip_rows),
-        .cfg_ifb_ky_step        (cfg_ifb_ky_step),
-        .cfg_ifb_ring_words     (cfg_ifb_ring_words),
-        .cfg_ddr_ifm_row_stride ({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ifm_row_stride}),
-        .rows_consumed          (rows_consumed),
-        .rows_available         (rows_available),
-        .mm2s_cmd_tvalid (idma_cmd_tvalid),  .mm2s_cmd_tready (idma_cmd_tready),  .mm2s_cmd_tdata  (idma_cmd_tdata),
-        .mm2s_data_tvalid(idma_data_tvalid), .mm2s_data_tready(idma_data_tready),
-        .mm2s_data_tdata (idma_data_tdata),  .mm2s_data_tkeep (idma_data_tkeep),  .mm2s_data_tlast (idma_data_tlast),
-        .mm2s_sts_tvalid (idma_sts_tvalid),  .mm2s_sts_tready (idma_sts_tready),  .mm2s_sts_tdata  (idma_sts_tdata),
-        .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata)
-    );
+    // SG_MODE=0: 默认走 idma_ctrl (single-DDR sim 兼容)
+    // SG_MODE=1: 走 idma_sg_dispatcher (SMC + NUMA, driver 编译期 cmd list)
+    generate if (SG_MODE == 0) begin : g_idma_simple
+        idma_ctrl #(
+            .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+            .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+        ) u_idma (
+            .clk(clk), .rst_n(rst_n),
+            .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
+            .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
+            .cfg_h_in_total         (cfg_h_in_total),
+            .cfg_ifb_strip_rows     (cfg_ifb_strip_rows),
+            .cfg_ifb_ky_step        (cfg_ifb_ky_step),
+            .cfg_ifb_ring_words     (cfg_ifb_ring_words),
+            .cfg_ddr_ifm_row_stride ({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ifm_row_stride}),
+            .rows_consumed          (rows_consumed),
+            .rows_available         (rows_available),
+            .mm2s_cmd_tvalid (idma_cmd_tvalid),  .mm2s_cmd_tready (idma_cmd_tready),  .mm2s_cmd_tdata  (idma_cmd_tdata),
+            .mm2s_data_tvalid(idma_data_tvalid), .mm2s_data_tready(idma_data_tready),
+            .mm2s_data_tdata (idma_data_tdata),  .mm2s_data_tkeep (idma_data_tkeep),  .mm2s_data_tlast (idma_data_tlast),
+            .mm2s_sts_tvalid (idma_sts_tvalid),  .mm2s_sts_tready (idma_sts_tready),  .mm2s_sts_tdata  (idma_sts_tdata),
+            .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata)
+        );
+    end else begin : g_idma_sg
+        idma_sg_dispatcher #(
+            .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+            .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+        ) u_idma_sg (
+            .clk(clk), .rst_n(rst_n),
+            .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
+            .cfg_cmd_list_ptr     (cfg_idma_cmd_list_ptr),
+            .cfg_cmd_count        (cfg_idma_cmd_count),
+            .cfg_cmds_per_row     (cfg_idma_cmds_per_row),
+            .cfg_h_in_total       (cfg_h_in_total),
+            .cfg_ifb_strip_rows   (cfg_ifb_strip_rows),
+            .cfg_ifb_ring_words   (cfg_ifb_ring_words),
+            .rows_consumed        (rows_consumed),
+            .rows_available       (rows_available),
+            .mm2s_cmd_tvalid (idma_cmd_tvalid),  .mm2s_cmd_tready (idma_cmd_tready),  .mm2s_cmd_tdata  (idma_cmd_tdata),
+            .mm2s_data_tvalid(idma_data_tvalid), .mm2s_data_tready(idma_data_tready),
+            .mm2s_data_tdata (idma_data_tdata),  .mm2s_data_tkeep (idma_data_tkeep),  .mm2s_data_tlast (idma_data_tlast),
+            .mm2s_sts_tvalid (idma_sts_tvalid),  .mm2s_sts_tready (idma_sts_tready),  .mm2s_sts_tdata  (idma_sts_tdata),
+            .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata)
+        );
+        // 防 unused warning: SG_MODE 下 idma_src_base/byte_len 不使用
+        wire _unused_eff_idma = |eff_idma_src_base | |eff_idma_byte_len;
+    end endgenerate
 
     // =========================================================================
     // wdma_ctrl
@@ -1085,6 +1148,10 @@ module core_top #(
         .rdma_data_tvalid(rdma_data_tvalid), .rdma_data_tready(rdma_data_tready),
         .rdma_data_tdata (rdma_data_tdata),  .rdma_data_tkeep (rdma_data_tkeep),  .rdma_data_tlast (rdma_data_tlast),
         .rdma_sts_tvalid (rdma_sts_tvalid),  .rdma_sts_tready (rdma_sts_tready),  .rdma_sts_tdata  (rdma_sts_tdata),
+        .ocmd_cmd_tvalid (ocmd_cmd_tvalid),  .ocmd_cmd_tready (ocmd_cmd_tready),  .ocmd_cmd_tdata  (ocmd_cmd_tdata),
+        .ocmd_data_tvalid(ocmd_data_tvalid), .ocmd_data_tready(ocmd_data_tready),
+        .ocmd_data_tdata (ocmd_data_tdata),  .ocmd_data_tkeep (ocmd_data_tkeep),  .ocmd_data_tlast (ocmd_data_tlast),
+        .ocmd_sts_tvalid (ocmd_sts_tvalid),  .ocmd_sts_tready (ocmd_sts_tready),  .ocmd_sts_tdata  (ocmd_sts_tdata),
         .mm2s_cmd_tvalid (arb_mm2s_cmd_tvalid),  .mm2s_cmd_tready (arb_mm2s_cmd_tready),  .mm2s_cmd_tdata  (arb_mm2s_cmd_tdata),
         .mm2s_data_tvalid(arb_mm2s_data_tvalid), .mm2s_data_tready(arb_mm2s_data_tready),
         .mm2s_data_tdata (arb_mm2s_data_tdata),  .mm2s_data_tkeep (arb_mm2s_data_tkeep),  .mm2s_data_tlast (arb_mm2s_data_tlast),
@@ -1092,29 +1159,71 @@ module core_top #(
     );
 
     // =========================================================================
-    // odma_ctrl
+    // ODMA: SG_MODE=0 走 odma_ctrl, SG_MODE=1 走 odma_sg_dispatcher
+    //   SG_MODE=1: ocmd 走 mm2s_arb 第 4 路 (拉 cmd list), s2mm 走 axi_dm.S2MM
+    //   SG_MODE=0: ocmd 路 tie 0 (mm2s_arb 第 4 路无 valid 不影响其它路)
     // =========================================================================
-    odma_ctrl #(
-        .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
-        .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
-    ) u_odma (
-        .clk(clk), .rst_n(rst_n),
-        .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
-        .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
-        .cfg_h_out_total       (cfg_h_out),
-        .cfg_w_out             (cfg_w_out),
-        .cfg_cout_slices       (cfg_cout_slices),
-        .cfg_ofb_row_words     (cfg_ofb_row_words),
-        .cfg_ddr_ofm_row_stride({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ofm_row_stride}),
-        .cfg_ofb_ring_words    (cfg_ofb_ring_words),
-        .row_done_pulse        (row_done_pulse),
-        .rows_drained          (rows_drained),
-        .s2mm_cmd_tvalid (odma_s2mm_cmd_tvalid),  .s2mm_cmd_tready (odma_s2mm_cmd_tready),  .s2mm_cmd_tdata  (odma_s2mm_cmd_tdata),
-        .s2mm_data_tvalid(odma_s2mm_data_tvalid), .s2mm_data_tready(odma_s2mm_data_tready),
-        .s2mm_data_tdata (odma_s2mm_data_tdata),  .s2mm_data_tkeep (odma_s2mm_data_tkeep),  .s2mm_data_tlast (odma_s2mm_data_tlast),
-        .s2mm_sts_tvalid (odma_s2mm_sts_tvalid),  .s2mm_sts_tready (odma_s2mm_sts_tready),  .s2mm_sts_tdata  (odma_s2mm_sts_tdata),
-        .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata)
-    );
+    generate if (SG_MODE == 0) begin : g_odma_simple
+        // ocmd 路 tie 0
+        assign ocmd_cmd_tvalid  = 1'b0;
+        assign ocmd_cmd_tdata   = '0;
+        assign ocmd_data_tready = 1'b1;
+        assign ocmd_sts_tready  = 1'b1;
+
+        odma_ctrl #(
+            .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+            .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+        ) u_odma (
+            .clk(clk), .rst_n(rst_n),
+            .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
+            .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
+            .cfg_h_out_total       (cfg_h_out),
+            .cfg_w_out             (cfg_w_out),
+            .cfg_cout_slices       (cfg_cout_slices),
+            .cfg_ofb_row_words     (cfg_ofb_row_words),
+            .cfg_ddr_ofm_row_stride({{(BUS_ADDR_W-ADDR_W){1'b0}}, cfg_ddr_ofm_row_stride}),
+            .cfg_ofb_ring_words    (cfg_ofb_ring_words),
+            .row_done_pulse        (row_done_pulse),
+            .rows_drained          (rows_drained),
+            .s2mm_cmd_tvalid (odma_s2mm_cmd_tvalid),  .s2mm_cmd_tready (odma_s2mm_cmd_tready),  .s2mm_cmd_tdata  (odma_s2mm_cmd_tdata),
+            .s2mm_data_tvalid(odma_s2mm_data_tvalid), .s2mm_data_tready(odma_s2mm_data_tready),
+            .s2mm_data_tdata (odma_s2mm_data_tdata),  .s2mm_data_tkeep (odma_s2mm_data_tkeep),  .s2mm_data_tlast (odma_s2mm_data_tlast),
+            .s2mm_sts_tvalid (odma_s2mm_sts_tvalid),  .s2mm_sts_tready (odma_s2mm_sts_tready),  .s2mm_sts_tdata  (odma_s2mm_sts_tdata),
+            .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata)
+        );
+    end else begin : g_odma_sg
+        odma_sg_dispatcher #(
+            .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
+            .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
+        ) u_odma_sg (
+            .clk(clk), .rst_n(rst_n),
+            .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
+            .cfg_cmd_list_ptr (cfg_odma_cmd_list_ptr),
+            .cfg_cmd_count    (cfg_odma_cmd_count),
+            .cfg_cmds_per_row (cfg_odma_cmds_per_row),
+            .cfg_h_out_total  (cfg_h_out),
+            .cfg_w_out        (cfg_w_out),
+            .cfg_cout_slices  (cfg_cout_slices),
+            .cfg_ofb_row_words(cfg_ofb_row_words),
+            .cfg_ofb_ring_words(cfg_ofb_ring_words),
+            .row_done_pulse   (row_done_pulse),
+            .rows_drained     (rows_drained),
+            // ocmd 接 mm2s_arb 第 4 路
+            .ocmd_cmd_tvalid (ocmd_cmd_tvalid),  .ocmd_cmd_tready (ocmd_cmd_tready),  .ocmd_cmd_tdata  (ocmd_cmd_tdata),
+            .ocmd_data_tvalid(ocmd_data_tvalid), .ocmd_data_tready(ocmd_data_tready),
+            .ocmd_data_tdata (ocmd_data_tdata),  .ocmd_data_tkeep (ocmd_data_tkeep),  .ocmd_data_tlast (ocmd_data_tlast),
+            .ocmd_sts_tvalid (ocmd_sts_tvalid),  .ocmd_sts_tready (ocmd_sts_tready),  .ocmd_sts_tdata  (ocmd_sts_tdata),
+            // s2mm 接 axi_dm.S2MM
+            .s2mm_cmd_tvalid (odma_s2mm_cmd_tvalid),  .s2mm_cmd_tready (odma_s2mm_cmd_tready),  .s2mm_cmd_tdata  (odma_s2mm_cmd_tdata),
+            .s2mm_data_tvalid(odma_s2mm_data_tvalid), .s2mm_data_tready(odma_s2mm_data_tready),
+            .s2mm_data_tdata (odma_s2mm_data_tdata),  .s2mm_data_tkeep (odma_s2mm_data_tkeep),  .s2mm_data_tlast (odma_s2mm_data_tlast),
+            .s2mm_sts_tvalid (odma_s2mm_sts_tvalid),  .s2mm_sts_tready (odma_s2mm_sts_tready),  .s2mm_sts_tdata  (odma_s2mm_sts_tdata),
+            .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata)
+        );
+        // 防 unused warning
+        wire _unused_eff_odma = |eff_odma_dst_base | |eff_odma_byte_len
+                              | |cfg_ddr_ofm_row_stride;
+    end endgenerate
 
     // =========================================================================
     // axi_dm IP (Xilinx AXI DataMover): MM2S + S2MM

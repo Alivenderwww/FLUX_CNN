@@ -132,6 +132,14 @@ module tb_smc_chain;
     string  smc_layer_mode       [0:31];   // "W" or "A"
     int     smc_layer_mode_a_core[0:31];
     int     smc_layer_root_slot  [0:31];
+
+    // 每 layer mem 散布 layout (driver compute_smc_w_segments 算, TB 直接读不重算切片公式)
+    //   IFM_SEG_WIDTHS / STARTS: layer_idx 输入散布到 4 mem 的段宽 + 起点 (整图 W 坐标)
+    //   OFM_SEG_WIDTHS / STARTS: layer_idx 输出散布到 4 mem 的段宽 + 起点
+    int     smc_ifm_seg_widths   [0:31][0:NUM_CORES-1];
+    int     smc_ifm_seg_starts   [0:31][0:NUM_CORES-1];
+    int     smc_ofm_seg_widths   [0:31][0:NUM_CORES-1];
+    int     smc_ofm_seg_starts   [0:31][0:NUM_CORES-1];
     int     smc_layer_has_residual[0:31];
 
     // per-(core, layer) sliced RDMA (residual + W slice 时每核独立 rdma_data_c<c>.txt)
@@ -164,8 +172,35 @@ module tb_smc_chain;
             smc_layer_has_residual[l] = 0;
         end
         while (!$feof(fd)) begin
+            int v0, v1, v2, v3;
             void'($fgets(line, fd));
             parsed_num = 1'b0;
+            // 优先 detect array line (4 个空格分隔 int): "SMC_LAYER_<l>_<XFM>_SEG_<W|S> = a b c d"
+            if ($sscanf(line, "%s = %d %d %d %d", key, v0, v1, v2, v3) == 5) begin
+                if (key.len() > 10 && key.substr(0, 8) == "SMC_LAYER" && key.getc(9) == "_") begin
+                    p1 = -1;
+                    for (int i = 10; i < key.len(); i++)
+                        if (key.getc(i) == "_") begin p1 = i; break; end
+                    if (p1 > 0) begin
+                        layer_id = key.substr(10, p1-1).atoi();
+                        suffix   = key.substr(p1+1, key.len()-1);
+                        if      (suffix == "IFM_SEG_WIDTHS") begin
+                            smc_ifm_seg_widths[layer_id][0]=v0; smc_ifm_seg_widths[layer_id][1]=v1;
+                            smc_ifm_seg_widths[layer_id][2]=v2; smc_ifm_seg_widths[layer_id][3]=v3;
+                        end else if (suffix == "IFM_SEG_STARTS") begin
+                            smc_ifm_seg_starts[layer_id][0]=v0; smc_ifm_seg_starts[layer_id][1]=v1;
+                            smc_ifm_seg_starts[layer_id][2]=v2; smc_ifm_seg_starts[layer_id][3]=v3;
+                        end else if (suffix == "OFM_SEG_WIDTHS") begin
+                            smc_ofm_seg_widths[layer_id][0]=v0; smc_ofm_seg_widths[layer_id][1]=v1;
+                            smc_ofm_seg_widths[layer_id][2]=v2; smc_ofm_seg_widths[layer_id][3]=v3;
+                        end else if (suffix == "OFM_SEG_STARTS") begin
+                            smc_ofm_seg_starts[layer_id][0]=v0; smc_ofm_seg_starts[layer_id][1]=v1;
+                            smc_ofm_seg_starts[layer_id][2]=v2; smc_ofm_seg_starts[layer_id][3]=v3;
+                        end
+                    end
+                end
+                continue;
+            end
             if      ($sscanf(line, "%s = 0x%h", key, val) == 2) parsed_num = 1'b1;
             else if ($sscanf(line, "%s = %d",   key, val) == 2) parsed_num = 1'b1;
             else if ($sscanf(line, "%s = %s",   key, val_s) == 2) begin
@@ -399,16 +434,10 @@ module tb_smc_chain;
             $display("    IFB[%0d] mode A loaded to mem[%0d] @ 0x%h (H=%0d W=%0d cs=%0d)",
                      layer_idx, core_load, base_byte, h_in, w_in, cin_slices);
         end else begin
-            // W slice: 切 N 段 (Round-A 公平切片: 余数分散给前 rem 核, 跟 driver 一致)
-            b = w_in / NUM_CORES;
-            rem = w_in - b * NUM_CORES;
-            begin
-                int _cur = 0;
-                for (int i = 0; i < NUM_CORES; i++) begin
-                    seg_widths[i] = (i < rem) ? (b + 1) : b;
-                    seg_starts[i] = _cur;
-                    _cur += seg_widths[i];
-                end
+            // W slice: TB 直接读 driver 写到 meta 的 IFM 段 widths/starts (driver 是切片 SOT)
+            for (int i = 0; i < NUM_CORES; i++) begin
+                seg_widths[i] = smc_ifm_seg_widths[layer_idx][i];
+                seg_starts[i] = smc_ifm_seg_starts[layer_idx][i];
             end
 
             for (int i = 0; i < NUM_CORES; i++) begin
@@ -599,16 +628,10 @@ module tb_smc_chain;
                         end
                     end
         end else begin
-            // W slice: 整图按 W 4 切 (Round-A 公平切片: 余数分散给前 rem 核)
-            b = w_out / NUM_CORES;
-            rem = w_out - b * NUM_CORES;
-            begin
-                int _cur = 0;
-                for (int i = 0; i < NUM_CORES; i++) begin
-                    seg_widths[i] = (i < rem) ? (b + 1) : b;
-                    seg_starts[i] = _cur;
-                    _cur += seg_widths[i];
-                end
+            // W slice: TB 直接读 driver 写到 meta 的 OFM 段 widths/starts
+            for (int i = 0; i < NUM_CORES; i++) begin
+                seg_widths[i] = smc_ofm_seg_widths[layer_idx][i];
+                seg_starts[i] = smc_ofm_seg_starts[layer_idx][i];
             end
 
             for (int r = 0; r < h_out; r++)

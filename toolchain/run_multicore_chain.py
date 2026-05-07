@@ -1023,6 +1023,18 @@ def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
                     f.write(f"SMC_CORE_{core_id}_LAYER_{layer_idx}_MY_W_OUT = {geom['my_w_out']}\n")
                     f.write(f"SMC_CORE_{core_id}_LAYER_{layer_idx}_SUB_W_IN = {geom['sub_W']}\n")
                     f.write(f"SMC_CORE_{core_id}_LAYER_{layer_idx}_W_IN_START = {geom['w_in_start']}\n")
+            # Per-layer mem 散布 layout (TB preload IFB + check OFM 用, 替代手算切片公式)
+            #   driver 算的 mem 段宽 + 起点, TB 直接读, 切片公式不再两份独立实现.
+            for i, layer in enumerate(layers):
+                h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
+                pad_e = 0 if layer.force_s2d else layer.pad
+                w_out_full = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
+                ifm_starts, ifm_widths = mesh_cmd.compute_smc_w_segments(w_in_e,    n_cores)
+                ofm_starts, ofm_widths = mesh_cmd.compute_smc_w_segments(w_out_full, n_cores)
+                f.write(f"SMC_LAYER_{i}_IFM_SEG_WIDTHS = {' '.join(str(x) for x in ifm_widths)}\n")
+                f.write(f"SMC_LAYER_{i}_IFM_SEG_STARTS = {' '.join(str(x) for x in ifm_starts)}\n")
+                f.write(f"SMC_LAYER_{i}_OFM_SEG_WIDTHS = {' '.join(str(x) for x in ofm_widths)}\n")
+                f.write(f"SMC_LAYER_{i}_OFM_SEG_STARTS = {' '.join(str(x) for x in ofm_starts)}\n")
         print(f"  SMC meta appended to {meta_path}")
 
     # ---- 6. Mesh 模式: 给每 (mem, layer) 生成 IFB push cmd list ----

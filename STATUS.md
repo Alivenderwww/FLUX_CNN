@@ -1434,3 +1434,35 @@ Round B 预期收益从原估 10~15% 整网 / L3 30~40% 降到 ~5~8% 整网 / L3
 |---|----:|----:|----:|
 | Latency @100MHz | 2.20 ms | 2.06 ms | −6.6% |
 | FPS | 454 fps | 486 fps | +7.0% |
+
+### Round A 附带重构: TB 切片 SOT 化 (消除设计债)
+
+**问题**: 旧 TB `preload_ifb_smc` / `check_layer_ofm` 自己重新算切片公式 (`b = w/N`, 余数处理),
+跟 driver `compute_smc_w_segments` 两套独立实现. Round A 改 driver 切片, TB 没同步触发 OFM mismatch.
+违反"切片由编译器决定"设计原则, 是显著的设计债.
+
+**重构**: driver 把每 layer mem 散布 layout (IFM + OFM 各 4 段) 写到 multicore_meta.txt:
+```
+SMC_LAYER_0_IFM_SEG_WIDTHS = 34 34 34 33
+SMC_LAYER_0_IFM_SEG_STARTS = 0 34 68 102
+SMC_LAYER_0_OFM_SEG_WIDTHS = 34 34 34 33
+SMC_LAYER_0_OFM_SEG_STARTS = 0 34 68 102
+...
+```
+
+TB parse 时增加 4-int array `$sscanf(line, "%s = %d %d %d %d", ...)` 分支, 存到
+`smc_ifm/ofm_seg_widths/starts[layer][core]` 数组. preload + check 直接索引 array, 不再
+hardcode 切片公式.
+
+**效果**: 
+- driver 是切片**唯一 source of truth**, 改切片策略只需改 1 处 (Round A 同类改动)
+- TB 收益: preload_ifb_smc 切片代码 23 行 → 5 行, check_layer_ofm 同样削减
+- 系统稳健性 ↑: TB 跟 driver 不会再因切片公式不同步而 mismatch
+
+**改动**:
+- `toolchain/run_multicore_chain.py`: meta 写 4 array per layer
+- `sim/tb_smc/tb_smc_chain.sv`: parse_meta 加 4-int array 分支 + smc_ifm/ofm_seg_* 数组 +
+  preload/check 用 array 替代手算公式
+
+**验证**: SMC sim 三 case PASS (resnet11 205752 cy 跟 commit 4b4be0c 一致, bit-exact),
+单核 regression 26/26 PASS.

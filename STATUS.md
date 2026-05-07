@@ -1760,9 +1760,11 @@ per-core layer N+1 启动 不等其他核 layer N done — 需要 driver 加层�
 | Round C (cout slice) | 210784 | -3.0% | -3.0% | scheduler 优先 cout slice for L10 (FC) |
 | Round E (mm2s_arb 防御) | 210784 | 0% | -3.0% | WDMA 饥饿提优先级 (防御 dispatcher prefetch) |
 | Round F (host parallel) | 206589 | -2.0% | -4.9% | TB fork wait_dfe_done |
-| **Round G (desc preload)** | **206121** | **-0.23%** | **-5.2%** | TB fork preload layer N+1 desc |
-| @100 MHz Latency | 2.06 ms | (vs IP baseline 2.17 ms) | | |
-| FPS | 485 | | | |
+| Round G (desc preload) | 206121 | -0.23% | -5.2% | TB fork preload layer N+1 desc |
+| Round H step 1 (S2MM pause) | 204251 | -0.91% | -6.0% | TB OFM check pause 200→30 cy |
+| **Round H step 2 (ODMA sts bg)** | **204240** | **-0.005%** | **-6.0%** | ODMA dispatcher sts 后台 collect (跟 IDMA Round B) |
+| @100 MHz Latency | 2.04 ms | (vs IP baseline 2.17 ms) | | |
+| FPS | 490 | | | |
 
 ---
 

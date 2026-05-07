@@ -461,9 +461,8 @@ module multicore_top_smc #(
         end
     endgenerate
 
-`ifdef USE_AXI_SMC_IP
-    // ===== Vivado axi_smc_4to4 IP 实例化 =====
-    //   先跑 Syn/gen_axi_smc_4to4.tcl 生成 IP, 再 vlog 加 +define+USE_AXI_SMC_IP.
+    // ===== Vivado axi_smc_4to4 IP 实例化 (统一走 IP, 旧 sim model 已删除) =====
+    //   sim 用 USE_AXI_SMC_IP define 走 IP path, synth 同样走 IP path.
     //   IP 端口比 sim model 多 awsize/awlock/awcache/awprot/awqos 等字段, 这里
     //   显式 pack from c_bus_*[gi] (core_top.sv 出口已经提供).
     logic [NUM_CORES*3-1:0]             sb_awsize_ip,  sb_arsize_ip;
@@ -537,39 +536,6 @@ module multicore_top_smc #(
         .m_axi_rresp  (mb_rresp_pack),   .m_axi_rlast  (mb_rlast_pack),
         .m_axi_rvalid (mb_rvalid_pack),  .m_axi_rready (mb_rready_pack)
     );
-`else
-    // ===== sim model: axi_crossbar_4to4_sim (默认, 不依赖 vivado IP 生成) =====
-    axi_crossbar_4to4_sim #(
-        .N(NUM_CORES), .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .ID_W(CB_ID_W)
-    ) u_smc (
-        .clk(clk), .rst_n(rst_n),
-        .s_awid(sb_awid_pack), .s_awaddr(sb_awaddr_pack),
-        .s_awlen(sb_awlen_pack), .s_awburst(sb_awburst_pack),
-        .s_awvalid(sb_awvalid_pack), .s_awready(sb_awready_pack),
-        .s_wdata(sb_wdata_pack), .s_wstrb(sb_wstrb_pack),
-        .s_wlast(sb_wlast_pack), .s_wvalid(sb_wvalid_pack), .s_wready(sb_wready_pack),
-        .s_bid(sb_bid_pack), .s_bresp(sb_bresp_pack),
-        .s_bvalid(sb_bvalid_pack), .s_bready(sb_bready_pack),
-        .s_arid(sb_arid_pack), .s_araddr(sb_araddr_pack),
-        .s_arlen(sb_arlen_pack), .s_arburst(sb_arburst_pack),
-        .s_arvalid(sb_arvalid_pack), .s_arready(sb_arready_pack),
-        .s_rid(sb_rid_pack), .s_rdata(sb_rdata_pack), .s_rresp(sb_rresp_pack),
-        .s_rlast(sb_rlast_pack), .s_rvalid(sb_rvalid_pack), .s_rready(sb_rready_pack),
-
-        .m_awid(mb_awid_pack), .m_awaddr(mb_awaddr_pack),
-        .m_awlen(mb_awlen_pack), .m_awburst(mb_awburst_pack),
-        .m_awvalid(mb_awvalid_pack), .m_awready(mb_awready_pack),
-        .m_wdata(mb_wdata_pack), .m_wstrb(mb_wstrb_pack),
-        .m_wlast(mb_wlast_pack), .m_wvalid(mb_wvalid_pack), .m_wready(mb_wready_pack),
-        .m_bid(mb_bid_pack), .m_bresp(mb_bresp_pack),
-        .m_bvalid(mb_bvalid_pack), .m_bready(mb_bready_pack),
-        .m_arid(mb_arid_pack), .m_araddr(mb_araddr_pack),
-        .m_arlen(mb_arlen_pack), .m_arburst(mb_arburst_pack),
-        .m_arvalid(mb_arvalid_pack), .m_arready(mb_arready_pack),
-        .m_rid(mb_rid_pack), .m_rdata(mb_rdata_pack), .m_rresp(mb_rresp_pack),
-        .m_rlast(mb_rlast_pack), .m_rvalid(mb_rvalid_pack), .m_rready(mb_rready_pack)
-    );
-`endif
 
     // =========================================================================
     // 4. 4 个 mem (axi slave). sim 用 axi_slave_mem.sv, 真硬件用 axi_dm + DDR.

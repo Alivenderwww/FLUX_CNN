@@ -119,19 +119,11 @@ class DDRPlanner:
       共享 desc 段:     DDR_DESC_BASE (每核一段)
       最终 OFM (整网输出): DDR_FINAL_OFM_BASE
     """
-    def __init__(self, multi_ddr=False):
-        # multi_ddr=True (PoC 4-DDR mode):
-        #   * 每核 *_SRC_BASE / DST_BASE 高 4 bit OR 入 core_id, 让数据落到 core 自己的
-        #     DDR slot (Core i ↔ 0xi0000000-0xiFFFFFFF, 256MB).
-        #   * TB 把共享数据 (input ifm, weights, bias) broadcast preload 到 4 个 DDR mem.
-        #   * 每核 ODMA 写自己 slot, OFM check 后 stitch 4 段.
-        #   * 验证多 DDR 端口能否真 4× 加速 (Patch s2d DDR-bound 的瓶颈).
-        # multi_ddr=False (默认): 单端口 DDR, 跟现在 multicore_top.sv 一致.
-        self.multi_ddr = multi_ddr
-
-        # 大分区 (axi_slave_mem DDR_DEPTH = 32M words × 16 byte/word = 512 MB byte 容量)
+    def __init__(self):
+        # SMC + NUMA 架构: 4 mem 通过 axi_smc_4to4 IP 路由 (mem_id 由 addr[25:24] 解码).
+        # 每 mem 16 MB, 全图 IFM/OFM/WB/desc 等按地址分区散布到 4 mem 内.
+        # 大分区 (axi_slave_mem DEPTH = 32M words × 16 byte/word = 512 MB byte 容量)
         # ResNet Patch 输入 960×540×4 ≈ 8.3 MB → INPUT region 必须 ≥ 16 MB.
-        # multi_ddr=True 时这些是 *intra-slot* offset, 顶层 driver OR 入 0xi0000000.
         self.region = {
             'INPUT'      : 0x0000_0000,   # 0-16MB  (16MB) — 大输入 (整网入口)
             'OFM_LAYER'  : 0x0100_0000,   # 16-48MB (32MB, 16 层 × 2MB)
@@ -185,16 +177,6 @@ class DDRPlanner:
         per_core = self.rdma_offset // max(n_cores, 1)
         return self.region['RDMA'] + layer_idx * self.rdma_offset + core_id * per_core
 
-    def core_slot_offset(self, core_id):
-        """multi_ddr=True 模式: per-core DDR slot 高位偏移. Core i 的所有 DMA 落到
-        0xi000_0000-0xiFFF_FFFF 的 256MB slot. 单端口模式返回 0."""
-        if not self.multi_ddr:
-            return 0
-        return core_id * 0x10000000
-
-    def apply_slot(self, base, core_id):
-        """multi_ddr=True 时给 base 加 core 的 slot 高位偏移."""
-        return base | self.core_slot_offset(core_id)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +291,7 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
 def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
                          name_to_idx=None, chain_data=None,
                          core_layer_rdma_words=None, n_cores_total=None,
-                         root_ifb_idx=None, mesh=False, smc=False,
+                         root_ifb_idx=None, smc=False,
                          smc_idma_cmd=None, smc_odma_cmd=None):
     """生成 step 对应 layer 的 cfg_dict (考虑 mode A / mode C 切片, push/DDR).
 
@@ -368,26 +350,6 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         idma_src = 0
     elif step.input_from == 'push':
         idma_src = core_ifb_axi_base(step.my_core)  # 自己核 IFB region (push 进来)
-    elif mesh:
-        # mesh 模式: IFB / OFM 都在 packet 16MB 范围内 (axi_writer_to_axis 截 awaddr[23:4]).
-        # ResNet11 layer 0 IFB 2MB, mesh layout 必须给足 INPUT 区不让 OFM 覆盖:
-        #   INPUT      : 0x000000-0x1FFFFF  (2 MB, 装下 ResNet Patch 输入)
-        #   OFM_LAYER  : 0x200000+  stride 0x80000 (512 KB / layer × 16 layers = 8 MB)
-        #   ROOT_IFB   : 0xE00000+  stride 0x80000 (FC root layer 等)
-        MESH_OFM_BASE      = 0x0020_0000     # 2 MB
-        MESH_OFM_STRIDE    = 0x0008_0000     # 512 KB / layer
-        MESH_ROOT_IFB_BASE = 0x00E0_0000     # 14 MB
-        MESH_ROOT_STRIDE   = 0x0008_0000     # 512 KB / root
-        if layer_idx == 0:
-            idma_base = 0x0000_0000
-        elif root_ifb_idx is not None and layer_idx in root_ifb_idx:
-            idma_base = MESH_ROOT_IFB_BASE + root_ifb_idx[layer_idx] * MESH_ROOT_STRIDE
-        elif layer.input_src and name_to_idx is not None and layer.input_src in name_to_idx:
-            src_idx = name_to_idx[layer.input_src]
-            idma_base = MESH_OFM_BASE + src_idx * MESH_OFM_STRIDE
-        else:
-            idma_base = MESH_OFM_BASE + (layer_idx - 1) * MESH_OFM_STRIDE
-        idma_src = idma_base + ifb_w_start * cin_slices * 16
     else:
         if layer.input_src and name_to_idx is not None and layer.input_src in name_to_idx:
             src_idx = name_to_idx[layer.input_src]
@@ -404,15 +366,6 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         odma_dst = 0
     elif step.output_to == 'push':
         odma_dst = core_ifb_axi_base(step.push_to_core)
-    elif mesh:
-        # mesh 模式: OFM 必须落在 packet header addr 字段 20-bit (= 16MB byte) 范围内
-        # 紧凑 layout (跟 IDMA 端一致):
-        #   INPUT       : 0x000000-0x1FFFFF (2 MB)
-        #   OFM_LAYER   : 0x200000+  stride 0x80000
-        MESH_OFM_BASE   = 0x0020_0000
-        MESH_OFM_STRIDE = 0x0008_0000
-        odma_dst = MESH_OFM_BASE + layer_idx * MESH_OFM_STRIDE \
-                   + ofb_w_start * cout_slices * 16
     else:
         odma_dst = ddr_planner.layer_output_ddr(layer_idx, n_layers) + ofb_w_start * cout_slices * 16
 
@@ -439,16 +392,6 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
                                                         n_cores=n_cores_total or 4)
     elif chain_data is not None and layer_idx < len(chain_data):
         rdma_words = chain_data[layer_idx].get('rdma_words', None)
-
-    # PoC 4-DDR: 给每核 *_SRC_BASE / DST_BASE 加自己 slot 高位偏移 (Core i → 0xi0000000).
-    # crossbar 按地址路由到对应 mem 实例, 4 核 4 mem 真并行.
-    # IFB push (cross-core, addr 0x80000000+) 不受影响 (在 0x4-0x7 范围外).
-    # SMC 模式不用 multi_ddr slot (SMC 自己用 addr[25:24]=mem_id 路由)
-    if not smc:
-        idma_src = ddr_planner.apply_slot(idma_src, step.my_core)
-        odma_dst = ddr_planner.apply_slot(odma_dst, step.my_core)
-        wb_base  = ddr_planner.apply_slot(wb_base,  step.my_core)
-        rdma_ddr = ddr_planner.apply_slot(rdma_ddr, step.my_core)
 
     # SMC 模式: 注入 SG cmd list ptr/count/cmds_per_row (cfg_to_dict 自动写入 cfg_dict
     # 让 build_layer_desc_segment 生成 CFG_WRITE descriptor)
@@ -494,21 +437,14 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
 def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
                                     name_to_idx=None, chain_data=None,
                                     core_layer_rdma_words=None, n_cores_total=None,
-                                    root_ifb_idx=None, mesh=False, smc=False,
+                                    root_ifb_idx=None, smc=False,
                                     smc_per_layer_cmds=None):
     """
     返回 dict: layer_idx → list of (beat0, beat1) descs (每个独立 desc list, 末尾 END).
     若该 (core, layer) 在 plan 里没分到任务, key 不在 dict 中.
-
-    mesh=True 时, 每个 step 强制 skip_idma=True (ConvCore 等 mesh push), 而 IDMA
-    config 字段被 desc 写入但硬件不消费, 无副作用.
     """
-    import dataclasses
     out = {}
     for step in steps:
-        if mesh:
-            # mesh 模式: ConvCore 永远等 mesh push, 不启本地 IDMA
-            step = dataclasses.replace(step, skip_idma=True)
         # SMC 模式: 拿出预先算好的 IDMA + ODMA SG cmd list 信息 (per-layer ptr/count/cmds_per_row)
         smc_idma_cmd = None
         smc_odma_cmd = None
@@ -519,7 +455,7 @@ def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
                                               name_to_idx=name_to_idx, chain_data=chain_data,
                                               core_layer_rdma_words=core_layer_rdma_words,
                                               n_cores_total=n_cores_total,
-                                              root_ifb_idx=root_ifb_idx, mesh=mesh, smc=smc,
+                                              root_ifb_idx=root_ifb_idx, smc=smc,
                                               smc_idma_cmd=smc_idma_cmd, smc_odma_cmd=smc_odma_cmd)
         seg = hw_files.build_layer_desc_segment(
             cfg_dict,
@@ -537,36 +473,20 @@ def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
-def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
-                         force_multicore=False, mesh=False, smc=False):
-    """生成多核多层 chain 的 case 目录 + desc list.
-
-    multi_ddr=True (PoC 4-DDR 模式): DDRPlanner 给每核 DMA bases OR 入 0xi0000000 slot
-    高位偏移. TB (tb_multicore_4ddr_chain.sv) 把共享数据 broadcast preload 到 4 个 mem.
-    需要 NUM_CORES==4 + multicore_top_4ddr.sv DUT.
-
-    force_multicore=True (BW-PoC 用): 强制 ds 等小 layer 也走多核 (W slice 陪算),
-    跟 multi_ddr=True 配合用, 量化 "BW × 4 + 无空转" 上限.
-
-    mesh=True (Phase 6): 走 multicore_top_mesh DUT. ConvCore 全 skip_idma=1, IFB
-    由 mem core (mesh y=0 row) 经 mesh push. 额外生成 per-(mem, layer) cmd list
-    (mesh_cmd.py 格式), TB 通过 mem AXI-Lite CSR 一条条触发 packet.
-    """
+def run_multicore_chain(layers, n_cores, out_dir, smc=False):
+    """生成多核多层 chain 的 case 目录 + desc list (SMC + NUMA 主线)."""
 
     # 1. Schedule
     print(f"\n=== Multicore chain: {len(layers)} layers, N_cores={n_cores}"
-          f"{', MULTI-DDR' if multi_ddr else ''}"
-          f"{', FORCE-MULTICORE' if force_multicore else ''}"
           f"{', SMC' if smc else ''} ===")
     # SMC 模式强制全 W slice (driver layout 假设每层都按整图 W 4 等分散布到 4 mem)
-    if smc:
-        force_multicore = True
+    force_multicore = True if smc else False
     stages = scheduler.schedule(layers, n_cores, force_multicore=force_multicore)
     per_core_plan = scheduler.gen_per_core_plan(stages, n_cores)
     scheduler.print_per_core_plan(per_core_plan)
 
     # 2. DDR layout
-    ddr = DDRPlanner(multi_ddr=multi_ddr)
+    ddr = DDRPlanner()
 
     # 3. Chain 数据生成 (single-core 模式跑一次)
     print("\n[Step 1] Generating chain data (single-core run)...")
@@ -858,7 +778,7 @@ def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
                                                         core_layer_rdma_words=core_layer_rdma_words,
                                                         n_cores_total=n_cores,
                                                         root_ifb_idx=root_ifb_idx,
-                                                        mesh=mesh, smc=smc,
+                                                        smc=smc,
                                                         smc_per_layer_cmds=smc_per_layer_cmds)
         core_dir = os.path.join(out_dir, f'core{core_id}')
         os.makedirs(core_dir, exist_ok=True)
@@ -875,7 +795,6 @@ def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
     with open(meta_path, 'w') as f:
         f.write(f"NUM_CORES = {n_cores}\n")
         f.write(f"NUM_LAYERS = {len(layers)}\n")
-        f.write(f"MULTI_DDR = {1 if ddr.multi_ddr else 0}\n")
         f.write(f"DDR_INPUT_BASE = 0x{ddr.region['INPUT']:08x}\n")
         f.write(f"DDR_FINAL_OFM_BASE = 0x{ddr.region['FINAL_OFM']:08x}\n")
         # 每 (core, layer) desc base + count
@@ -922,29 +841,13 @@ def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
             #   1. input_src 非空 → 上游 layer 的 OFM 区 (ResNet block 内链)
             #   2. ifb_is_root && i>0 → 独立 ROOT_IFB slot (避免被上层 OFM 覆盖)
             #   3. 其他 (layer 0 或线性 chain) → layer_input_ddr(i)
-            if mesh:
-                # mesh 紧凑 layout (跟 build_step_cfg_dict 一致): 16MB 容量内
-                MESH_OFM_BASE      = 0x0020_0000
-                MESH_OFM_STRIDE    = 0x0008_0000
-                MESH_ROOT_IFB_BASE = 0x00E0_0000
-                MESH_ROOT_STRIDE   = 0x0008_0000
-                if i == 0:
-                    idma_ddr = 0x0000_0000
-                elif i in root_ifb_idx:
-                    idma_ddr = MESH_ROOT_IFB_BASE + root_ifb_idx[i] * MESH_ROOT_STRIDE
-                elif layer.input_src and layer.input_src in name_to_idx:
-                    idma_ddr = MESH_OFM_BASE + name_to_idx[layer.input_src] * MESH_OFM_STRIDE
-                else:
-                    idma_ddr = MESH_OFM_BASE + (i-1) * MESH_OFM_STRIDE
-                ofb_ddr = MESH_OFM_BASE + i * MESH_OFM_STRIDE
+            if layer.input_src and layer.input_src in name_to_idx:
+                idma_ddr = ddr.layer_output_ddr(name_to_idx[layer.input_src], len(layers))
+            elif i in root_ifb_idx:
+                idma_ddr = ddr.root_ifb_ddr(root_ifb_idx[i])
             else:
-                if layer.input_src and layer.input_src in name_to_idx:
-                    idma_ddr = ddr.layer_output_ddr(name_to_idx[layer.input_src], len(layers))
-                elif i in root_ifb_idx:
-                    idma_ddr = ddr.root_ifb_ddr(root_ifb_idx[i])
-                else:
-                    idma_ddr = ddr.layer_input_ddr(i)
-                ofb_ddr = ddr.layer_output_ddr(i, len(layers))
+                idma_ddr = ddr.layer_input_ddr(i)
+            ofb_ddr = ddr.layer_output_ddr(i, len(layers))
             f.write(f"LAYER_{i}_DDR_IFB = 0x{idma_ddr:08x}\n")
             f.write(f"LAYER_{i}_DDR_WB = 0x{ddr.layer_wb_ddr(i):08x}\n")
             f.write(f"LAYER_{i}_DDR_OFB = 0x{ofb_ddr:08x}\n")
@@ -1037,136 +940,6 @@ def run_multicore_chain(layers, n_cores, out_dir, multi_ddr=False,
                 f.write(f"SMC_LAYER_{i}_OFM_SEG_STARTS = {' '.join(str(x) for x in ofm_starts)}\n")
         print(f"  SMC meta appended to {meta_path}")
 
-    # ---- 6. Mesh 模式: 给每 (mem, layer) 生成 IFB push cmd list ----
-    # 设计: 每 ConvCore[c] 跟 mem[c] 一对一, mem[c] 推自己核的 layer IFB.
-    # mode A (单核独占): mem[step.my_core] 推该层 H_in 行 IFB → ConvCore[step.my_core]
-    # mode C W slice: 每核切自己 W 段, 对应 mem 推自己 W 段的 IFB rows
-    # IFB 数据来源: 跟 build_step_cfg_dict 里 idma_src 算法一致 (input_src / root / 默认)
-    if mesh:
-        print(f"\n[Step 3] Generating mesh per-(mem, layer) cmd lists...")
-
-        # mesh 紧凑 layout (跟 build_step_cfg_dict / meta 一致, 16MB 内)
-        MESH_OFM_BASE      = 0x0020_0000
-        MESH_OFM_STRIDE    = 0x0008_0000
-        MESH_ROOT_IFB_BASE = 0x00E0_0000
-        MESH_ROOT_STRIDE   = 0x0008_0000
-
-        def get_layer_ifb_ddr_word(layer_idx, layer):
-            """该层 IFB 在 mem.ddr_mem 内的 word offset 起点 (mesh 紧凑 layout)."""
-            if layer_idx == 0:
-                ddr_byte = 0x0000_0000
-            elif layer_idx in root_ifb_idx:
-                ddr_byte = MESH_ROOT_IFB_BASE + root_ifb_idx[layer_idx] * MESH_ROOT_STRIDE
-            elif layer.input_src and layer.input_src in name_to_idx:
-                ddr_byte = MESH_OFM_BASE + name_to_idx[layer.input_src] * MESH_OFM_STRIDE
-            else:
-                ddr_byte = MESH_OFM_BASE + (layer_idx - 1) * MESH_OFM_STRIDE
-            return ddr_byte // 16
-
-        # mem_layer_cmds[mem_id][layer_idx] = n_cmds
-        mem_layer_cmds = [[0] * len(layers) for _ in range(n_cores)]
-        for core_id in range(n_cores):
-            mem_dir = os.path.join(out_dir, f'mem{core_id}')
-            os.makedirs(mem_dir, exist_ok=True)
-            for step in per_core_plan[core_id]:
-                layer = step.layer
-                layer_idx = step.layer_idx
-                # S2D 等效维度 (跟 build_step_cfg_dict 一致)
-                h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
-                pad_e = 0 if layer.force_s2d else layer.pad
-                cin_slices = (c_in_e + 16 - 1) // 16
-                ifb_ddr_w = get_layer_ifb_ddr_word(layer_idx, layer)
-                n_split = len(step.cores_all)
-
-                if n_split == 1:
-                    # 单核 mode A: 整图整 W 推送
-                    cmds = mesh_cmd.gen_mem_ifb_push_cmds(
-                        mem_id=core_id, target_core_id=step.my_core,
-                        h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices,
-                        ifb_ddr_addr_w=ifb_ddr_w,
-                        ifb_sram_base_w=0,
-                        name_prefix=f"L{layer_idx}_",
-                    )
-                    hdr_lines = [
-                        f"layer={layer.name} mem={core_id} target_core={step.my_core}",
-                        f"H_in={h_in_e} W_in={w_in_e} cin_slices={cin_slices}",
-                        f"ifb_ddr_word=0x{ifb_ddr_w:08x} ({ifb_ddr_w*16} byte)",
-                    ]
-                else:
-                    # W slice 多核: 该核负责整图 W 的一段 (含 halo). 重用 compute_w_slice_geom.
-                    if step.mode != 'C_w_slice':
-                        raise NotImplementedError(
-                            f"mesh 模式 n_split>1 仅支持 C_w_slice, layer {layer_idx} mode={step.mode}"
-                        )
-                    slice_idx = step.cores_all.index(step.my_core)
-                    geom = hw_files.compute_w_slice_geom(
-                        W_full=w_in_e, K=k_e, stride=stride_e,
-                        pad_left_full=pad_e,
-                        my_core=slice_idx, n_split=n_split,
-                    )
-                    cmds = mesh_cmd.gen_mem_ifb_push_cmds_w_slice(
-                        mem_id=core_id, target_core_id=step.my_core,
-                        h_in=h_in_e, w_full=w_in_e, cin_slices=cin_slices,
-                        w_in_start=geom['w_in_start'], sub_w=geom['sub_W'],
-                        ifb_ddr_addr_w=ifb_ddr_w,
-                        name_prefix=f"L{layer_idx}_c{slice_idx}_",
-                    )
-                    hdr_lines = [
-                        f"layer={layer.name} mem={core_id} target_core={step.my_core} slice={slice_idx}/{n_split}",
-                        f"H_in={h_in_e} W_full={w_in_e} cin_slices={cin_slices}",
-                        f"w_in_start={geom['w_in_start']} sub_W={geom['sub_W']}",
-                        f"ifb_ddr_word=0x{ifb_ddr_w:08x} ({ifb_ddr_w*16} byte)",
-                    ]
-
-                desc_path = os.path.join(mem_dir, f'mem{core_id}_layer{layer_idx:02d}_descs.hex')
-                n = mesh_cmd.write_mem_desc_list(desc_path, cmds, header_lines=hdr_lines)
-                mem_layer_cmds[core_id][layer_idx] = n
-            active = [l for l in range(len(layers)) if mem_layer_cmds[core_id][l] > 0]
-            print(f"  Mem {core_id}: layers={active}, cmds/layer={[mem_layer_cmds[core_id][l] for l in active]}")
-
-        # 给每 (core, layer) 算 W slice geom (w_out_start / my_w_out), 给 TB 做 OFM stitch
-        # n_split=1 时 w_out_start=0, my_w_out=w_out_full
-        mesh_w_out_start = [[0] * len(layers) for _ in range(n_cores)]
-        mesh_my_w_out    = [[0] * len(layers) for _ in range(n_cores)]
-        for core_id in range(n_cores):
-            for step in per_core_plan[core_id]:
-                layer = step.layer
-                layer_idx = step.layer_idx
-                h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
-                pad_e = 0 if layer.force_s2d else layer.pad
-                n_split = len(step.cores_all)
-                if n_split == 1:
-                    w_out_full = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
-                    mesh_w_out_start[core_id][layer_idx] = 0
-                    mesh_my_w_out   [core_id][layer_idx] = w_out_full
-                else:
-                    slice_idx = step.cores_all.index(step.my_core)
-                    geom = hw_files.compute_w_slice_geom(
-                        W_full=w_in_e, K=k_e, stride=stride_e,
-                        pad_left_full=pad_e,
-                        my_core=slice_idx, n_split=n_split,
-                    )
-                    mesh_w_out_start[core_id][layer_idx] = geom['w_out_start']
-                    mesh_my_w_out   [core_id][layer_idx] = geom['my_w_out']
-
-        # 追加 mesh meta 字段
-        with open(meta_path, 'a') as f:
-            f.write(f"\n; ---- mesh-specific ----\n")
-            f.write(f"MESH = 1\n")
-            f.write(f"MESH_N_CORES = {n_cores}\n")
-            for mem_id in range(n_cores):
-                for layer_idx in range(len(layers)):
-                    n = mem_layer_cmds[mem_id][layer_idx]
-                    if n == 0:
-                        continue
-                    f.write(f"MEM_{mem_id}_LAYER_{layer_idx}_CMD_COUNT = {n}\n")
-                    f.write(f"MEM_{mem_id}_LAYER_{layer_idx}_CMD_FILE = "
-                            f"mem{mem_id}/mem{mem_id}_layer{layer_idx:02d}_descs.hex\n")
-                    # W slice geom: TB 比对时 stitch 用
-                    f.write(f"MEM_{mem_id}_LAYER_{layer_idx}_W_OUT_START = {mesh_w_out_start[mem_id][layer_idx]}\n")
-                    f.write(f"MEM_{mem_id}_LAYER_{layer_idx}_MY_W_OUT   = {mesh_my_w_out  [mem_id][layer_idx]}\n")
-        print(f"  Mesh meta appended to {meta_path}")
-
     return chain_data, per_core_plan
 
 
@@ -1178,21 +951,11 @@ if __name__ == '__main__':
     parser.add_argument('--case_name', default='multicore_demo',
                         help='输出目录名 (在 sim/tb_multicore/cases 下)')
     parser.add_argument('--n_cores', type=int, default=2)
-    parser.add_argument('--multi_ddr', action='store_true',
-                        help='PoC 4-DDR 模式: per-core slot 偏移 + TB 4 mem broadcast preload. '
-                             'TB 必须用 tb_multicore_4ddr_chain.sv. 仅 N=4 支持.')
-    parser.add_argument('--force_multicore', action='store_true',
-                        help='BW-PoC 用: 强制 ds 等小 layer 也走多核 W slice (4 核陪算). '
-                             '跟 --multi_ddr 配合用, 量化 "BW × 4 + 无空转" 上限.')
-    parser.add_argument('--mesh', action='store_true',
-                        help='Mesh 模式: 走 multicore_top_mesh DUT (4-core mesh + AXIS NoC). '
-                             'ConvCore 全 cfg_skip_idma=1, IFB 由 mem core 经 mesh 推. '
-                             '生成 ConvCore desc + 每核 mem cmd list (per-(mem, layer)).')
     parser.add_argument('--smc', action='store_true',
-                        help='SMC + NUMA 模式 (Phase 7): 走 multicore_top_smc DUT (4 ConvCore + '
-                             'axi_crossbar_4to4_sim + 4 mem). 强制全核 W slice + 每层 IFM/OFM W '
+                        help='SMC + NUMA 模式 (Phase 7, 主线): 走 multicore_top_smc DUT (4 ConvCore + '
+                             'axi_smc_4to4 IP + 4 mem). 强制全核 W slice + 每层 IFM/OFM W '
                              '4 等分散布到 4 mem (halo 物理只一份). 生成 IDMA + ODMA SG cmd list '
-                             'per-(core, layer), 跨 mem 边界 axi_crossbar 自动路由.')
+                             'per-(core, layer), 跨 mem 边界 axi_crossbar IP 自动路由.')
     parser.add_argument('--demo',
                         choices=['wslice1', 'simple2', 'simple3', 'wslice4', 'wslice5',
                                  'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
@@ -1357,19 +1120,8 @@ if __name__ == '__main__':
         shutil.rmtree(out_root)
     os.makedirs(out_root, exist_ok=True)
 
-    if args.multi_ddr and args.n_cores != 4:
-        sys.exit("ERROR: --multi_ddr only supports n_cores=4 (PoC fixed topology)")
-    if args.mesh and args.n_cores > 4:
-        sys.exit("ERROR: --mesh only supports n_cores ≤ 4 (mesh 4x2 topology)")
-    if args.mesh and args.multi_ddr:
-        sys.exit("ERROR: --mesh and --multi_ddr 互斥 (mesh 用单 DDR 模型 + 4 个 mem stub)")
     if args.smc and args.n_cores != 4:
         sys.exit("ERROR: --smc only supports n_cores=4 (4 SI / 4 MI crossbar fixed topology)")
-    if args.smc and (args.mesh or args.multi_ddr):
-        sys.exit("ERROR: --smc and --mesh / --multi_ddr 互斥 (SMC 用 axi crossbar + 4 mem)")
-    chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root,
-                                                      multi_ddr=args.multi_ddr,
-                                                      force_multicore=args.force_multicore,
-                                                      mesh=args.mesh, smc=args.smc)
+    chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root, smc=args.smc)
 
     print(f"\n=== Done. Output: {out_root} ===")

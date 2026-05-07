@@ -741,6 +741,9 @@ module tb_smc_chain;
         end
     endtask
 
+    // Round G: dfe preload done flag (per layer), 主 process wait, fork 内 set
+    logic r_dfe_preload_done [0:31];
+
     // ----------------- 主流程 -----------------
     initial begin
         string  case_dir;
@@ -805,6 +808,24 @@ module tb_smc_chain;
         $display("  All preload done. Stage barrier loop start.");
         t_start = $time;
 
+        // Round G: dfe preload done flags 初始化
+        for (int ll = 0; ll < 32; ll++) r_dfe_preload_done[ll] = 1'b0;
+
+        // Round G: layer 0 同步预拉 (主 process 内, 后续 layer 由前一 layer iter 内 fork 异步预拉)
+        for (int c = 0; c < NUM_CORES; c++)
+            if (core_layer_desc_count[c][0] > 0) begin
+                axi_lite_write(CORE_ID_W'(c), ADDR_DESC_LIST_BASE, core_layer_desc_base[c][0]);
+                axi_lite_write(CORE_ID_W'(c), ADDR_DESC_COUNT,     core_layer_desc_count[c][0]);
+                write_dfe_start(CORE_ID_W'(c));
+            end
+        fork
+            if (core_layer_desc_count[0][0] > 0) wait_dfe_done('d0);
+            if (core_layer_desc_count[1][0] > 0) wait_dfe_done('d1);
+            if (core_layer_desc_count[2][0] > 0) wait_dfe_done('d2);
+            if (core_layer_desc_count[3][0] > 0) wait_dfe_done('d3);
+        join
+        r_dfe_preload_done[0] = 1'b1;
+
         // ---- 3. host stage barrier 主循环 ----
         for (int l = 0; l < n_layers; l++) begin
             t_layer_start = $time;
@@ -814,29 +835,40 @@ module tb_smc_chain;
                 if (core_layer_desc_count[c][l] > 0)
                     expected_done_mask[c] = 1'b1;
 
-            // Round F: per-core barrier 软化
-            //   1. 串行写 4 核 boot regs + start_dfe (csr 总线单口, 串行不可避免, 但每核 ~30 cy 不大)
-            //   2. 并行 fork 等 4 核 dfe_done (dfe 各核独立 RTL, 并行拉 desc list)
-            //   3. 并行 start_layer (写 4 核 CTRL[5], 串行写但顺序触发, 先写的核先开跑)
-            for (int c = 0; c < NUM_CORES; c++)
-                if (core_layer_desc_count[c][l] > 0) begin
-                    axi_lite_write(CORE_ID_W'(c), ADDR_DESC_LIST_BASE, core_layer_desc_base[c][l]);
-                    axi_lite_write(CORE_ID_W'(c), ADDR_DESC_COUNT,     core_layer_desc_count[c][l]);
-                    write_dfe_start(CORE_ID_W'(c));
-                end
+            // Round G: 等本层 dfe preload done (除 layer 0 已同步预拉)
+            wait (r_dfe_preload_done[l] == 1'b1);
 
-            // 并行等 4 核 dfe_done (节省 ~3 × dfe_fetch_time / 层)
-            fork
-                if (core_layer_desc_count[0][l] > 0) wait_dfe_done('d0);
-                if (core_layer_desc_count[1][l] > 0) wait_dfe_done('d1);
-                if (core_layer_desc_count[2][l] > 0) wait_dfe_done('d2);
-                if (core_layer_desc_count[3][l] > 0) wait_dfe_done('d3);
-            join
-
-            // 并行 start_layer
+            // 并行 start_layer (boot regs + dfe done 已 ready)
             for (int c = 0; c < NUM_CORES; c++)
                 if (core_layer_desc_count[c][l] > 0)
                     write_layer_start(CORE_ID_W'(c));
+
+            // Round G: 异步预拉 layer (l+1) desc (跟 layer l 计算并行)
+            //   fork...join_none 让 fork 出去后立即继续, dfe + boot regs 写跟 mac_array 计算重叠
+            //   csr 总线 race-free: 主 process 在 wait done 期间不写 csr, fork 内独占
+            if (l < n_layers - 1) begin
+                fork
+                    begin : preload_next
+                        int next_l;
+                        next_l = l + 1;
+                        for (int cc = 0; cc < NUM_CORES; cc++)
+                            if (core_layer_desc_count[cc][next_l] > 0) begin
+                                axi_lite_write(CORE_ID_W'(cc), ADDR_DESC_LIST_BASE,
+                                               core_layer_desc_base[cc][next_l]);
+                                axi_lite_write(CORE_ID_W'(cc), ADDR_DESC_COUNT,
+                                               core_layer_desc_count[cc][next_l]);
+                                write_dfe_start(CORE_ID_W'(cc));
+                            end
+                        fork
+                            if (core_layer_desc_count[0][next_l] > 0) wait_dfe_done('d0);
+                            if (core_layer_desc_count[1][next_l] > 0) wait_dfe_done('d1);
+                            if (core_layer_desc_count[2][next_l] > 0) wait_dfe_done('d2);
+                            if (core_layer_desc_count[3][next_l] > 0) wait_dfe_done('d3);
+                        join
+                        r_dfe_preload_done[next_l] = 1'b1;
+                    end
+                join_none
+            end
 
             // PE 利用率 profile snapshot (start_layer 之后立即 snapshot)
             // generate block 必须静态索引, 4 cores 写死展开

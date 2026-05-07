@@ -1651,3 +1651,114 @@ cout slice 当前只支持 IFM 集中存放. ResNet11 仅 L10 命中. 如果未�
 - **A' (layer barrier 软化)**: per-core barrier + 链表 desc, 5~10% (跟数据依赖耦合, 复杂)
 
 下一阶段重点研究 C 和 D, 见 §16 后续章节.
+
+---
+
+## 16. Round D — bias_rf ping-pong (失败, 2026-05-07)
+
+### 尝试方案
+
+bias_rf 改双 RF (rf[0..1]) + 后台 prefetch:
+- cs N 计算时 active RF 输出 bias_vec
+- 后台预加载 cs N+1 到 inactive RF
+- cs_cnt 切换时立即 swap r_active_rf, ready 不掉
+
+预期收益: cs 切换 5 拍 stall × 切换次数, 整网估 1-2% (cs > 1 layer 才有收益).
+
+### 失败原因
+
+wslice1/wslice5 PASS (这俩 case 全 cs=1 不触发切换). resnet11 hang on layer 4-5
+(cout=32 cs=2 首次切换). dump 显示 cs_cnt 跳回 0 (新 yout) 时:
+- active RF 持 cs=1 (上 yout 末)
+- inactive RF 持 cs=2 (prefetch 越界, 实际 cout_slices=2 没 cs=2)
+- 双不匹配应触发 cold reload (state → S_LOAD), 但 state 持续 S_RUN 5000+ cy mac_array stall
+
+Root cause 推测: state machine (S_IDLE/S_LOAD/S_RUN) 跟 load FSM (load_in_progress)
+分两套, 没强同步 + prefetch_cs 越界让 inactive RF 持无效 cs.
+
+### 决策
+
+**回退** (`git checkout HEAD -- RTL/bias_rf.sv`). 保留 Round B 单 RF 5 拍 stall 设计.
+收益小 (1-2%) + 风险高 (state machine bug), 不值得现在做. 教训记入 memory:
+`feedback_bias_rf_pingpong_failed.md`.
+
+未来再做需:
+1. 单 FSM 合并 state + load_in_progress (强绑定)
+2. prefetch_cs cap 到 cout_slices-1 不越界
+3. 测试必跑 cs > 1 case (resnet11 layer 4+)
+
+---
+
+## 17. Round E — mm2s_arb WDMA 饥饿提优先级 (防御性, 2026-05-07)
+
+### 改造
+
+`RTL/DMA/mm2s_arb.sv` 加 WDMA 饥饿计数:
+- WDMA 等 ≥ STARVE_THRESH=32 拍没 grant → 强制提优先级到最高, 抢一次
+- 否则保持原 priority `idma > rdma > ocmd > wdma`
+
+实现:
+- `r_wdma_wait_cnt` (饱和到 32)
+- WDMA fire 或 idle 清零, 等待时累加
+- `wdma_starve = (cnt >= 32)`, cmd_owner 跳 wdma 当 starve && wdma_cmd_tvalid
+
+### 实测
+
+ResNet11/wslice1/wslice5 cy 完全不变 (210784/4701/23493). 当前 dispatcher 串行
+(Round B), WDMA 在 IDMA fetch latency 间隙能拉到, 没饿. 改造没主动收益.
+
+### 价值
+
+**防御性改动**, 防未来 dispatcher 加 prefetch / multi-outstanding 让 IDMA 持续
+占用 mm2s 让 WDMA 饿死的退化 (Round C+ 尝试 prefetch, L0 cy +17K 就是这个 root cause,
+见 `memory/feedback_prefetch_starves_wdma.md`).
+
+下次再做 dispatcher prefetch, 有 mm2s_arb starve 兜底, 不会让 L0 暴涨.
+
+---
+
+## 18. Round F — TB host loop per-core barrier 软化 (2026-05-07)
+
+### 改造
+
+`sim/tb_smc/tb_smc_chain.sv` host 主循环:
+- 之前: for c in 0..3: write_boot_regs(c) + start_dfe(c) + **wait_dfe_done(c)** (串行)
+- 现在: 串行 write_boot_regs + start_dfe (csr 总线单口必须串行)
+       + **fork...join 并行 wait_dfe_done(0..3)** (DFE 各核独立 RTL, 真并行拉 desc list)
+
+### 实测
+
+| Case | Round C | Round F | Δ |
+|---|----:|----:|----:|
+| smc_resnet11 | 210784 | **206589** | **-2.0%** |
+| smc_wslice1 |   4701 | **4317** | **-8.2%** |
+| smc_wslice5 |  23493 | **21585** | **-8.1%** |
+
+每层均省 ~381 cy (= 4 核 DFE 拉 desc 串行变并行省的 turnaround). ResNet11 11
+layer × 381 = 4195 cy.
+
+wslice1/5 收益更大因为 layer 少, host overhead 占比大.
+
+### 局限
+
+TB-only 改动 (sim 内 host 改成并行). 真硬件部署 host 端需要类似的 multi-thread /
+DMA-driven boot reg 写才能拿到此收益. sim 数反映 host 实现的上限.
+
+### 未来 Round G+ (更激进的 layer barrier 软化)
+
+per-core layer N+1 启动 不等其他核 layer N done — 需要 driver 加层间数据依赖图
+分析 (K=1 ds 层无 halo 可独立, K=3 层依赖左右邻居). 工作量大, 留给后续.
+
+---
+
+## Round 总览 (累计)
+
+| Round | ResNet11 cy | Δ vs prev | 累计 vs Round B (sim model) | 关键改动 |
+|---|----:|----:|----:|---|
+| Round B (sim crossbar) | 203320 | - | 0% | (旧 baseline) |
+| → 切真 IP | 217311 | +6.9% | +6.9% | sim crossbar → axi_smc IP, 14K cy register stage 真实开销 |
+| Round C (cout slice) | 210784 | -3.0% | +3.7% | scheduler 优先 cout slice for L10 (FC) |
+| Round E (mm2s_arb) | 210784 | 0% | +3.7% | 防御性, 准备 dispatcher prefetch |
+| **Round F (host parallel)** | **206589** | **-2.0%** | **+1.6%** | TB fork wait_dfe_done |
+| @100 MHz Latency | 2.07 ms | (vs Round B 2.03 ms sim model) | | |
+| FPS | 484 | | | |

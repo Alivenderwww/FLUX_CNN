@@ -965,7 +965,8 @@ module tb_smc_chain;
                 snap_wgt_stall[3], snap_wgt_idle[3],
                 snap_psum_stall[3], snap_psum_idle[3], snap_acc_idle[3]);
             // 等 axi_dm S2MM 内 in-flight burst 完全 commit (sts_fire 早于 mem 实际写)
-            repeat (200) @(posedge clk);
+            // Round H: 200 → 30 cy (实测 20 也 PASS, 30 留 50% slack)
+            repeat (30) @(posedge clk);
 
             // 中间层 OFM check (last layer 在主循环外另算 final)
             if (l < n_layers - 1) begin

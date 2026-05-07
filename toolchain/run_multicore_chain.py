@@ -327,8 +327,20 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         ifb_w_start = cfg['_W_SLICE_W_IN_START']
         ofb_w_start = cfg['_W_SLICE_W_OUT_START']
     elif step.mode == 'C_cout_slice':
-        # cout 切: 每核完整 W_in/W_out 但 cout 段 — P2 再做.
-        raise NotImplementedError("Cout slice 实现 P2 再做")
+        # cout 切: 每核读全图 IFM, 写自己 cout 段紧凑 layout. ifb/ofb_w_start=0
+        # (W 维不切). cfg['cout_slices'] 是本核段的 cs 数 (整图 cs 的一段).
+        slice_idx = step.cores_all.index(step.my_core)
+        cfg = hw_files.derive_cout_slice_cfg(
+            H_IN=h_in_e, W_IN=w_in_e, K=k_e,
+            NUM_CIN=c_in_e, NUM_COUT_full=layer.c_out, stride=stride_e,
+            pad_top=pad_e, pad_left=pad_e,
+            my_core=slice_idx, n_split=n_split,
+            TILE_W=32, streaming=True,
+        )
+        ifb_w_start = 0
+        ofb_w_start = 0
+        # 本核实际负责的 cout_slices (整图 cs 的一段, 用于 odma cmd list 生成)
+        cout_slices = cfg['cout_slices']
     else:  # mode A
         cfg = hw_files.derive_layer_cfg(
             H_IN=h_in_e, W_IN=w_in_e, K=k_e,
@@ -652,6 +664,86 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     )
                 slice_idx = step.cores_all.index(step.my_core)
 
+                if step.mode == 'C_cout_slice':
+                    # ============================================================
+                    # COUT slice (D 路径退化版): 每核拉相同整图 IFM, 写自己 cout 段
+                    # 紧凑 layout 到自己 mem. 适用 H×W 小 + cout 大 (e.g., L10 FC).
+                    # 要求: 上层 IFM 集中存放 (layer 是 ifb_is_root 或 layer_idx=0,
+                    # 或上层是 mode A). 不支持上层 W slice → cout slice (复杂 stitch).
+                    # ============================================================
+                    h_out_eff_c = (h_in_e + 2 * pad_e - k_e) // stride_e + 1
+                    w_out_eff_c = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
+
+                    # IFM 源 mem: 必须是集中存放
+                    if layer_idx == 0:
+                        ifb_mem_base = smc_global_addr(0, SMC_INPUT_BASE)
+                    elif chain_data[layer_idx]['ifb_is_root']:
+                        root_slot = root_ifb_idx[layer_idx]
+                        ifb_mem_base = smc_global_addr(0, SMC_INPUT_BASE + (root_slot + 1) * SMC_LAYER_INPUT_OFFSET)
+                    else:
+                        # 上层是 mode A 在 mem[prev_my_core] 整图. 否则不支持.
+                        prev_mode_a_core = None
+                        for s in per_core_plan[0]:   # 任一核扫: mode A layer 在所有核 plan 里只 1 个 step
+                            if s.layer_idx == layer_idx - 1 and len(s.cores_all) == 1:
+                                prev_mode_a_core = s.my_core
+                                break
+                        if prev_mode_a_core is None:
+                            raise NotImplementedError(
+                                f"SMC cout slice layer {layer.name}: prev layer {layer_idx-1} 必须 mode A "
+                                f"集中存放或 layer 是 root, 当前 W slice → cout slice 不支持"
+                            )
+                        ifb_mem_base = smc_layer_data_addr(prev_mode_a_core, layer_idx - 1)
+
+                    # 本核 cout 段
+                    seg_cout_starts, seg_widths_cout, seg_cs_per_core = \
+                        mesh_cmd.compute_cout_segments(layer.c_out, n_split)
+                    my_cs       = seg_cs_per_core[slice_idx]
+                    my_cout_lo  = seg_cout_starts[slice_idx]
+                    my_cout_hi  = my_cout_lo + seg_widths_cout[slice_idx]
+
+                    # IDMA: 整图 IFM, 4 核 cmd 相同 (都从 ifb_mem_base 拉)
+                    idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_cout_slice(
+                        h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices,
+                        ifb_mem_base=ifb_mem_base,
+                    )
+                    idma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_idma_sg.hex')
+                    mesh_cmd.write_sg_cmd_list(idma_cmd_path, idma_cmds, header_lines=[
+                        f"core={core_id} layer={layer.name} (idx={layer_idx}) COUT_SLICE",
+                        f"H_in={h_in_e} W_in={w_in_e} cin_slices={cin_slices}",
+                        f"ifb_mem_base=0x{ifb_mem_base:08x}",
+                        f"my_cout=[{my_cout_lo}:{my_cout_hi}) my_cs={my_cs}",
+                    ])
+                    smc_per_layer_cmds[('idma', core_id, layer_idx)] = {
+                        'ptr': smc_core_layer_idma_cmd_addr(core_id, layer_idx),
+                        'count': len(idma_cmds), 'cmds_per_row': 1,
+                        'file': os.path.relpath(idma_cmd_path, out_dir),
+                    }
+
+                    # ODMA: 本核 cout 段紧凑写自己 mem
+                    is_last_layer = (layer_idx == len(layers) - 1)
+                    if is_last_layer:
+                        ofm_mem_base = smc_global_addr(step.my_core, SMC_FINAL_OFM_BASE)
+                    else:
+                        ofm_mem_base = smc_layer_data_addr(step.my_core, layer_idx)
+                    odma_cmds = mesh_cmd.gen_odma_sg_cmd_list_cout_slice(
+                        h_out=h_out_eff_c, w_out=w_out_eff_c,
+                        cout_slices_per_core=my_cs,
+                        ofm_mem_base=ofm_mem_base,
+                    )
+                    odma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_odma_sg.hex')
+                    mesh_cmd.write_odma_sg_cmd_list(odma_cmd_path, odma_cmds, header_lines=[
+                        f"core={core_id} layer={layer.name} (idx={layer_idx}) COUT_SLICE",
+                        f"H_out={h_out_eff_c} W_out={w_out_eff_c} my_cs={my_cs}",
+                        f"ofm_mem_base=0x{ofm_mem_base:08x}",
+                        f"my_cout=[{my_cout_lo}:{my_cout_hi}) is_last_layer={is_last_layer}",
+                    ])
+                    smc_per_layer_cmds[('odma', core_id, layer_idx)] = {
+                        'ptr': smc_core_layer_odma_cmd_addr(core_id, layer_idx),
+                        'count': len(odma_cmds), 'cmds_per_row': 1,
+                        'file': os.path.relpath(odma_cmd_path, out_dir),
+                    }
+                    continue   # cout slice 处理完, 跳过 W slice 分支
+
                 # 本核 W slice geom
                 geom = hw_files.compute_w_slice_geom(
                     W_full=w_in_e, K=k_e, stride=stride_e,
@@ -856,16 +948,36 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
 
     # ---- SMC meta 写出 (给 TB 用) ----
     if smc:
-        # 每 layer SMC mode + my_core (mode A 时单核 ID)
-        layer_smc_mode      = ['?'] * len(layers)
-        layer_smc_my_core   = [-1]  * len(layers)
-        layer_smc_root_slot = [-1]  * len(layers)
+        # 每 layer SMC mode + my_core
+        #   mode 'A' = 单核独占, my_core = 该核 id
+        #   mode 'W' = W slice 多核, my_core = -1
+        #   mode 'C' = cout slice 多核, my_core = IFM 源 mem core (集中存放在哪)
+        layer_smc_mode        = ['?'] * len(layers)
+        layer_smc_my_core     = [-1]  * len(layers)
+        layer_smc_root_slot   = [-1]  * len(layers)
+        layer_smc_cout_starts = [None] * len(layers)   # cout slice 时 4 核段起点
+        layer_smc_cout_widths = [None] * len(layers)   # cout slice 时 4 核段宽 (cout 通道数)
         for c in range(n_cores):
             for s in per_core_plan[c]:
                 n_split = len(s.cores_all)
                 if n_split == 1:
                     layer_smc_mode[s.layer_idx]    = 'A'
                     layer_smc_my_core[s.layer_idx] = s.my_core
+                elif s.mode == 'C_cout_slice':
+                    layer_smc_mode[s.layer_idx] = 'C'
+                    if layer_smc_cout_starts[s.layer_idx] is None:
+                        starts, widths, _cs = mesh_cmd.compute_cout_segments(
+                            s.layer.c_out, n_split)
+                        layer_smc_cout_starts[s.layer_idx] = starts
+                        layer_smc_cout_widths[s.layer_idx] = widths
+                    # IFM 源 mem core: layer 0 / root 都是 mem[0], 否则上层 mode A 的 my_core
+                    if s.layer_idx == 0 or s.layer_idx in root_ifb_idx:
+                        layer_smc_my_core[s.layer_idx] = 0
+                    else:
+                        for ps in per_core_plan[0]:
+                            if ps.layer_idx == s.layer_idx - 1 and len(ps.cores_all) == 1:
+                                layer_smc_my_core[s.layer_idx] = ps.my_core
+                                break
                 else:
                     layer_smc_mode[s.layer_idx] = 'W'
         for i, cd in enumerate(chain_data):
@@ -897,6 +1009,10 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                 f.write(f"SMC_LAYER_{i}_MODE_A_CORE = {layer_smc_my_core[i]}\n")
                 f.write(f"SMC_LAYER_{i}_ROOT_SLOT = {layer_smc_root_slot[i]}\n")
                 f.write(f"SMC_LAYER_{i}_HAS_RESIDUAL = {1 if cd_get(chain_data, i, 'has_residual', 0) else 0}\n")
+                if layer_smc_mode[i] == 'C':
+                    # cout slice 时输出每核 cout 段 (TB 用来切 WB / 验证 OFM)
+                    f.write(f"SMC_LAYER_{i}_COUT_SEG_STARTS = {' '.join(str(x) for x in layer_smc_cout_starts[i])}\n")
+                    f.write(f"SMC_LAYER_{i}_COUT_SEG_WIDTHS = {' '.join(str(x) for x in layer_smc_cout_widths[i])}\n")
             for core_id in range(n_cores):
                 for layer_idx in range(len(layers)):
                     ic = smc_per_layer_cmds.get(('idma', core_id, layer_idx))
@@ -909,8 +1025,11 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     f.write(f"SMC_CORE_{core_id}_LAYER_{layer_idx}_ODMA_CMD_COUNT = {oc['count']}\n")
                     f.write(f"SMC_CORE_{core_id}_LAYER_{layer_idx}_ODMA_CMD_FILE = {oc['file']}\n")
             # Per-(core, layer) W slice geom (TB 用来 stitch OFM)
+            #   - mode 'A' / 'C' 时不需要 W geom (TB 不读), 跳过避免 W=1 等畸形几何
             for core_id in range(n_cores):
                 for step in per_core_plan[core_id]:
+                    if step.mode != 'C_w_slice':
+                        continue
                     layer = step.layer
                     layer_idx = step.layer_idx
                     h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()

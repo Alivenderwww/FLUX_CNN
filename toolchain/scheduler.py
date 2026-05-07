@@ -311,18 +311,19 @@ def choose_mode(layer: Layer, n_cores: int, target_per_core_cycles: int,
         让所有 layer 占满 4 个 DDR slot, 量化"BW × 4 + 无空转" 上限.
     """
     cyc = layer.cycles_estimate
+    n_split = n_cores
+
+    # ★ 优先级特例: W 切不动 (e.g., FC W=1) 但 cout 切可行 → 用 cout slice 让所有核
+    # 都干活, 不要退化到 mode A 单核. ResNet11 L10 (FC W=H=1 cout=528) 命中这条.
+    # (放在最前面: 比"极小 layer 走 mode A"优先级高)
+    if not can_w_slice(layer, n_split) and can_cout_slice(layer, n_split):
+        return (Mode.C_COUT_SLICE, n_split)
 
     # 极小 layer: mode A 单核 (force_multicore=True 时跳过此分支)
     if not force_multicore and cyc < target_per_core_cycles // 4:
         return (Mode.A_SINGLE, 1)
 
-    # force_multicore 模式下: W slice 不可行的 layer (W=1 FC) 保持单核
-    # (cout slice driver 路径未实现, 暂避开)
-    if force_multicore and not can_w_slice(layer, n_cores):
-        return (Mode.A_SINGLE, 1)
-
     # 默认全 N 核切片. 优先 W 切片, 兜底 cout.
-    n_split = n_cores
 
     if prefer_w_slice:
         if can_w_slice(layer, n_split):

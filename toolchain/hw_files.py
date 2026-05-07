@@ -666,12 +666,12 @@ def write_multilayer_desc_list(out_path, layer_segments):
 # ---------------------------------------------------------------------------
 def write_sim_params(out_dir, H_OUT, W_OUT, cout_slices, ifb_words, wb_words,
                      desc_count, sram_depth, num_cin, num_cout):
-    """只留 SRAM_DEPTH / SHORTCUT_DEPTH 作编译期 -g 参数；
-    其它 meta 走 config.txt 供 TB 运行期读.
-    单核 tb_core_dma 整图模式 SHB 段需装整图 shortcut (H_OUT*W_OUT*cs ≤ 8192).
-    SMC tb_smc_chain W slice 模式 SHB 段只装本核段 (≤ 2560 trim 后).
-    所以 sim 时给 SHORTCUT_DEPTH = 8192 让单核大 case 也能跑.
-    综合 / 真硬件用 svh 默认 (SHORTCUT_DEPTH=2560), 因为部署是 SMC W slice."""
+    """SRAM_DEPTH / SHORTCUT_DEPTH 作编译期 -g 参数, 跟 derive_layer_cfg 内 strip
+    计算用的 IFB_SRAM_WORDS 一致 (双向都来自 params.py IFB_DEPTH). 其它 meta 走
+    config.txt 供 TB 运行期读.
+    SHORTCUT_DEPTH 单独 sim 给 8192: 单核 tb_core_dma 整图模式 SHB 段需装整图
+    shortcut (H_OUT*W_OUT*cs ≤ 8192); SMC tb_smc_chain W slice 模式 SHB 段只装本核段
+    (≤ 2048 trim 后). 综合 / 真硬件用 svh 默认 SHORTCUT_DEPTH=2048."""
     with open(_out_path(out_dir, 'sim_params.f'), 'w') as f:
         f.write(f"-gSRAM_DEPTH={sram_depth}\n")
         f.write(f"-gSHORTCUT_DEPTH=8192\n")
@@ -801,7 +801,10 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         # 物理 ring 多 1 行 slack: ring_words = (strip + slack) * row_words
         ofb_ring_words = (ofb_strip + RING_FULL_SLACK) * W_OUT * cout_slices
 
-    sram_depth = 8192
+    # sram_depth 跟 strip 计算用的 IFB_SRAM_WORDS 绑定 (来自 params.py IFB_DEPTH,
+    # 调用方可 ifb_sram_words_override 覆盖). sim_params.f 用此值 -gSRAM_DEPTH 编译期
+    # override RTL parameter, 跟 strip 行为一致, 杜绝 sim/RTL 双源参数偏差.
+    sram_depth = IFB_SRAM_WORDS
 
     ifb_ring_words = ifb_strip * W_IN  * cin_slices
     ofb_row_words  = W_OUT * cout_slices
@@ -1033,6 +1036,41 @@ def derive_w_slice_cfg(H_IN, W_full, K, NUM_CIN, NUM_COUT, stride,
     cfg['_W_SLICE_W_OUT_START'] = geom['w_out_start']
     cfg['_W_SLICE_W_FULL']      = geom['w_full']
     cfg['_W_SLICE_W_OUT_FULL']  = geom['w_out_full']
+    return cfg
+
+
+def derive_cout_slice_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT_full, stride,
+                          pad_top, pad_left,
+                          my_core, n_split,
+                          TILE_W=32, KY=None, **kwargs):
+    """
+    Mode C.3 cout slice 的 per-core layer cfg 派生.
+
+    H/W 不切, 每核 NUM_COUT 是整图 cout 的一段 (PE col 维 NUM_COL block 整除分配).
+    适用场景: H_OUT × W_OUT 很小 + cout >= n_split × NUM_COL (e.g., FC W=H=1).
+    上层 IFM 必须是 mode A 集中存放, 4 核共享拉同一份 IFM.
+
+    返回 cfg dict + 新增 keys:
+        '_COUT_SLICE_COUT_START' : per-core cout 段起点 (cout idx)
+        '_COUT_SLICE_COUT_FULL'  : 整层 cout (用于 rdma 切片 / OFM stitch)
+    """
+    # 延迟 import (避免顶层 circular dep): mesh_cmd → hw_files
+    import mesh_cmd as _mc
+    seg_starts, seg_widths, seg_cs = _mc.compute_cout_segments(NUM_COUT_full, n_split)
+    my_cout       = seg_widths[my_core]
+    my_cout_start = seg_starts[my_core]
+
+    cfg = derive_layer_cfg(
+        H_IN=H_IN, W_IN=W_IN, K=K,
+        NUM_CIN=NUM_CIN, NUM_COUT=my_cout, stride=stride,
+        pad_top=pad_top, pad_left=pad_left,
+        TILE_W=TILE_W, KY=KY,
+        **kwargs,
+    )
+
+    cfg['_COUT_SLICE_COUT_START'] = my_cout_start
+    cfg['_COUT_SLICE_COUT_FULL']  = NUM_COUT_full
+    cfg['_COUT_SLICE_MY_COUT']    = my_cout
     return cfg
 
 

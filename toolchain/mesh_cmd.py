@@ -234,6 +234,110 @@ def write_odma_sg_cmd_list(out_path: str, cmds: list, header_lines: list = None)
 
 
 # ============================================================================
+# Cout slice 切片 (D 路径退化版): 每核负责 cout 段, 共享整图 IFM
+# ============================================================================
+#
+# 适用场景: H_OUT × W_OUT 很小 + cout >= n_cores × NUM_COL, 且上层 IFM 是 mode A
+#   集中存放 (e.g., L10 FC W=H=1, host preload 整图到 mem[0]).
+#
+# 数据布局:
+#   - IFM 整图集中在 mem[k] (k = ifm_mem_core), 4 核 IDMA 都从 mem[k] 拉相同数据
+#   - WB 按 cout 段切, 每核装自己段 weight 到自己 mem (preload 时各 mem 各装一段)
+#   - OFM 每核写自己 cout 段到自己 mem (host 比对时从 4 mem gather)
+#
+# 跟 W slice 的区别:
+#   - W slice: 每核 W 段不同, IFM 切, 同步 cout
+#   - cout slice: IFM 整图共享, cout 段切
+# ============================================================================
+def compute_cout_segments(cout_full: int, n_split: int, NUM_COL: int = 16) -> tuple:
+    """整 cout 维切 n_split 段, 段宽是 NUM_COL 的整数倍 (除最后段含尾巴).
+
+    Round-robin: 把 cout_slices 个 NUM_COL-block 平均分给 n 核, 余给前 rem 核 +1 个 cs.
+    最后一段 cout 范围含尾巴 (cout_full % NUM_COL ≠ 0 时).
+
+    返回:
+      seg_cout_starts : 每核段起点 (cout idx, NUM_COL 倍数)
+      seg_widths_cout : 每核段实际 cout 通道数 (最后一段可能 < NUM_COL × cs)
+      seg_cs          : 每核 cout_slices 数 (PE col 维 NUM_COL block 数)
+
+    例: cout=528 NUM_COL=16 n=4 → cs_full=33
+        cs/core = [9, 8, 8, 8]
+        starts  = [0, 144, 272, 400]
+        widths  = [144, 128, 128, 128]   (sum=528)
+    """
+    cs_full = (cout_full + NUM_COL - 1) // NUM_COL
+    base_cs = cs_full // n_split
+    rem_cs  = cs_full % n_split
+    seg_cs = [(base_cs + 1) if i < rem_cs else base_cs for i in range(n_split)]
+    seg_cout_starts = [0] * n_split
+    cur = 0
+    for i in range(n_split):
+        seg_cout_starts[i] = cur * NUM_COL
+        cur += seg_cs[i]
+    seg_widths_cout = [
+        seg_cs[i] * NUM_COL if i < n_split - 1
+        else cout_full - seg_cout_starts[i]
+        for i in range(n_split)
+    ]
+    return seg_cout_starts, seg_widths_cout, seg_cs
+
+
+def gen_idma_sg_cmd_list_cout_slice(
+    *,
+    h_in:           int,
+    w_in:           int,
+    cin_slices:     int,
+    ifb_mem_base:   int,
+    ifb_ring_words: int = 0,
+) -> list:
+    """生成 cout slice 模式 IDMA SG cmd list (每核拉相同整图 IFM).
+
+    cout 切下 IFM 全核共享, 整图集中存放在 ifb_mem_base 起 (一般是 mem[0] mode A).
+    每行 IFM 一条 cmd, btt = W_in × cin_slices × 16.
+    """
+    cmds = []
+    sram_offset = 0
+    row_words = w_in * cin_slices
+    for r in range(h_in):
+        sram_offset_eff = (sram_offset % ifb_ring_words) if ifb_ring_words > 0 else sram_offset
+        cmds.append(SgCmd(
+            src_addr    = ifb_mem_base + r * row_words * 16,
+            btt         = row_words * 16,
+            sram_offset = sram_offset_eff,
+            last_cmd    = (r == h_in - 1),
+            name        = f"r{r}_coutSlice",
+        ))
+        sram_offset += row_words
+    return cmds
+
+
+def gen_odma_sg_cmd_list_cout_slice(
+    *,
+    h_out:                int,
+    w_out:                int,
+    cout_slices_per_core: int,
+    ofm_mem_base:         int,
+) -> list:
+    """生成 cout slice 模式 ODMA SG cmd list (每核写自己 cout 段紧凑 layout).
+
+    每核 ODMA 写自己 cout 段到自己 mem 紧凑 layout. 每行 OFM 一条 cmd,
+    btt = W_out × cout_slices_per_core × 16. (注意: cout_slices_per_core 是
+    本核 PE col block 数, 不是整图 cout_slices.)
+    """
+    cmds = []
+    row_words = w_out * cout_slices_per_core
+    for r in range(h_out):
+        cmds.append(OdmaSgCmd(
+            dst_addr    = ofm_mem_base + r * row_words * 16,
+            btt         = row_words * 16,
+            ofb_w_start = 0,
+            last_cmd    = (r == h_out - 1),
+            name        = f"r{r}_coutSlice",
+        ))
+    return cmds
+
+
+# ============================================================================
 # 整图 W 4 等分散布到 4 mem (driver layout 决定)
 # ============================================================================
 def compute_smc_w_segments(W_full: int, n_mem: int) -> tuple:

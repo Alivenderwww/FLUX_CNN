@@ -1529,3 +1529,125 @@ dispatcher 层面消除. 要拿到 30+% 必须改 IP 架构 (axi_mcdma 多 chann
 | Round B (sts 后台 collect) | 203320 | -1.18% | -7.7% | dispatcher main FSM 跳 sts wait |
 | @100 MHz Latency | 2.03 ms | (vs 2.20 ms baseline) | **-7.7%** | |
 | FPS | 492 | (vs 454 baseline) | **+8.4%** | |
+
+> 注: 后续清理 commit `1554928` 把 sim crossbar 改成真 Vivado axi_smc_4to4 IP, ResNet11 cy 从
+> 203320 涨到 217311 (+14000 cy 是 IP 内 register stage 真实开销, 跟硬件部署一致). 下面 Round C 的
+> baseline 用 217311 cy.
+
+---
+
+## 15. Round C — Cout slice 自适应 (2026-05-07) — ResNet11 SMC N=4 cycle 217311 → 210784 (-3.0%)
+
+### 背景: L10 (FC) 单核独跑的浪费
+
+ResNet11 L10 (FC, H_IN=W_IN=1, cin=256, cout=528) 是个特殊层:
+- W=1 不能 W slice (W < n_split × (K+1) = 4 × 2 = 8)
+- 之前 driver 选 `Mode.A_SINGLE` (单核独占 mode A), mask=0001 只 core 0 干活, 其他 3 核空转
+- L10 cy=10022, fire=528 utilization=5.3%, 占总 cy 的 4.6%
+
+### 解决方案: 编译器层面 W/cout 切片自适应
+
+**scheduler.py choose_mode 优先级调整** (新加最高优先级分支):
+
+```python
+# 优先级特例: W 切不动 (e.g. FC W=1) 但 cout 切可行 → cout slice 让 4 核都干活
+if not can_w_slice(layer, n_split) and can_cout_slice(layer, n_split):
+    return (Mode.C_COUT_SLICE, n_split)
+```
+
+之前规则 (基本不变):
+1. 极小 layer (cyc < target/4): A_SINGLE
+2. 默认 W slice
+3. W 切不下兜底 cout slice (实际从未命中, 因为 1 总在前面 catch)
+
+新规则 ResNet11 命中情况:
+- L0~L9 走 W slice (W >= 4 × (K+1))
+- **L10 走 cout slice** (W=1 切不动, cout=528 ≥ 4 × 16 = 64)
+
+### Cout slice 数据流 (硬件零修改)
+
+每核负责整图 H × W, 但 cout 维只算 1/n 段. 4 核共享拉同一份 IFM, 每核写自己 cout 段紧凑 layout.
+
+**前提**: IFM 必须**集中存放**在某个 mem (mode A 或 host preload). 上层 W slice 散布 4 mem 的话,
+cout slice 每核要从 4 mem stitch IFM, cmd 数 4× 膨胀, **当前未支持** (driver 报 NotImplementedError).
+
+**L10 天然满足**: ResNet11 L9 → L10 之间硬件不做的 GlobalAvgPool 由 host 完成, host 把 1×1×256
+flatten 数据 preload 到 mem[0] 当 root layer, IFM 就是集中存放的 (mode A 等价). 不用 driver 做层间 stitch.
+
+cout 段切片 (`mesh_cmd.compute_cout_segments(528, 4)`):
+- core 0: cs[0..9), cout[0:144), 9×16=144 通道
+- core 1: cs[9..17), cout[144:272), 8×16=128 通道
+- core 2: cs[17..25), cout[272:400), 8×16=128 通道
+- core 3: cs[25..33), cout[400:522), 8×16=128 通道 (最后段含尾巴 522-400=122 实际通道, 余 6 PE col 空转)
+- sum=522 ✓
+
+### IDMA / ODMA cmd 形式
+
+cout slice 下 SG cmd 简化 (跟 W slice 跨 mem 多段不同):
+
+| | IDMA cmd (per core, 拉 IFM) | ODMA cmd (per core, 写 OFM) |
+|---|---|---|
+| 数量 | H_IN 条 (每行 1 条) | H_OUT 条 (每行 1 条) |
+| src/dst_addr | 4 核相同, 都指向 mem[ifm_mem_core] | 各核指自己 mem 紧凑段 (cout_per_core × 16 byte/pixel) |
+| btt | W_IN × cin_slices × 16 | W_OUT × my_cs × 16 (按本核段) |
+
+### 改动文件清单 (硬件 0 改)
+
+| 文件 | 改动 |
+|---|---|
+| `toolchain/scheduler.py` | choose_mode 加优先 cout slice 分支 (5 行) |
+| `toolchain/mesh_cmd.py` | 加 `compute_cout_segments` / `gen_idma_sg_cmd_list_cout_slice` / `gen_odma_sg_cmd_list_cout_slice` |
+| `toolchain/hw_files.py` | 加 `derive_cout_slice_cfg` (复用 derive_layer_cfg, 传本核 cout 段) |
+| `toolchain/run_multicore_chain.py` | `build_step_cfg_dict` C_cout_slice 分支 + SMC SG cmd list 生成 + meta 写出 mode='C' / COUT_SEG |
+| `sim/tb_smc/tb_smc_chain.sv` | parse `COUT_SEG_*` + preload_ifb / wb / rdma 加 mode='C' 分支 + check_layer_ofm 加 mode='C' 分支 |
+
+TB 关键改动:
+- preload_ifb mode='C' = mode='A' (整图灌 mem[mode_a_core])
+- preload_wb mode='C': 4 mem 各装自己 cout 段 weight (wb.txt cs-outer layout, 每 cs 占 kk×cin_slices wb-rows)
+- preload_rdma mode='C': bias 切 cout 段 (cs-outer layout, 每 cs 4 word)
+- check_layer_ofm mode='C': 从 4 mem 各读自己 cout 段 stitch 跟整图 NHWC 比对
+
+### 仿真数据
+
+| 指标 | Round B (sim crossbar) | Round B (IP path baseline) | Round C (cout slice) | Δ vs baseline |
+|---|----:|----:|----:|----:|
+| smc_resnet11 总 cy | 203320 | 217311 | **210784** | -3.0% |
+| L10 cy | 10043 | 10022 | **3495** | -65% |
+| L10 mask | 0001 | 0001 | **1111** | 4 核都活 |
+| smc_wslice1 | 4125 | 4701 | 4701 | 0% (无变化) |
+| smc_wslice5 | 20629 | 23493 | 23493 | 0% (无变化) |
+
+### 跟之前 §12 论文优化候选对照
+
+§12 讨论的"低 util ds 层" (L3/L6/L9) 还是没动. cout slice 修的是 L10 单核独跑, 不是 K=1 ds 层的
+PE 阵列空转 (那个是结构性瓶颈, 见 §12 瓶颈 C).
+
+L10 之前算"FC 不影响主体" (10K cy / 217K = 4.6%), 改完 3.5K cy / 211K = 1.7%, 进一步压低 FC 占比.
+
+### Round 总览 (cycle 累计收益)
+
+| Round | ResNet11 cy | Δ vs prev | 累计 vs IP baseline | 关键改动 |
+|---|----:|----:|----:|---|
+| baseline (cleanup, 真 IP path) | 217311 | - | 0% | (起点) |
+| Round C (cout slice 自适应) | **210784** | -3.0% | -3.0% | scheduler choose_mode + driver/TB cout slice 实现 |
+| @100 MHz Latency | 2.11 ms | (vs 2.17 ms baseline) | **-3.0%** | |
+| FPS | 475 | (vs 460 baseline) | **+3.1%** | |
+
+注: Round A/B 的 cy 数 (203K / 205K) 是 sim model crossbar 路径, 真硬件部署应跟 Round C 的 211K 对齐.
+
+### 自适应切片限制 (未来可扩展)
+
+cout slice 当前只支持 IFM 集中存放. ResNet11 仅 L10 命中. 如果未来网络有"中间层 cout 大 H/W 小"
+(典型如 squeeze-and-excite 类), 上层是 W slice 散 4 mem 的话, cout slice 不能用.
+
+要扩展支持需要 driver 加层间 stitch 逻辑 (cmd 数 ×4) 或硬件加 layer 间 redistribute pass. 当前网络
+不需要, 留给未来.
+
+### 下一步: PE 利用率优化 (准备做)
+
+§12 的瓶颈 A/B 已经在 Round A/B 解掉, 剩下:
+- **C (1×1 ds 层 PE 空转)**: 结构性, 需要 RTL/编译器深度改动 (Ky-cout-fold 或小 K 引擎)
+- **D (psum_idle bias prefetch)**: bias_rf ping-pong, 改动局部, 收益 5~8%
+- **A' (layer barrier 软化)**: per-core barrier + 链表 desc, 5~10% (跟数据依赖耦合, 复杂)
+
+下一阶段重点研究 C 和 D, 见 §16 后续章节.

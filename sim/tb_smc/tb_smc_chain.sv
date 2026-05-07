@@ -142,6 +142,12 @@ module tb_smc_chain;
     int     smc_ofm_seg_starts   [0:31][0:NUM_CORES-1];
     int     smc_layer_has_residual[0:31];
 
+    // mode='C' (cout slice) 时每核 cout 段 (driver compute_cout_segments 算)
+    //   COUT_SEG_STARTS[layer][i] = 核 i 负责的 cout 起点 (cout idx)
+    //   COUT_SEG_WIDTHS[layer][i] = 核 i 负责的 cout 段宽 (通道数)
+    int     smc_cout_seg_starts  [0:31][0:NUM_CORES-1];
+    int     smc_cout_seg_widths  [0:31][0:NUM_CORES-1];
+
     // per-(core, layer) sliced RDMA (residual + W slice 时每核独立 rdma_data_c<c>.txt)
     longint core_layer_rdma_base [0:NUM_CORES-1][0:31];
     int     core_layer_rdma_words[0:NUM_CORES-1][0:31];
@@ -196,6 +202,12 @@ module tb_smc_chain;
                         end else if (suffix == "OFM_SEG_STARTS") begin
                             smc_ofm_seg_starts[layer_id][0]=v0; smc_ofm_seg_starts[layer_id][1]=v1;
                             smc_ofm_seg_starts[layer_id][2]=v2; smc_ofm_seg_starts[layer_id][3]=v3;
+                        end else if (suffix == "COUT_SEG_STARTS") begin
+                            smc_cout_seg_starts[layer_id][0]=v0; smc_cout_seg_starts[layer_id][1]=v1;
+                            smc_cout_seg_starts[layer_id][2]=v2; smc_cout_seg_starts[layer_id][3]=v3;
+                        end else if (suffix == "COUT_SEG_WIDTHS") begin
+                            smc_cout_seg_widths[layer_id][0]=v0; smc_cout_seg_widths[layer_id][1]=v1;
+                            smc_cout_seg_widths[layer_id][2]=v2; smc_cout_seg_widths[layer_id][3]=v3;
                         end
                     end
                 end
@@ -419,8 +431,9 @@ module tb_smc_chain;
         else
             base_offset = SMC_INPUT_BASE;   // 不该走到这里 (非 root layer 不需 preload)
 
-        if (smc_layer_mode[layer_idx] == "A") begin
-            // Mode A: 整图存 mem[mode_a_core] 紧凑 (一行 = w_in × cin_slices word)
+        if (smc_layer_mode[layer_idx] == "A" || smc_layer_mode[layer_idx] == "C") begin
+            // Mode A / C: IFB 整图集中存 mem[mode_a_core] 紧凑 (cout slice 时 4 核共享拉同一份).
+            // (一行 = w_in × cin_slices word)
             core_load = smc_layer_mode_a_core[layer_idx];
             base_byte = (core_load * SMC_MEM_STRIDE) + base_offset;
             for (int r = 0; r < h_in; r++)
@@ -431,8 +444,8 @@ module tb_smc_chain;
                         dst_byte  = base_byte + (r * w_in * cin_slices + x * cin_slices + cs) * 16;
                         write_mem_word(dst_byte, ifb_arr[src_w_idx]);
                     end
-            $display("    IFB[%0d] mode A loaded to mem[%0d] @ 0x%h (H=%0d W=%0d cs=%0d)",
-                     layer_idx, core_load, base_byte, h_in, w_in, cin_slices);
+            $display("    IFB[%0d] mode %s loaded to mem[%0d] @ 0x%h (H=%0d W=%0d cs=%0d)",
+                     layer_idx, smc_layer_mode[layer_idx], core_load, base_byte, h_in, w_in, cin_slices);
         end else begin
             // W slice: TB 直接读 driver 写到 meta 的 IFM 段 widths/starts (driver 是切片 SOT)
             for (int i = 0; i < NUM_CORES; i++) begin
@@ -456,18 +469,46 @@ module tb_smc_chain;
         end
     endtask
 
-    // WB broadcast 到 4 mem
+    // WB preload:
+    //   mode 'A' / 'W': broadcast 到 4 mem (4 mem 都装相同整图 wb)
+    //   mode 'C': 切 cout 段, 每核装自己段. wb.txt layout 是 cs-outer, 所以核 i 段
+    //             连续 = wb[seg_cs_start[i] × kk × cin_slices : ...].
     task automatic preload_wb_smc(input string layer_dir, input int layer_idx, input int n_words);
         longint base_byte;
+        int kk_e, cins, my_cs_start, my_cs_n, wb_per_cs, my_wb_lo, my_wb_n;
         $readmemh($sformatf("%s/wb.txt", layer_dir), wb_arr);
-        for (int i = 0; i < NUM_CORES; i++) begin
-            base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET;
-            // WB layout: 一行 = NUM_COL × NUM_PE × DATA_WIDTH = 2048 bit = 16 个 BUS_DATA_W word
-            for (int wi = 0; wi < n_words; wi++)
-                for (int sub = 0; sub < 16; sub++) begin
-                    longint dst_byte = base_byte + (wi*16 + sub) * 16;
-                    write_mem_word(dst_byte, wb_arr[wi][sub*BUS_DATA_W +: BUS_DATA_W]);
-                end
+        if (smc_layer_mode[layer_idx] == "C") begin
+            // cout slice: 每核自己段. 整图 cs_total = smc_layer_cout_slices[layer_idx],
+            //   每 cs 占 (kk × cin_slices) 个 wb-rows.
+            kk_e = smc_layer_k[layer_idx] * smc_layer_k[layer_idx];   // K^2
+            cins = smc_layer_cin_slices[layer_idx];
+            wb_per_cs = kk_e * cins;
+            for (int i = 0; i < NUM_CORES; i++) begin
+                // 本核 cs 段: 整图 cs idx [smc_cout_seg_starts[i]/16, .../16 + my_cs_n).
+                //   注: COUT_SEG_STARTS 单位是 cout idx (NUM_COL=16 倍数).
+                my_cs_start = smc_cout_seg_starts[layer_idx][i] / NUM_COL;
+                // my_cs_n = ceil(seg_widths[i] / 16) (最后段含尾巴)
+                my_cs_n = (smc_cout_seg_widths[layer_idx][i] + NUM_COL - 1) / NUM_COL;
+                my_wb_lo = my_cs_start * wb_per_cs;
+                my_wb_n  = my_cs_n   * wb_per_cs;
+                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET;
+                for (int wi = 0; wi < my_wb_n; wi++)
+                    for (int sub = 0; sub < 16; sub++) begin
+                        longint dst_byte = base_byte + (wi*16 + sub) * 16;
+                        write_mem_word(dst_byte, wb_arr[my_wb_lo + wi][sub*BUS_DATA_W +: BUS_DATA_W]);
+                    end
+            end
+        end else begin
+            // mode A / W: broadcast 整图 wb 到 4 mem
+            for (int i = 0; i < NUM_CORES; i++) begin
+                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET;
+                // WB layout: 一行 = NUM_COL × NUM_PE × DATA_WIDTH = 2048 bit = 16 个 BUS_DATA_W word
+                for (int wi = 0; wi < n_words; wi++)
+                    for (int sub = 0; sub < 16; sub++) begin
+                        longint dst_byte = base_byte + (wi*16 + sub) * 16;
+                        write_mem_word(dst_byte, wb_arr[wi][sub*BUS_DATA_W +: BUS_DATA_W]);
+                    end
+            end
         end
     endtask
 
@@ -493,16 +534,30 @@ module tb_smc_chain;
                     write_mem_word(base_byte + i * 16, rdma_arr[i]);
             end
         end else begin
-            // broadcast: 单一 rdma_data.txt 复制 4 份
+            // broadcast: 单一 rdma_data.txt
+            //   mode 'A' / 'W': 4 mem 装相同整图 rdma
+            //   mode 'C': 4 mem 各装自己 cout 段 bias (cs-outer layout, 每 cs 4 word)
             fd = $fopen($sformatf("%s/rdma_data.txt", layer_dir), "r");
             if (fd == 0) return;
             $fclose(fd);
             for (int i = 0; i < 65536; i++) rdma_arr[i] = '0;
             $readmemh($sformatf("%s/rdma_data.txt", layer_dir), rdma_arr);
-            for (int c = 0; c < NUM_CORES; c++) begin
-                base_byte = (c * SMC_MEM_STRIDE) + SMC_RDMA_BASE + layer_idx * SMC_LAYER_RDMA_OFFSET;
-                for (int i = 0; i < n_words; i++)
-                    write_mem_word(base_byte + i * 16, rdma_arr[i]);
+            if (smc_layer_mode[layer_idx] == "C") begin
+                int my_cs_start, my_cs_n;
+                for (int c = 0; c < NUM_CORES; c++) begin
+                    my_cs_start = smc_cout_seg_starts[layer_idx][c] / NUM_COL;
+                    my_cs_n     = (smc_cout_seg_widths[layer_idx][c] + NUM_COL - 1) / NUM_COL;
+                    base_byte = (c * SMC_MEM_STRIDE) + SMC_RDMA_BASE + layer_idx * SMC_LAYER_RDMA_OFFSET;
+                    // bias 段: 每 cs 4 个 128-bit word
+                    for (int i = 0; i < my_cs_n * 4; i++)
+                        write_mem_word(base_byte + i * 16, rdma_arr[my_cs_start * 4 + i]);
+                end
+            end else begin
+                for (int c = 0; c < NUM_CORES; c++) begin
+                    base_byte = (c * SMC_MEM_STRIDE) + SMC_RDMA_BASE + layer_idx * SMC_LAYER_RDMA_OFFSET;
+                    for (int i = 0; i < n_words; i++)
+                        write_mem_word(base_byte + i * 16, rdma_arr[i]);
+                end
             end
         end
     endtask
@@ -627,6 +682,34 @@ module tb_smc_chain;
                             mismatches++;
                         end
                     end
+        end else if (smc_layer_mode[layer_idx] == "C") begin
+            // Mode C cout slice: 每核 OFM 在自己 mem 紧凑 (H × W × my_cs words),
+            // 整图 NHWC = 核 i 段 cs[my_cs_start[i] : my_cs_start[i] + my_cs_n[i]).
+            int my_cs_start, my_cs_n;
+            for (int i = 0; i < NUM_CORES; i++) begin
+                my_cs_start = smc_cout_seg_starts[layer_idx][i] / NUM_COL;
+                my_cs_n     = (smc_cout_seg_widths[layer_idx][i] + NUM_COL - 1) / NUM_COL;
+                base_byte = (i * SMC_MEM_STRIDE) + base_offset;
+                for (int r = 0; r < h_out; r++)
+                    for (int x = 0; x < w_out; x++)
+                        for (int local_cs = 0; local_cs < my_cs_n; local_cs++) begin
+                            int exp_idx;
+                            longint mem_byte;
+                            int full_cs;
+                            full_cs  = my_cs_start + local_cs;
+                            exp_idx  = r * w_out * cout_slices + x * cout_slices + full_cs;
+                            mem_byte = base_byte
+                                     + (r * w_out * my_cs_n + x * my_cs_n + local_cs) * 16;
+                            expected = exp_arr[exp_idx];
+                            got      = read_mem_word(mem_byte)[NUM_COL*DATA_WIDTH-1:0];
+                            if (got !== expected) begin
+                                if (mismatches < 5)
+                                    $display("    %s OFM(C) r=%0d x=%0d mem=%0d cs=%0d (full=%0d): exp=%h got=%h @ 0x%h",
+                                             label, r, x, i, local_cs, full_cs, expected, got, mem_byte);
+                                mismatches++;
+                            end
+                        end
+            end
         end else begin
             // W slice: TB 直接读 driver 写到 meta 的 OFM 段 widths/starts
             for (int i = 0; i < NUM_CORES; i++) begin

@@ -15,6 +15,12 @@
 // 依赖), 略优先于 wdma. ocmd 介于两者之间: 频度高 (每行 OFM 1-N 条 cmd),
 // 单次很短 (1 beat = 16 byte cmd 元数据).
 //
+// Round E (2026-05-07): 加 WDMA 饥饿提优先级机制. WDMA 等待 ≥ STARVE_THRESH
+// 拍后强制 grant 一次 (跳到优先级最高), 防 IDMA 持续占用 mm2s 让 WDMA 饿死.
+// 实测 Round B baseline ResNet11 L0 wgt_st=10500 / 总 cy=45886, 23% cycle WDMA 等
+// IDMA 让位. 加饥饿机制让 wdma 周期性插入 ~每 32 cy 抢一次, 减少 mac_array
+// stall (act_id 跟 wgt_st 配对掉同样多).
+//
 // data / sts 各一个 owner FIFO (深度 8). owner 编码: 2'd0=idma, 2'd1=wdma,
 // 2'd2=rdma, 2'd3=ocmd. push on cmd_fire, pop 各异步.
 //
@@ -99,12 +105,27 @@ module mm2s_arb #(
     localparam int PTR_W = $clog2(OFIFO_DEPTH);
     localparam int CNT_W = $clog2(OFIFO_DEPTH + 1);
 
+    // Round E: WDMA 饥饿门槛 (cycle 数). 等 ≥ STARVE_THRESH 拍没 grant → 提优先级到最高.
+    // 选 32 是个折中: 太短让 WDMA 频繁打断 IDMA, 太长 WDMA 仍饿. 实测可调.
+    localparam int STARVE_THRESH = 32;
+
     // =========================================================================
-    // CMD 仲裁 (priority): idma > rdma > ocmd > wdma
+    // WDMA 饥饿计数 (Round E)
+    //   wdma 有 cmd 等且没 grant → cnt += 1
+    //   wdma fire → cnt 清零
+    //   wdma 没 cmd → cnt 清零 (没活就不算饿)
+    // =========================================================================
+    logic [$clog2(STARVE_THRESH+1)-1:0] r_wdma_wait_cnt;
+    logic wdma_starve;
+    assign wdma_starve = (r_wdma_wait_cnt >= STARVE_THRESH);
+
+    // =========================================================================
+    // CMD 仲裁: 默认 idma > rdma > ocmd > wdma. WDMA 饿到阈值时强制 grant 一次.
     // =========================================================================
     logic [OWN_W-1:0] cmd_owner;
     always_comb begin
-        if      (idma_cmd_tvalid) cmd_owner = 2'd0;
+        if      (wdma_starve && wdma_cmd_tvalid) cmd_owner = 2'd1;   // ★ WDMA 饿了优先抢
+        else if (idma_cmd_tvalid) cmd_owner = 2'd0;
         else if (rdma_cmd_tvalid) cmd_owner = 2'd2;
         else if (ocmd_cmd_tvalid) cmd_owner = 2'd3;
         else                       cmd_owner = 2'd1;     // wdma 默认
@@ -133,6 +154,21 @@ module mm2s_arb #(
     assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
     assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
     assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+
+    // =========================================================================
+    // r_wdma_wait_cnt: WDMA 累计等待 cycle (Round E)
+    //   - WDMA 有 cmd 等待但 cmd_owner 不是 WDMA → cnt += 1
+    //   - WDMA fire (cmd_tready 拨高那拍) → cnt 清零
+    //   - WDMA 没 cmd → cnt 清零 (idle 不算饿)
+    //   计数饱和到 STARVE_THRESH (再涨没意义).
+    // =========================================================================
+    logic wdma_fire;
+    assign wdma_fire = wdma_cmd_tvalid && wdma_cmd_tready;
+    always_ff @(posedge clk) begin
+        if (!rst_n) r_wdma_wait_cnt <= '0;
+        else if (wdma_fire || !wdma_cmd_tvalid) r_wdma_wait_cnt <= '0;
+        else if (r_wdma_wait_cnt < STARVE_THRESH) r_wdma_wait_cnt <= r_wdma_wait_cnt + 1'b1;
+    end
 
     // =========================================================================
     // owner FIFO × 2 (data / sts), each depth = OFIFO_DEPTH, width = OWN_W

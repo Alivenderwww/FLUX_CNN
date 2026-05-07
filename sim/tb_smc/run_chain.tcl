@@ -43,7 +43,8 @@ vlog -work xil_defaultlib \
 
 # RTL
 vlog -sv -work work -mfcu -suppress 2902,13314 \
-    +incdir+../../RTL \
+    +incdir+../../RTL +define+IDEAL_SMC \
+    ../../RTL/AXI4/axi_crossbar_4to4_sim.sv \
     ../../RTL/std_rf.sv \
     ../../RTL/sdp.sv \
     ../../RTL/sram_model.sv \

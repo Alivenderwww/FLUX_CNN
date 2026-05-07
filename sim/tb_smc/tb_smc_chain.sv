@@ -297,6 +297,35 @@ module tb_smc_chain;
     endtask
 
     // ----------------- mem 写口 helper -----------------
+    // PE 利用率 profile dump (layer-level diff)
+    //   act_idle = mac_array 等 line_buffer 给数据 (上游慢, 通常 IDMA bound)
+    //   wgt_stall = wgt_buffer 给但 mac 拒收 (下游慢, 跟 act_idle 配对 = 反压)
+    //   psum_idle = mac_array setup/cold-load + bubble
+    //   acc_idle = parf_accum drain 等 ofb_writer/SDP 消耗
+    task automatic dump_pe_profile(input int c, input int l, input int layer_cycles, input int desc_count,
+                                    input int act_fire, input int act_stall, input int act_idle,
+                                    input int wgt_stall, input int wgt_idle,
+                                    input int psum_stall, input int psum_idle,
+                                    input int acc_idle,
+                                    input int s_fire, input int s_act_st, input int s_act_id,
+                                    input int s_wgt_st, input int s_wgt_id,
+                                    input int s_psm_st, input int s_psm_id, input int s_acc_id);
+        int d_fire, d_act_st, d_act_id, d_wgt_st, d_wgt_id, d_psm_st, d_psm_id, d_acc_id;
+        if (desc_count == 0) return;
+        d_fire   = act_fire   - s_fire;
+        d_act_st = act_stall  - s_act_st;
+        d_act_id = act_idle   - s_act_id;
+        d_wgt_st = wgt_stall  - s_wgt_st;
+        d_wgt_id = wgt_idle   - s_wgt_id;
+        d_psm_st = psum_stall - s_psm_st;
+        d_psm_id = psum_idle  - s_psm_id;
+        d_acc_id = acc_idle   - s_acc_id;
+        $display("    C%0d L%0d cy=%0d fire=%0d util=%.1f%% act_st=%0d act_id=%0d wgt_st=%0d wgt_id=%0d psm_st=%0d psm_id=%0d acc_id=%0d",
+                 c, l, layer_cycles, d_fire,
+                 (real'(d_fire) / real'(layer_cycles)) * 100.0,
+                 d_act_st, d_act_id, d_wgt_st, d_wgt_id, d_psm_st, d_psm_id, d_acc_id);
+    endtask
+
     // 写 byte_addr 处的一个 BUS_DATA_W word 到 mem[mem_id]
     //   mem_id 由 byte_addr[25:24] 决定 (跟 SMC layout 一致)
     //   mem 内 word index = (byte_addr & 0x00FFFFFF) / 16
@@ -370,14 +399,17 @@ module tb_smc_chain;
             $display("    IFB[%0d] mode A loaded to mem[%0d] @ 0x%h (H=%0d W=%0d cs=%0d)",
                      layer_idx, core_load, base_byte, h_in, w_in, cin_slices);
         end else begin
-            // W slice: 切 N 段 (前 N-1 = W/N, 最后段拿余数)
+            // W slice: 切 N 段 (Round-A 公平切片: 余数分散给前 rem 核, 跟 driver 一致)
             b = w_in / NUM_CORES;
-            for (int i = 0; i < NUM_CORES; i++) begin
-                seg_widths[i] = b;
-                seg_starts[i] = i * b;
-            end
             rem = w_in - b * NUM_CORES;
-            seg_widths[NUM_CORES-1] += rem;
+            begin
+                int _cur = 0;
+                for (int i = 0; i < NUM_CORES; i++) begin
+                    seg_widths[i] = (i < rem) ? (b + 1) : b;
+                    seg_starts[i] = _cur;
+                    _cur += seg_widths[i];
+                end
+            end
 
             for (int i = 0; i < NUM_CORES; i++) begin
                 base_byte = (i * SMC_MEM_STRIDE) + base_offset;
@@ -567,14 +599,17 @@ module tb_smc_chain;
                         end
                     end
         end else begin
-            // W slice: 整图按 W 4 等分散布 4 mem
+            // W slice: 整图按 W 4 切 (Round-A 公平切片: 余数分散给前 rem 核)
             b = w_out / NUM_CORES;
-            for (int i = 0; i < NUM_CORES; i++) begin
-                seg_widths[i] = b;
-                seg_starts[i] = i * b;
-            end
             rem = w_out - b * NUM_CORES;
-            seg_widths[NUM_CORES-1] += rem;
+            begin
+                int _cur = 0;
+                for (int i = 0; i < NUM_CORES; i++) begin
+                    seg_widths[i] = (i < rem) ? (b + 1) : b;
+                    seg_starts[i] = _cur;
+                    _cur += seg_widths[i];
+                end
+            end
 
             for (int r = 0; r < h_out; r++)
                 for (int i = 0; i < NUM_CORES; i++) begin
@@ -611,6 +646,16 @@ module tb_smc_chain;
         longint t_layer_start;
         logic [NUM_CORES-1:0] expected_done_mask;
         int     layer_cycles;
+
+        // PE 利用率 snapshot (4 cores)
+        int snap_act_fire [NUM_CORES];
+        int snap_act_stall[NUM_CORES];
+        int snap_act_idle [NUM_CORES];
+        int snap_wgt_stall[NUM_CORES];
+        int snap_wgt_idle [NUM_CORES];
+        int snap_psum_stall[NUM_CORES];
+        int snap_psum_idle[NUM_CORES];
+        int snap_acc_idle [NUM_CORES];
 
         // 从 +CASE_DIR=xxx 命令行参数读取 case 目录, 否则默认 wslice1
         if (!$value$plusargs("CASE_DIR=%s", case_dir))
@@ -677,10 +722,100 @@ module tb_smc_chain;
                 if (core_layer_desc_count[c][l] > 0)
                     write_layer_start(CORE_ID_W'(c));
 
+            // PE 利用率 profile snapshot (start_layer 之后立即 snapshot)
+            // generate block 必须静态索引, 4 cores 写死展开
+            snap_act_fire [0] = u_dut.gen_core[0].u_core.u_mac_array.hs_act_fire;
+            snap_act_stall[0] = u_dut.gen_core[0].u_core.u_mac_array.hs_act_stall;
+            snap_act_idle [0] = u_dut.gen_core[0].u_core.u_mac_array.hs_act_idle;
+            snap_wgt_stall[0] = u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_stall;
+            snap_wgt_idle [0] = u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_idle;
+            snap_psum_stall[0]= u_dut.gen_core[0].u_core.u_mac_array.hs_psum_stall;
+            snap_psum_idle[0] = u_dut.gen_core[0].u_core.u_mac_array.hs_psum_idle;
+            snap_acc_idle [0] = u_dut.gen_core[0].u_core.u_ofb_writer.hs_acc_idle;
+            snap_act_fire [1] = u_dut.gen_core[1].u_core.u_mac_array.hs_act_fire;
+            snap_act_stall[1] = u_dut.gen_core[1].u_core.u_mac_array.hs_act_stall;
+            snap_act_idle [1] = u_dut.gen_core[1].u_core.u_mac_array.hs_act_idle;
+            snap_wgt_stall[1] = u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_stall;
+            snap_wgt_idle [1] = u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_idle;
+            snap_psum_stall[1]= u_dut.gen_core[1].u_core.u_mac_array.hs_psum_stall;
+            snap_psum_idle[1] = u_dut.gen_core[1].u_core.u_mac_array.hs_psum_idle;
+            snap_acc_idle [1] = u_dut.gen_core[1].u_core.u_ofb_writer.hs_acc_idle;
+            snap_act_fire [2] = u_dut.gen_core[2].u_core.u_mac_array.hs_act_fire;
+            snap_act_stall[2] = u_dut.gen_core[2].u_core.u_mac_array.hs_act_stall;
+            snap_act_idle [2] = u_dut.gen_core[2].u_core.u_mac_array.hs_act_idle;
+            snap_wgt_stall[2] = u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_stall;
+            snap_wgt_idle [2] = u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_idle;
+            snap_psum_stall[2]= u_dut.gen_core[2].u_core.u_mac_array.hs_psum_stall;
+            snap_psum_idle[2] = u_dut.gen_core[2].u_core.u_mac_array.hs_psum_idle;
+            snap_acc_idle [2] = u_dut.gen_core[2].u_core.u_ofb_writer.hs_acc_idle;
+            snap_act_fire [3] = u_dut.gen_core[3].u_core.u_mac_array.hs_act_fire;
+            snap_act_stall[3] = u_dut.gen_core[3].u_core.u_mac_array.hs_act_stall;
+            snap_act_idle [3] = u_dut.gen_core[3].u_core.u_mac_array.hs_act_idle;
+            snap_wgt_stall[3] = u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_stall;
+            snap_wgt_idle [3] = u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_idle;
+            snap_psum_stall[3]= u_dut.gen_core[3].u_core.u_mac_array.hs_psum_stall;
+            snap_psum_idle[3] = u_dut.gen_core[3].u_core.u_mac_array.hs_psum_idle;
+            snap_acc_idle [3] = u_dut.gen_core[3].u_core.u_ofb_writer.hs_acc_idle;
+
             wait ((done_per_core & expected_done_mask) == expected_done_mask);
             layer_cycles = ($time - t_layer_start) / 10;
             $display("  Layer %0d done @ t=%0t (cycles=%0d, mask=%b)",
                      l, $time, layer_cycles, expected_done_mask);
+
+            // PE 利用率 profile dump (per-core diff)
+            //   act_idle = mac_array 等 line_buffer 给数据 (上游慢, 通常 IDMA bound)
+            //   wgt_stall = wgt_buffer 给但 mac 拒收 (下游慢, 跟 act_idle 配对 = 反压)
+            //   psum_idle = mac_array setup/cold-load + bubble
+            //   acc_idle = parf_accum drain 等 ofb_writer/SDP 消耗 (= 大 H_OUT layer 主要等)
+            // generate block 必须静态索引, 4 cores 展开 dump (snap_* 作为 input 传)
+            dump_pe_profile(0, l, layer_cycles, core_layer_desc_count[0][l],
+                u_dut.gen_core[0].u_core.u_mac_array.hs_act_fire,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_act_stall,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_act_idle,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_stall,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_wgt_idle,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_psum_stall,
+                u_dut.gen_core[0].u_core.u_mac_array.hs_psum_idle,
+                u_dut.gen_core[0].u_core.u_ofb_writer.hs_acc_idle,
+                snap_act_fire[0], snap_act_stall[0], snap_act_idle[0],
+                snap_wgt_stall[0], snap_wgt_idle[0],
+                snap_psum_stall[0], snap_psum_idle[0], snap_acc_idle[0]);
+            dump_pe_profile(1, l, layer_cycles, core_layer_desc_count[1][l],
+                u_dut.gen_core[1].u_core.u_mac_array.hs_act_fire,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_act_stall,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_act_idle,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_stall,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_wgt_idle,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_psum_stall,
+                u_dut.gen_core[1].u_core.u_mac_array.hs_psum_idle,
+                u_dut.gen_core[1].u_core.u_ofb_writer.hs_acc_idle,
+                snap_act_fire[1], snap_act_stall[1], snap_act_idle[1],
+                snap_wgt_stall[1], snap_wgt_idle[1],
+                snap_psum_stall[1], snap_psum_idle[1], snap_acc_idle[1]);
+            dump_pe_profile(2, l, layer_cycles, core_layer_desc_count[2][l],
+                u_dut.gen_core[2].u_core.u_mac_array.hs_act_fire,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_act_stall,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_act_idle,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_stall,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_wgt_idle,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_psum_stall,
+                u_dut.gen_core[2].u_core.u_mac_array.hs_psum_idle,
+                u_dut.gen_core[2].u_core.u_ofb_writer.hs_acc_idle,
+                snap_act_fire[2], snap_act_stall[2], snap_act_idle[2],
+                snap_wgt_stall[2], snap_wgt_idle[2],
+                snap_psum_stall[2], snap_psum_idle[2], snap_acc_idle[2]);
+            dump_pe_profile(3, l, layer_cycles, core_layer_desc_count[3][l],
+                u_dut.gen_core[3].u_core.u_mac_array.hs_act_fire,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_act_stall,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_act_idle,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_stall,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_wgt_idle,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_psum_stall,
+                u_dut.gen_core[3].u_core.u_mac_array.hs_psum_idle,
+                u_dut.gen_core[3].u_core.u_ofb_writer.hs_acc_idle,
+                snap_act_fire[3], snap_act_stall[3], snap_act_idle[3],
+                snap_wgt_stall[3], snap_wgt_idle[3],
+                snap_psum_stall[3], snap_psum_idle[3], snap_acc_idle[3]);
             // 等 axi_dm S2MM 内 in-flight burst 完全 commit (sts_fire 早于 mem 实际写)
             repeat (200) @(posedge clk);
 

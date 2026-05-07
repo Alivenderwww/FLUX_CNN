@@ -408,20 +408,29 @@ def write_odma_sg_cmd_list(out_path: str, cmds: list, header_lines: list = None)
 # Phase 7 helper: 整图 W 4 等分散布到 4 mem (driver layout 决定)
 # ============================================================================
 def compute_smc_w_segments(W_full: int, n_mem: int) -> tuple:
-    """整图 W 平均分 n_mem 段 (前 n-1 核 = W_full // n_mem, 最后一核拿余数).
+    """整图 W 切 n_mem 段 (核间负载均衡: 余数分散给前 rem 个核, 每个 +1 列).
 
-    跟 hw_files.compute_w_slice_geom 内 OFM 切法一致:
-      w_out_per = w_out_full // n_split
-      core[i].my_w_out = w_out_per (i < n-1) else (w_out_full - i*w_out_per)
-    这样 driver IFM/OFM 段散布跟 compute_w_slice_geom 算的本核 W slice 直接对应.
+    Round-A optimization (2026-05-07): 旧版"余数全给末核"让 W_full=135 切 4 段 = [33,33,33,36],
+    末核多 9% cells, layer barrier 让前 3 核闲等末核, util 损失 5~8%.
+    新版"余数分散"让 W=135 = [34,34,34,33], 段宽差距 ≤ 1 col (3% vs 9%), 整网更均衡.
 
-    例: W=33, n_mem=4 → widths=[8,8,8,9], starts=[0,8,16,24]
-        W=32, n_mem=4 → widths=[8,8,8,8], starts=[0,8,16,24]
+    跟 hw_files.compute_w_slice_geom 内 OFM 切法保持一致 (同公式):
+      base = W_full // n; rem = W_full % n
+      core[i] width = base+1 if i<rem else base
+      core[i] start = i*(base+1) if i<rem else rem*(base+1) + (i-rem)*base
+
+    例: W=135, n=4 → widths=[34,34,34,33], starts=[0,34,68,102]
+        W=33,  n=4 → widths=[9,8,8,8],     starts=[0,9,17,25]
+        W=32,  n=4 → widths=[8,8,8,8],     starts=[0,8,16,24]
     """
     base = W_full // n_mem
-    seg_widths = [base] * n_mem
-    seg_widths[-1] += W_full - base * n_mem    # 余数全给最后一核
-    seg_w_starts = [i * base for i in range(n_mem)]
+    rem  = W_full %  n_mem
+    seg_widths  = [(base + 1) if i < rem else base for i in range(n_mem)]
+    seg_w_starts = [0] * n_mem
+    cur = 0
+    for i in range(n_mem):
+        seg_w_starts[i] = cur
+        cur += seg_widths[i]
     return seg_w_starts, seg_widths
 
 

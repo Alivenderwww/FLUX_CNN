@@ -1232,3 +1232,205 @@ SMC + NUMA 218K cycles 接近 4-DDR PoC 196K (10% 慢, 主要因 axi_crossbar_4t
 | `sim/tb_core_dma/` | 单核 TB + chained regression |
 | `sim/tb_multicore/` | 多核 smoke TB (待修后可用) |
 | `toolchain/` | 编译器 / 数据生成 / 回归 |
+
+---
+
+## 11. 综合时序优化 (2026-05-06 ~ 05-07) — Fmax 60→142.8 MHz
+
+### 6 轮迭代 (xc7k325tffg900-2 N=4 synth-only)
+
+| Round | WNS (ns) | Fmax (MHz) | clock target | 主要改动 |
+|---|---:|---:|---:|---|
+| 0 | -6.835 | 60   | 100 MHz | (基线, BRAM 484 爆 445) |
+| 1 | -4.345 | 70   | 100 | odma_sg_dispatcher 16-bit 除法 → 累加器 |
+| 2 | -1.076 | 89   | 100 | SDP 1-stage pipeline (DSP48 input + M reg) |
+| 3 | +0.781 | 108.5| 100 | ofb_writer sb_raddr 用累加器替换 2 个 cascade DSP48 mult |
+| 4 | +0.300 | 129.9| 125 | SDP 拆 stage 2a/2b (round+shift / clip+trunc 分两拍) |
+| 5 | +0.439 | 141.6| 133 | ring_full 寄存器化 + driver OFB 留 1 行 slack |
+| 6 | +0.196 | 142.8| 138.9 | line_buffer rows_needed 寄存器化 (跟 y_row_base 同步 update) |
+
+资源 (R6 后): BRAM 290/445 (65%), LUT 162K/203K (76%), DSP 320/840 (38%).
+
+### 停止 R7 的 ROI 评估
+
+新 critical path: `parf_accum/fill_tile_cnt → cur_valid_w_fill → wr_is_last_col → drain_stall_fill →
+psum_in_ready → wgt_buffer/wgt_addr → WB`, 17 levels (CARRY4=3 + LUT6×9), logic 仅 1.4 ns + route
+5.0 ns (78%). routing dominate, P&R phys_opt 可能改善, 纯 logic 优化 ROI 有限.
+
+经验完整记录在 `memory/project_timing_optimization.md`.
+
+---
+
+## 12. ResNet11 PE 利用率分析 (2026-05-07) — 多核才暴露的瓶颈
+
+### SMC N=4 layer-by-layer profile
+
+TB 加 `dump_pe_profile` 输出每核每层 fire/stall/idle 计数. 信号语义:
+- **`act_idle`**: mac_array 等 line_buffer 给数据 (上游慢, 通常 IDMA 拉数据 bound)
+- **`wgt_stall`**: wgt_buffer 给但 mac 拒收 (下游慢, 跟 act_idle 配对 = valid/ready 反压一对)
+- **`psum_idle`**: mac_array 没产出 (mac_array 流水填充 + cs 切换 prefetch + bias_rf prefetch 4 拍)
+- **`acc_idle`**: parf_accum drain 等 ofb_writer 消耗
+
+| L | Name | cycles | C0 util | C3 util | act_idle | psum_idle | acc_idle |
+|---|------|----:|----:|----:|----:|----:|----:|
+| 0 | Patch (s2d K=1 H=240) | 43114 | 73.5% | **80.2%** | 5754 | 10856 | 31444 |
+| 1 | L1.B1.C1 (K=3 s=2) | 24911 | 73.7% | 73.7% | 5617 | 5972 | 21962 |
+| 2 | L1.B1.C2 (K=3 s=1) | 20174 | **91.0%** | 91.0% | 857 | 1235 | 17202 |
+| 3 | **L1.B2.ds (K=1 s=2)** | 26956 | **7.6%** | 7.6% | C2 21984 | 24337 | 22120 |
+| 4 | L2.B1.C1 (K=3 s=2) | 11985 | 72.1% | **90.1%** | 79~764 | 2766 | 7180 |
+| 5 | L2.B1.C2 (K=3 s=1) | 24518 | 70.5% | 88.1% | 1578 | 6659 | 17319 |
+| 6 | **L2.B2.ds (K=1 s=2)** | 11401 | **8.4%** | 10.5% | C1 8422 | 9562 | 7959 |
+| 7 | L3.B1.C1 (K=3 s=2) | 12860 | 67.2% | 84.0% | 79 | 3641 | 7656 |
+| 8 | L3.B1.C2 (K=3 s=1) | 27707 | 62.4% | 78.0% | 3021 | 9848 | 19238 |
+| 9 | L3.B2.ds (K=1 s=2) | 4415 | 21.7% | 27.2% | 1346 | 2876 | 1474 |
+| 10 | FC | 10045 | 5.3% | (idle) | 43 | 9373 | 906 |
+| **TOTAL** | | **220286** | | | | | |
+
+### 多核才暴露的 4 类瓶颈
+
+#### 瓶颈 A: 核间几何切片不均 (边界核 W 段更宽)
+
+**现象**: L0 cycles=43114 内 C3 util 80.2% 比 C0..C2 73.5% 高 ≈ 9%. 这种"末核多干"在所有 W 不能整除 4 的层都出现.
+
+**根因**: driver `compute_smc_w_segments(W_full, n=4)` 切片用 floor 除法, 余数全给最后核.
+  例如 L0 W_OUT=135: 135÷4=33 余 3, 段宽 = [33, 33, 33, 36], 末核 C3 多 3 列 (9% 多).
+  L1.B1.C1 W_OUT=68: 68÷4=17 整除, 段宽 = [17,17,17,17], 4 核 fire 数完全相同.
+
+**反映在 cycle**: layer barrier 等最慢核 (C3 干完才算 layer done), 所有核 cycles 计数对齐到 C3 done.
+  C3 cycles 内 fire 多 (cells/yout 多 3) → util 高.
+  C0..C2 cycles 内 fire 少 (cells/yout 少) → cycle 末段闲置 → util 低.
+
+**优化**: 切片改成"余数分散给前 N 核"(每核 +1, 最大差距 ≤ 1 列).
+  L0 改 [34,34,34,33] → 差距 1/34 ≈ 3% (vs 现在 3/33 ≈ 9%).
+  整网估收益 5~8% (avg util 上升).
+
+#### 瓶颈 B: 中间核跨内存路由开销 (act_idle 跨核分布不均)
+
+**现象**: L3 (K=1 s=2) 4 核 act_idle 分布 = [12499, 20181, 21984, 12632]. 中间核 C1/C2
+比边界核 C0/C3 多等 7000~9000 cycle 数据.
+
+**根因**: 跟瓶颈 A **完全不同**. C1/C2 的 W slice 段恰好横跨两块 mem 的边界 (e.g. C1 在 W=[34:67]
+跨 mem[0]=[0:34) 和 mem[1]=[34:68)), IDMA 一行需要发 2 条 SG 命令 (per_row=2), 两条命令
+在 IDMA SG 调度器内 **串行执行** (无双 outstanding), 中间有 turnaround 延迟累积.
+C0/C3 的段都在单块 mem 内 (per_row=1), 一拍 1 命令快得多.
+
+**反映在 cycle**: 中间核 IDMA 拉数据慢 → mac_array act_idle 多 → util 低. 边界核拉得快, util 高.
+
+**跟瓶颈 A 的区别**:
+- A 是 **几何不均匀** (静态切片算法不公平), C3 多干; B 是 **动态网络开销** (跨 mem 串行), C1/C2 多等.
+- A 表现在 fire 数差异 (干多/干少); B 表现在 idle 数差异 (等多/等少).
+- A 修在 driver (改切片算法); B 修在 RTL (IDMA SG dispatcher 双 outstanding) 或 driver (避免段跨 mem).
+
+**优化**: IDMA SG dispatcher 加双 outstanding (一条 cmd 在 axi_dm S2MM 时同时发下条 cmd), 让 cross-mem 段并行.
+  预期 L3/L6 整体收益 30~40% (BW 翻倍).
+
+#### 瓶颈 C: 1×1 stride=2 ds 层 PE 阵列空转 (结构性瓶颈)
+
+**现象**: L1.B2.ds / L2.B2.ds / L3.B2.ds 单核 util 仅 7.6% / 8.4% / 21.7%. 单核也一样
+(单核 tb_core_dma 测 18.76% / 29.49% / 56.68%, SMC 因 W slice 切 4 wallclock 减但 util 不变).
+
+**根因**: K=1, cin_slices=1, cout_slices=1 时 mac_array (16 PE × 16 col = 256 MAC) 一拍只用
+**16 PE × 16 col 子集 = 16 个 PE** (= cin × cout = 1×1 PE 同时算), 240 PE 完全空转. 这是 mac_array
+针对 K×K 大卷积的硬件结构, 跟 ds 1×1 不匹配 (PE 利用率天花板 = 1/16 = 6.25%, 加点流水开销).
+
+**反映在 cycle**: act_idle 大 (line_buffer 很快出, mac_array 一拍消耗 1 cell, 但 mac fire 数固定 = ofm pixels),
+不是 IDMA 慢, 是 mac_array 内部带宽不够利用.
+
+**优化** (按改动量排序):
+1. **Ky-fold 启用** (driver 已支持): K=1 cin=16 时折成 cin_fake=16×K=16 让 PE 行铺满. **但 ds K=1 cin=16
+   已经满 PE 行, 无法折. 只能 cout-fold 但当前不支持.**
+2. **小 K 专用 1D MAC 引擎**: 跟 16×16 阵列并行, ds layer 走小引擎. 改动大.
+3. **算法层合并 ds 跟相邻层**: 数学合并 ds 1×1 + B1.C1 3×3 → 单层 conv. 编译器侧改动.
+
+#### 瓶颈 D: cs 切换 / mac_array 启动空泡 (psum_idle)
+
+**现象**: 所有层 psm_idle = 5972~24337 cycle. L1.B1.C1 占 24%, L3 占 90%. 主因 mac_array 流水填充
++ cs 切换时 wgt/bias prefetch.
+
+**根因 1**: bias_rf 在 cs 切换时 4 拍 SRAM 读 prefetch 16×INT32, 期间 `bias_ready=0` mac_array stall.
+**根因 2**: mac_array 启动有 K+几拍空泡 (流水填充).
+**根因 3**: wgt_buffer 已有 ping-pong (`load_caught_up` 跟 rounds_ahead), cs 切换无 wgt prefetch idle.
+
+**流水化解掉吗**: **可以, 但收益有限**.
+- bias_rf 加 ping-pong (双 RF 各持一组 16×INT32), cs N 用 RF[A] 时后台预加载 cs N+1 到 RF[B], 切换无 idle.
+  每 cs 切换省 4 拍. L0 cs=4 切换 3 次 = 12 cy/yout × 240 yout = 2880 cy/core. 但 psm_idle 实测 10856 cy,
+  bias 占 ~25% (~3000 cy), 其他 75% 是流水填充和 drain 同步.
+- mac_array 启动空泡 fundamental, 流水加深反而更糟.
+- 整网估 bias ping-pong 收益 5~8%.
+
+### 优化优先级 (按 ROI 排序, 准备论文方案)
+
+| 优化 | 改动量 | 预期整网收益 | 论文价值 |
+|---|---|---:|---|
+| **A. 切片余数分散** (driver) | 5 行 Python | +5~8% | 中 (调度公平性, 易讲) |
+| **B. IDMA SG 双 outstanding** (RTL) | 50 行 | +10~15% | 高 (跨 mem 流水, NUMA 优化) |
+| **C1. Ky-fold cout 维度** (RTL+driver) | 100 行 | ds 层 +2~3× | 高 (PE 阵列复用) |
+| **C2. 小 K 专用引擎** (架构) | 300+ 行 | ds 层 +5× | 极高 (异构加速器) |
+| **D. bias_rf ping-pong** (RTL) | 30 行 | +5~8% | 中 (流水化深化) |
+
+### 当前状态
+
+- TB profile: `sim/tb_smc/tb_smc_chain.sv` 已加 `dump_pe_profile` task, 每 layer 输出 4 核 fire/stall/idle
+- 数据已收集 (220286 cy ResNet11 SMC N=4)
+- 论文方案候选: A (切片公平) + B (NUMA 流水) + D (流水深化) 是低改动量 RTL/driver 工作; C 是新算法/架构创新点
+
+---
+
+## 13. Round A 切片公平 (2026-05-07) — ResNet11 SMC N=4 cycle 220286 → 205752 (−6.6%)
+
+### 解决方案
+
+**问题**: driver `compute_smc_w_segments` 旧版用 floor 除法 + 余数全给末核, 例 W=135 切 4 → [33,33,33,36],
+末核多 3 列 (9% cells), layer barrier 等末核完成 → 前 3 核闲等, util 损失 5~8%.
+
+**修改**: 余数分散给前 rem 个核, 每核 +1 列. W=135 → [34,34,34,33], 段宽差距 ≤ 1 col (3% vs 9%).
+
+**RTL/driver 改动**:
+- `toolchain/mesh_cmd.py:compute_smc_w_segments` (mem 段 layout)
+- `toolchain/hw_files.py:compute_w_slice_geom` (单层 OFM 切片)
+- `toolchain/hw_files.py:compute_w_slice_chain_geom` (chain 反向递推 OFM 起点)
+- `sim/tb_smc/tb_smc_chain.sv:preload_ifb_smc / check_layer_ofm` (TB 镜像 driver 切片公式)
+
+3 处 driver 切片公式必须保持 strict 一致 (mem 段起点 ↔ core slice 反推 ↔ TB preload/check), 任一处不同步立即 OFM mismatch.
+
+### 仿真数据对比 (ResNet11 SMC N=4, IFB=1024 SHB=2048 trim 后)
+
+| Layer | R6 cy | Round A cy | Δ | 改善原因 |
+|---|----:|----:|----:|---|
+| 0 Patch (s2d K=1 H=240 W=135) | 43114 | **41227** | **−1887 (−4.4%)** | mem layout 公平, 4 核 fire 数差距 9%→3% |
+| 1 L1.B1.C1 (K=3 s=2 H=240 W=135) | 24911 | 24956 | +45 | W_OUT=68 整除 4, 几何切片不变, 误差噪声 |
+| 2 L1.B1.C2 (K=3 s=1 H=120 W=68) | 20174 | 20174 | = | W_OUT=68 整除 |
+| **3 L1.B2.ds (K=1 s=2 H=240 W=135)** | 26956 | **17478** | **−9478 (−35.2%)** | **见下** |
+| 4 L2.B1.C1 (K=3 s=2 H=120 W=68) | 11985 | 10888 | −1097 (−9.2%) | mem layout 公平 |
+| 5 L2.B1.C2 (K=3 s=1 H=60 W=34) | 24518 | 22413 | −2105 (−8.6%) | mem layout 公平 |
+| 6 L2.B2.ds (K=1 s=2 H=120 W=68) | 11401 | 11439 | +38 | W_OUT=34 整除, 误差噪声 |
+| 7 L3.B1.C1 (K=3 s=2 H=60 W=34) | 12860 | 12841 | −19 | W_OUT=17 整除 |
+| 8 L3.B1.C2 (K=3 s=1 H=30 W=17) | 27707 | 27687 | −20 | W_OUT=17 整除 |
+| 9 L3.B2.ds (K=1 s=2 H=60 W=34) | 4415 | 4404 | −11 | W_OUT=17 整除 |
+| 10 FC (1×1) | 10045 | 10045 | = | 单核 |
+| **TOTAL** | **220286** | **205752** | **−14534 (−6.6%)** | 接近预期 5~8% |
+
+### 意外发现: Layer 3 Cycle 减少 35.2% (远超预期)
+
+Round A 设计预期仅 5~8% 整网收益, **L3 单层 −35%** 是远超预期的隐性收益.
+
+**原因**: Round A 切片不仅对齐核间负载, 还**对齐了 mem 物理段起点跟 core slice 反推段**.
+- 旧 mem layout `[33,33,33,36]` 末核多 3 列 → core slice 反推 IFM 段跟 mem boundary 错位
+  → 中间核 (C1/C2) IDMA per_row=2, IFM 行需要发 2 条 SG 命令跨 mem 边界, IDMA SG dispatcher
+  内串行执行, turnaround 延迟累积 → mac_array act_idle 大.
+- 新 mem layout `[34,34,34,33]` → mem 段宽更接近 core slice 反推 sub_W → cross-mem 命令大幅减少.
+
+**验证 (L3 act_idle 分布)**:
+- R6 旧: `[12499, 20181, 21984, 12632]` (中间核 C1/C2 多等 ~9000 cy IDMA)
+- Round A: `[12498, 12498, 12498, 12499]` (4 核完全均匀, cross-mem 已消除)
+
+**对 Round B (IDMA SG 双 outstanding) 的影响**: Round A 已经吃掉很大一部分 cross-mem 损失,
+Round B 预期收益从原估 10~15% 整网 / L3 30~40% 降到 ~5~8% 整网 / L3 ~15%. 但 Round B
+仍有价值 (其余 ds layer L6/L9 没整除 4 时还会 cross-mem).
+
+### 性能数字 (假设 P&R 后 100 MHz)
+
+| 项目 | R6 (220286 cy) | Round A (205752 cy) | 提升 |
+|---|----:|----:|----:|
+| Latency @100MHz | 2.20 ms | 2.06 ms | −6.6% |
+| FPS | 454 fps | 486 fps | +7.0% |

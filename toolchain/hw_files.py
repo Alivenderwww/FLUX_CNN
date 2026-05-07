@@ -847,10 +847,16 @@ def compute_w_slice_geom(W_full, K, stride, pad_left_full, my_core, n_split):
     if w_out_full <= 0:
         raise ValueError(f"W slice: W_OUT={w_out_full} ≤ 0")
 
-    w_out_per = w_out_full // n_split
-    w_out_start = my_core * w_out_per
-    w_out_end   = (my_core + 1) * w_out_per if my_core < n_split - 1 else w_out_full
-    my_w_out    = w_out_end - w_out_start
+    # Round-A 切片公平 (2026-05-07): 余数分散给前 rem 核 (跟 mesh_cmd.compute_smc_w_segments 一致)
+    base = w_out_full // n_split
+    rem  = w_out_full %  n_split
+    if my_core < rem:
+        w_out_start = my_core * (base + 1)
+        my_w_out    = base + 1
+    else:
+        w_out_start = rem * (base + 1) + (my_core - rem) * base
+        my_w_out    = base
+    w_out_end = w_out_start + my_w_out
 
     # IFM x 范围: 输出 ox ∈ [w_out_start, w_out_end) 时, 输入 x = stride*ox + kx - pad_left_full
     in_lo_unb = stride * w_out_start         - pad_left_full
@@ -908,9 +914,17 @@ def compute_w_slice_chain_geom(layers, n_cores):
     n = n_cores
 
     # 初始化: last layer 每核 w_out 段 (整图坐标, 不含 halo)
-    w_out_per = last_layer.w_out // n
-    cur_lo = [c * w_out_per for c in range(n)]
-    cur_hi = [(c + 1) * w_out_per if c < n - 1 else last_layer.w_out for c in range(n)]
+    # Round-A 切片公平: 余数分散给前 rem 核 (跟 compute_w_slice_geom / compute_smc_w_segments 一致)
+    base_o = last_layer.w_out // n
+    rem_o  = last_layer.w_out %  n
+    cur_lo = [0] * n
+    cur_hi = [0] * n
+    _cur = 0
+    for c in range(n):
+        _w = (base_o + 1) if c < rem_o else base_o
+        cur_lo[c] = _cur
+        cur_hi[c] = _cur + _w
+        _cur += _w
 
     geoms = [[None] * n for _ in range(n_layers)]
     for L in range(n_layers - 1, -1, -1):

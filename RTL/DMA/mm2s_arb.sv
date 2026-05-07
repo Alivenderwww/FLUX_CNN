@@ -171,6 +171,44 @@ module mm2s_arb #(
     end
 
     // =========================================================================
+    // 性能 counter (论文素材, 不影响功能)
+    //   hs_idma_grant: idma 拿到 mm2s 通道总 cy
+    //   hs_wdma_grant: wdma 拿到 (含 starve 抢占)
+    //   hs_rdma_grant: rdma 拿到
+    //   hs_ocmd_grant: ocmd 拿到
+    //   hs_starve_preempt: WDMA starve 触发抢占次数
+    //   hs_data_full_stall: data FIFO 满阻塞 cmd_fire 次数
+    // =========================================================================
+    logic [31:0] hs_idma_grant, hs_wdma_grant, hs_rdma_grant, hs_ocmd_grant;
+    logic [31:0] hs_starve_preempt, hs_data_full_stall;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            hs_idma_grant      <= '0;
+            hs_wdma_grant      <= '0;
+            hs_rdma_grant      <= '0;
+            hs_ocmd_grant      <= '0;
+            hs_starve_preempt  <= '0;
+            hs_data_full_stall <= '0;
+        end else begin
+            // 仅在 cmd_fire 那拍统计 (实际 grant 那拍)
+            if (cmd_fire) begin
+                case (cmd_owner)
+                    2'd0: hs_idma_grant <= hs_idma_grant + 32'd1;
+                    2'd1: hs_wdma_grant <= hs_wdma_grant + 32'd1;
+                    2'd2: hs_rdma_grant <= hs_rdma_grant + 32'd1;
+                    2'd3: hs_ocmd_grant <= hs_ocmd_grant + 32'd1;
+                endcase
+            end
+            // wdma starve 触发抢占 (cmd_owner=1 因为 starve 而非默认)
+            if (cmd_fire && (cmd_owner == 2'd1) && wdma_starve && idma_cmd_tvalid) begin
+                hs_starve_preempt <= hs_starve_preempt + 32'd1;
+            end
+            // data FIFO 满阻塞
+            if (any_cmd_tvalid && data_full) hs_data_full_stall <= hs_data_full_stall + 32'd1;
+        end
+    end
+
+    // =========================================================================
     // owner FIFO × 2 (data / sts), each depth = OFIFO_DEPTH, width = OWN_W
     // =========================================================================
     logic [OWN_W-1:0]  data_mem [0:OFIFO_DEPTH-1];

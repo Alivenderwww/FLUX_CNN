@@ -353,4 +353,32 @@ module idma_sg_dispatcher #(
         else if (mm2s_sts_tvalid && mm2s_sts_tready && !mm2s_sts_tdata[7]) r_err <= 1'b1;
     end
 
+    // =========================================================================
+    // 性能 counter (论文素材, 不影响功能)
+    //   hs_fetch_cy:    在 S_FETCH_CMD_ISS / S_FETCH_CMD_DAT 状态总 cy (拉 SG cmd 时间)
+    //   hs_ring_wait_cy: 在 S_RING_WAIT 状态总 cy (line_buffer ring full 反压)
+    //   hs_issue_cy:    在 S_ISSUE 状态总 cy (发 user data cmd)
+    //   hs_data_cy:     在 S_DATA 状态总 cy (传 user data, mac_array 跑数据来源)
+    //   hs_done_cy:     在 S_DONE 状态总 cy (等 sts drain)
+    // =========================================================================
+    logic [31:0] hs_fetch_cy, hs_ring_wait_cy, hs_issue_cy, hs_data_cy, hs_done_cy;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            hs_fetch_cy     <= '0;
+            hs_ring_wait_cy <= '0;
+            hs_issue_cy     <= '0;
+            hs_data_cy      <= '0;
+            hs_done_cy      <= '0;
+        end else begin
+            case (st)
+                S_FETCH_CMD_ISS,
+                S_FETCH_CMD_DAT: hs_fetch_cy     <= hs_fetch_cy     + 32'd1;
+                S_RING_WAIT    : hs_ring_wait_cy <= hs_ring_wait_cy + 32'd1;
+                S_ISSUE        : hs_issue_cy     <= hs_issue_cy     + 32'd1;
+                S_DATA         : hs_data_cy      <= hs_data_cy      + 32'd1;
+                S_DONE         : hs_done_cy      <= hs_done_cy      + 32'd1;
+            endcase
+        end
+    end
+
 endmodule

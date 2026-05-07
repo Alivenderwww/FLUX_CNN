@@ -968,6 +968,72 @@ module tb_smc_chain;
             // Round H: 200 → 30 cy (实测 20 也 PASS, 30 留 50% slack)
             repeat (30) @(posedge clk);
 
+            // 实验 4: 仅在最后一层后 dump mm2s_arb + dispatcher state breakdown (论文素材)
+            if (l == n_layers - 1) begin
+                $display("");
+                $display("  === mm2s_arb cmd_fire 占用 (累计 4 核) ===");
+                $display("    C0: idma=%0d wdma=%0d rdma=%0d ocmd=%0d starve_preempt=%0d",
+                    u_dut.gen_core[0].u_core.u_mm2s_arb.hs_idma_grant,
+                    u_dut.gen_core[0].u_core.u_mm2s_arb.hs_wdma_grant,
+                    u_dut.gen_core[0].u_core.u_mm2s_arb.hs_rdma_grant,
+                    u_dut.gen_core[0].u_core.u_mm2s_arb.hs_ocmd_grant,
+                    u_dut.gen_core[0].u_core.u_mm2s_arb.hs_starve_preempt);
+                $display("    C1: idma=%0d wdma=%0d rdma=%0d ocmd=%0d starve_preempt=%0d",
+                    u_dut.gen_core[1].u_core.u_mm2s_arb.hs_idma_grant,
+                    u_dut.gen_core[1].u_core.u_mm2s_arb.hs_wdma_grant,
+                    u_dut.gen_core[1].u_core.u_mm2s_arb.hs_rdma_grant,
+                    u_dut.gen_core[1].u_core.u_mm2s_arb.hs_ocmd_grant,
+                    u_dut.gen_core[1].u_core.u_mm2s_arb.hs_starve_preempt);
+                $display("    C2: idma=%0d wdma=%0d rdma=%0d ocmd=%0d",
+                    u_dut.gen_core[2].u_core.u_mm2s_arb.hs_idma_grant,
+                    u_dut.gen_core[2].u_core.u_mm2s_arb.hs_wdma_grant,
+                    u_dut.gen_core[2].u_core.u_mm2s_arb.hs_rdma_grant,
+                    u_dut.gen_core[2].u_core.u_mm2s_arb.hs_ocmd_grant);
+                $display("    C3: idma=%0d wdma=%0d rdma=%0d ocmd=%0d",
+                    u_dut.gen_core[3].u_core.u_mm2s_arb.hs_idma_grant,
+                    u_dut.gen_core[3].u_core.u_mm2s_arb.hs_wdma_grant,
+                    u_dut.gen_core[3].u_core.u_mm2s_arb.hs_rdma_grant,
+                    u_dut.gen_core[3].u_core.u_mm2s_arb.hs_ocmd_grant);
+
+                $display("");
+                $display("  === IDMA SG dispatcher state cy breakdown ===");
+                for (int cc = 0; cc < NUM_CORES; cc++) begin
+                    int fc, rwc, ic, dc, donc;
+                    case (cc)
+                        0: begin
+                            fc  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
+                            rwc = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_ring_wait_cy;
+                            ic  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
+                            dc  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
+                            donc= u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                        end
+                        1: begin
+                            fc  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
+                            rwc = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_ring_wait_cy;
+                            ic  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
+                            dc  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
+                            donc= u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                        end
+                        2: begin
+                            fc  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
+                            rwc = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_ring_wait_cy;
+                            ic  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
+                            dc  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
+                            donc= u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                        end
+                        3: begin
+                            fc  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
+                            rwc = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_ring_wait_cy;
+                            ic  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
+                            dc  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
+                            donc= u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                        end
+                    endcase
+                    $display("    C%0d: fetch=%0d ring_wait=%0d issue=%0d data=%0d done=%0d (sum=%0d)",
+                             cc, fc, rwc, ic, dc, donc, fc + rwc + ic + dc + donc);
+                end
+            end
+
             // 中间层 OFM check (last layer 在主循环外另算 final)
             if (l < n_layers - 1) begin
                 check_layer_ofm(case_dir, l, $sformatf("L%0d post", l), layer_mm);

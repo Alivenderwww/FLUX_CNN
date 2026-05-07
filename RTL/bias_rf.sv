@@ -158,6 +158,12 @@ module bias_rf #(
         end
     end
 
+`ifdef IDEAL_BIAS_RF
+    // 实验: bias_ready 永远 = 1 (假装 bias 立即可用, 跳过 4 拍 prefetch stall)
+    // bias_vec 输出错误 (RF 没 load), OFM 会 mismatch (除非 bias 全 0). 仅量化 cy.
+    assign bias_ready = 1'b1;
+`else
     assign bias_ready = (state == S_READY);
+`endif
 
 endmodule

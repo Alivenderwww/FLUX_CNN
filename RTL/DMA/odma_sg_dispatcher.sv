@@ -121,12 +121,14 @@ module odma_sg_dispatcher #(
     // =========================================================================
     // FSM
     // =========================================================================
+    // Round H step 2: 跳过 S_FETCH_CMD_STS (ocmd sts 后台 collect, 跟 IDMA Round B 一致).
+    //   每 cmd 省 ocmd sts wait turnaround (~2-4 cy/cmd).
+    //   ResNet11 ODMA cmd 总数 ~600, 估省 1500-2400 cy ≈ 0.7-1.2%.
     typedef enum logic [3:0] {
         S_IDLE          = 4'd0,
         S_WAIT          = 4'd1,
         S_FETCH_CMD_ISS = 4'd2,
         S_FETCH_CMD_DAT = 4'd3,
-        S_FETCH_CMD_STS = 4'd4,
         S_CMD           = 4'd5,
         S_PREFETCH      = 4'd6,
         S_TX            = 4'd7,
@@ -234,7 +236,8 @@ module odma_sg_dispatcher #(
     };
     assign ocmd_cmd_tvalid  = (state == S_FETCH_CMD_ISS);
     assign ocmd_data_tready = (state == S_FETCH_CMD_DAT);
-    assign ocmd_sts_tready  = (state == S_FETCH_CMD_STS);
+    // Round H step 2: ocmd sts 后台 collect, 永远 ready, 不阻塞 main FSM
+    assign ocmd_sts_tready  = 1'b1;
 
     // =========================================================================
     // s2mm cmd: S_CMD 时装 cmd
@@ -292,8 +295,7 @@ module odma_sg_dispatcher #(
             S_WAIT          : if      (all_cmds_issued)                state_next = S_DONE;
                               else if (has_writer_data_ready)          state_next = S_FETCH_CMD_ISS;
             S_FETCH_CMD_ISS : if (ocmd_cmd_fire)                       state_next = S_FETCH_CMD_DAT;
-            S_FETCH_CMD_DAT : if (ocmd_data_fire)                      state_next = S_FETCH_CMD_STS;
-            S_FETCH_CMD_STS : if (ocmd_sts_fire)                       state_next = S_CMD;
+            S_FETCH_CMD_DAT : if (ocmd_data_fire)                      state_next = S_CMD;     // Round H: 跳 STS, sts 后台 collect
             S_CMD           : if (s2mm_cmd_fire)                       state_next = S_PREFETCH;
             S_PREFETCH      :                                          state_next = S_TX;
             S_TX            : if (s2mm_tlast_fire)                     state_next = S_STS;
@@ -436,8 +438,8 @@ module odma_sg_dispatcher #(
         if      (!rst_n)                                                r_err <= 1'b0;
         else if (start)                                                 r_err <= 1'b0;
         else if (s2mm_sts_fire && !s2mm_sts_tdata[7])                   r_err <= 1'b1;
-        else if ((state == S_FETCH_CMD_STS) && ocmd_sts_fire
-                                            && !ocmd_sts_tdata[7])      r_err <= 1'b1;
+        // Round H: ocmd sts 后台 collect, 永远 ready, 任何拍 sts_fire 都检查 err
+        else if (ocmd_sts_fire && !ocmd_sts_tdata[7])                   r_err <= 1'b1;
     end
 
 endmodule

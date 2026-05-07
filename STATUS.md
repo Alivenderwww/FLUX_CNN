@@ -1753,12 +1753,62 @@ per-core layer N+1 启动 不等其他核 layer N done — 需要 driver 加层�
 
 ## Round 总览 (累计)
 
-| Round | ResNet11 cy | Δ vs prev | 累计 vs Round B (sim model) | 关键改动 |
+| Round | ResNet11 cy | Δ vs prev | 累计 vs IP baseline | 关键改动 |
 |---|----:|----:|----:|---|
-| Round B (sim crossbar) | 203320 | - | 0% | (旧 baseline) |
-| → 切真 IP | 217311 | +6.9% | +6.9% | sim crossbar → axi_smc IP, 14K cy register stage 真实开销 |
-| Round C (cout slice) | 210784 | -3.0% | +3.7% | scheduler 优先 cout slice for L10 (FC) |
-| Round E (mm2s_arb) | 210784 | 0% | +3.7% | 防御性, 准备 dispatcher prefetch |
-| **Round F (host parallel)** | **206589** | **-2.0%** | **+1.6%** | TB fork wait_dfe_done |
-| @100 MHz Latency | 2.07 ms | (vs Round B 2.03 ms sim model) | | |
-| FPS | 484 | | | |
+| Round B (sim crossbar) | 203320 | - | (老 baseline) | (sim model crossbar) |
+| → 切真 IP | 217311 | +6.9% | 0% | sim crossbar → axi_smc IP, 14K cy register stage 真实开销 |
+| Round C (cout slice) | 210784 | -3.0% | -3.0% | scheduler 优先 cout slice for L10 (FC) |
+| Round E (mm2s_arb 防御) | 210784 | 0% | -3.0% | WDMA 饥饿提优先级 (防御 dispatcher prefetch) |
+| Round F (host parallel) | 206589 | -2.0% | -4.9% | TB fork wait_dfe_done |
+| **Round G (desc preload)** | **206121** | **-0.23%** | **-5.2%** | TB fork preload layer N+1 desc |
+| @100 MHz Latency | 2.06 ms | (vs IP baseline 2.17 ms) | | |
+| FPS | 485 | | | |
+
+---
+
+## 19. Round G — TB layer N+1 desc preload 跟 layer N 计算重叠 (2026-05-07)
+
+### 改造
+
+`sim/tb_smc/tb_smc_chain.sv` host 主循环:
+- Round F 已经让 layer 内 4 核 dfe wait 并行
+- Round G 进一步让 **layer N+1 的 dfe preload** (write boot regs + start_dfe + wait dfe done)
+  跟 layer N 计算重叠
+
+实现:
+- 加 `r_dfe_preload_done[0:31]` flag, per-layer 同步
+- layer 0 主 process 同步预拉 (启动)
+- 后续 layer 在 layer (l-1) iteration 内 fork...join_none 异步预拉
+  fork 内独占 csr 总线 (主 process 在 wait done 期间不写 csr)
+- 主 process 进 layer l 前 wait r_dfe_preload_done[l]
+
+### 实测
+
+| Case | Round F | Round G | Δ |
+|---|----:|----:|----:|
+| smc_resnet11 | 206589 | **206121** | -468 cy (-0.23%) |
+| smc_wslice1 | 4317 | 4317 | 0 (单层无 preload 机会) |
+| smc_wslice5 | 21585 | 21573 | -12 |
+
+### 边际收益小的原因
+
+Round F 已经让单层内 4 核 dfe 并行, 大头被吃了 (~4200 cy/网). Round G 进一步把
+~150 cy/层 dfe 时间跟 layer 计算重叠, 但 layer 计算 1000+ cy 已经 cover 大部分,
+Round F 漏出来的小尾巴才被 Round G 收掉.
+
+### 当前 PE util
+
+131.5M useful_mac / (4 cores × 206121 cy × 256 PE) = **62.7%** (vs Round C 60.9%, IP baseline 60.5%)
+
+### 剩余优化空间
+
+剩 37.3% PE idle, 大头:
+1. **ds 层 PE 阵列空转** (L3/L6/L9 PE util 8-22%, 结构性): 需要 mac_array Ky-cout-fold 或小 K 引擎. 6-10% 收益, 大改 RTL.
+2. **psum_idle** (大部分层): bias_rf cs 切换 + mac_array 流水填充. 修需 bias_rf ping-pong (Round D 失败, 复杂) 或 mac_array 流水深化.
+3. **act_id 在 ds 层** (cross-mem cmd 串行): 需要 dispatcher prefetch (Round C+ 失败 L0 退化, 现在有 mm2s_arb 兜底可重试, 但工作量大).
+4. **per-core layer barrier 软化** (无 halo K=1 layer): driver 加数据依赖图分析. K=1 ds layer 可以 per-core 启动, 但 ResNet11 K=1 layer 占总 cy 比例 ~21%, 收益估 1-2%.
+
+ROI 排序:
+- 短期: Round H 候选 = dispatcher prefetch 重试 (3-5%, 1-2 周, 需小心 L0)
+- 中期: Round I = bias_rf ping-pong 修复 (1-2%, 1 周, 需 fixe state machine bug)
+- 长期: Round J = mac_array Ky-cout-fold (6-10%, 2-3 周, 论文价值高)

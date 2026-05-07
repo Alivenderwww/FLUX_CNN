@@ -104,7 +104,7 @@ set_property verilog_define USE_AXI_SMC_IP=1 [current_fileset]
 # -----------------------------------------------------------------------------
 # 4. Clock constraint
 # -----------------------------------------------------------------------------
-set CLK_PERIOD_NS 7.5    ;# 133 MHz target (J-5 ring_full 寄存器化, 留 0.5ns 给 P&R)
+set CLK_PERIOD_NS 7.2    ;# 138.9 MHz target (J-6 rows_needed reg sync, 7.0ns 边界 WNS=-4ps)
 
 set xdc_file "$SCRIPT_DIR/cnn_smc_ooc.xdc"
 set fd [open $xdc_file w]

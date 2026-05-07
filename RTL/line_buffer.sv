@@ -216,16 +216,50 @@ module line_buffer #(
     //   - 下界 0：本 yout 完全在 pad_top 区，无需 IDMA 提供
     //   - 上界 cfg_h_in：kernel 底边超出图像（落在 pad_bot 区），pad_bot 行是虚拟的，
     //     不会由 IDMA 提供；rows_needed 不能超过 cfg_h_in，否则永远 stall
-    logic signed [16:0] rows_needed_signed;
-    logic [15:0] rows_needed;
-    assign rows_needed_signed = y_row_base + $signed({13'd0, cfg_ky});
-    assign rows_needed        = (rows_needed_signed < 0)                        ? 16'd0
-                              : (rows_needed_signed > $signed({1'b0, cfg_h_in})) ? cfg_h_in
-                              : rows_needed_signed[15:0];
+    // J-6 timing fix: rows_needed 跟 y_row_base 同 cycle update (reg 而非 comb).
+    //   原 comb: rows_needed = clamp(y_row_base + cfg_ky, 0, cfg_h_in), 14-level
+    //   chain 起点 (CARRY4*3 减法 + 比较). 改 reg 后起点变 rows_needed_d_reg, 切断
+    //   y_row_base → rows_needed → streaming_rows_ready 这段 chain.
+    //   关键: rows_needed_d 在 evt_iss_cs_wrap 时 += stride 同步 y_row_base 更新,
+    //         evt_start / yout_wrap 时 reset 到 init 值, 与 y_row_base 完全同步.
+    //   1×1 极小 case 安全 (init 值已正确, 不 lookahead, 跟 comb 行为等价).
+    //
+    //   init_rows_needed = clamp(cfg_ky - cfg_pad_top, 0, cfg_h_in)  (layer-stable)
+
+    // forward declare evt_* (always_comb 赋值在后面 line 340+)
+    logic evt_start;
+    logic evt_iss_pos_wrap;
+    logic evt_iss_kx_wrap;
+    logic evt_iss_ky_wrap;
+    logic evt_iss_cins_wrap;
+    logic evt_iss_tile_wrap;
+    logic evt_iss_cs_wrap;
+    logic evt_iss_yout_wrap;
+
+    logic [15:0] init_rows_needed;
+    logic signed [5:0] ky_minus_pad;     // 6-bit signed: [-16..15] hold ky[4]-pad[4]
+    assign ky_minus_pad = $signed({2'b0, cfg_ky}) - $signed({2'b0, cfg_pad_top});
+    assign init_rows_needed = (ky_minus_pad <= 0)                                  ? 16'd0
+                            : ({10'd0, ky_minus_pad[5:0]} > cfg_h_in)              ? cfg_h_in
+                            : {10'd0, ky_minus_pad[5:0]};
+
+    logic [15:0] rows_needed_d;
+    logic signed [16:0] rows_needed_next_signed;
+    logic [15:0] rows_needed_next;
+    assign rows_needed_next_signed = $signed({1'b0, rows_needed_d}) + $signed({14'd0, cfg_stride});
+    assign rows_needed_next        = (rows_needed_next_signed > $signed({1'b0, cfg_h_in}))
+                                   ? cfg_h_in
+                                   : rows_needed_next_signed[15:0];
+
+    always_ff @(posedge clk) begin
+        if      (evt_start)                          rows_needed_d <= init_rows_needed;
+        else if (evt_iss_yout_wrap)                  rows_needed_d <= init_rows_needed;
+        else if (evt_iss_cs_wrap && !yout_is_last)   rows_needed_d <= rows_needed_next;
+    end
 
     // 永远 streaming: 等 IDMA 写满足 K 行后才 issue
     logic streaming_rows_ready;
-    assign streaming_rows_ready = (rows_available >= rows_needed);
+    assign streaming_rows_ready = (rows_available >= rows_needed_d);
 
     // =========================================================================
     // Issue 信号（两种模式）
@@ -300,14 +334,7 @@ module line_buffer #(
     //   evt_iss_cs_wrap  : cs 进位 (yout 推进 —— 新: 一个 yout 的所有 cs 完成)
     //   evt_iss_yout_wrap: yout 进位 (整 strip 结束)
     // =========================================================================
-    logic evt_start;
-    logic evt_iss_pos_wrap;
-    logic evt_iss_kx_wrap;
-    logic evt_iss_ky_wrap;
-    logic evt_iss_cins_wrap;
-    logic evt_iss_tile_wrap;
-    logic evt_iss_cs_wrap;
-    logic evt_iss_yout_wrap;
+    // evt_* logic / yout_is_last 都已经在前面 declared, 这里仅 always_comb 赋值
 
     // 统一推进信号：reuse_en=0 由 issue_ok_std 驱动（原行为）；reuse_en=1 由 CONSUME 的 act_fire 驱动
     logic evt_advance_any;

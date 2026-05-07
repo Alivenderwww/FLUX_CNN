@@ -814,14 +814,24 @@ module tb_smc_chain;
                 if (core_layer_desc_count[c][l] > 0)
                     expected_done_mask[c] = 1'b1;
 
-            // 串行 dfe (写 boot regs + start_dfe + 等 dfe_done)
+            // Round F: per-core barrier 软化
+            //   1. 串行写 4 核 boot regs + start_dfe (csr 总线单口, 串行不可避免, 但每核 ~30 cy 不大)
+            //   2. 并行 fork 等 4 核 dfe_done (dfe 各核独立 RTL, 并行拉 desc list)
+            //   3. 并行 start_layer (写 4 核 CTRL[5], 串行写但顺序触发, 先写的核先开跑)
             for (int c = 0; c < NUM_CORES; c++)
                 if (core_layer_desc_count[c][l] > 0) begin
                     axi_lite_write(CORE_ID_W'(c), ADDR_DESC_LIST_BASE, core_layer_desc_base[c][l]);
                     axi_lite_write(CORE_ID_W'(c), ADDR_DESC_COUNT,     core_layer_desc_count[c][l]);
                     write_dfe_start(CORE_ID_W'(c));
-                    wait_dfe_done(CORE_ID_W'(c));
                 end
+
+            // 并行等 4 核 dfe_done (节省 ~3 × dfe_fetch_time / 层)
+            fork
+                if (core_layer_desc_count[0][l] > 0) wait_dfe_done('d0);
+                if (core_layer_desc_count[1][l] > 0) wait_dfe_done('d1);
+                if (core_layer_desc_count[2][l] > 0) wait_dfe_done('d2);
+                if (core_layer_desc_count[3][l] > 0) wait_dfe_done('d3);
+            join
 
             // 并行 start_layer
             for (int c = 0; c < NUM_CORES; c++)

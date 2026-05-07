@@ -20,7 +20,6 @@
 `define FLUX_WB_DEPTH                 640  // 256 KB (1 word = 2048 bit)
 `define FLUX_OFB_DEPTH                1024  // 32 KB (1 word = 128 bit)
 `define FLUX_SHORTCUT_DEPTH           2048  // 128 KB Shortcut Bank
-`define FLUX_SRAM_DEPTH               1024  // legacy alias for IFB_DEPTH
 
 // ---- AXI / CSR ----
 `define FLUX_BUS_ADDR_W               32

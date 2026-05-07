@@ -38,7 +38,7 @@ module line_buffer #(
     parameter int NUM_PE     = 16,
     parameter int DATA_WIDTH = 8,
     parameter int ARF_DEPTH  = 32,
-    parameter int SRAM_DEPTH = 8192,
+    parameter int SRAM_DEPTH = 1024,        // IFB 深度 (core_top 实例化按 FLUX_IFB_DEPTH override)
     parameter int ADDR_W     = 20
 )(
     input  logic                                 clk,

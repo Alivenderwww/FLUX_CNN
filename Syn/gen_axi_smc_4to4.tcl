@@ -79,7 +79,7 @@ foreach pat {axi_smc_4to4 axi_smc_4to4_1 axi_smc_4to4_2 axi_smc_4to4_3} {
 # IP: axi_smc_4to4 = AXI4 4 SI : 4 MI Crossbar (SAMD)
 #   - SI 端: 4 ConvCore axi master (CORE_BUS_ID = 4 bit, 但 ID_WIDTH 设 6 含核 tag)
 #   - MI 端: 4 mem axi slave (各 16 MB region by addr[25:24]=mem_id)
-#   - 跟 multicore_top.sv 用的 axi_4to5 IP 同 family, 但 NUM_MI=4 + 不同 region
+#   - 基于 Vivado axi_crossbar IP, 配 NUM_MI=4 + 4 × 16 MB region
 # =============================================================================
 puts "==> creating $IP_NAME (4 SI : 4 MI, 4 × 16 MB region)"
 create_ip -name axi_crossbar -vendor xilinx.com -library ip \

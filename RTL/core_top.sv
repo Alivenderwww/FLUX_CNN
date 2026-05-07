@@ -37,8 +37,8 @@ module core_top #(
     parameter int AXI_M_ID    = `FLUX_AXI_M_ID,
     parameter int AXI_M_WIDTH = `FLUX_AXI_M_WIDTH,
     parameter int DMA_LEN_W   = `FLUX_DMA_LEN_W,
-    // 跨核 IFB AXI4 SI 端口 ID 宽 = multicore_top.EXT_BUS_ID = CORE_BUS_ID + log2(NUM_CORES).
-    // 单核 sim (NUM_CORES=1, 跨核口 tie 0) 可用默认 5; multicore_top 显式 override.
+    // 跨核 IFB AXI4 SI 端口 ID 宽 = CORE_BUS_ID + log2(NUM_CORES).
+    // 单核 sim (NUM_CORES=1, 跨核口 tie 0) 可用默认 5; multicore_top_smc 显式 override.
     parameter int RMT_ID_W    = AXI_M_ID + AXI_M_WIDTH + 1,
 
     // SG_MODE = 1 时 IDMA 走 Scatter-Gather (idma_sg_dispatcher 替代 idma_ctrl).
@@ -502,7 +502,7 @@ module core_top #(
         .re(ifb_re), .raddr(ifb_raddr[$clog2(SRAM_DEPTH)-1:0]), .rdata(ifb_rdata)
     );
 
-    // WB / OFB 物理深度小于 SRAM_DEPTH (= 13-bit AW). Vivado 自动只用低位寻址.
+    // WB / OFB 用各自 DEPTH 实例化 (params.py WB_DEPTH=640, OFB_DEPTH=1024 跟 IFB 解耦).
     sram_model #(.DEPTH(WB_DEPTH), .DATA_WIDTH(WB_WIDTH)) u_wb (
         .clk(clk), .we(wb_we_mux), .waddr(wb_waddr_mux[$clog2(WB_DEPTH)-1:0]),
         .wdata(wb_wdata_mux),

@@ -13,7 +13,7 @@
 | `PSUM_WIDTH` | bias 位宽 | 32 |
 | `WRF_DEPTH` | 每 PE 的 WRF 深度 | 32 |
 | `MAX_COUT_SLICES` | BRF 深度（支持 cout=512 即 32 slice） | 32 |
-| `SRAM_DEPTH / ADDR_W` | WB SRAM 深度 / 地址宽 | 8192 / 20 |
+| `SRAM_DEPTH / ADDR_W` | WB SRAM 深度 / 地址宽 | 640 / 20 |
 
 ## 接口
 

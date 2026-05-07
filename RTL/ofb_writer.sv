@@ -31,7 +31,7 @@ module ofb_writer #(
     parameter int NUM_COL    = 16,
     parameter int DATA_WIDTH = 8,
     parameter int PSUM_WIDTH = 32,
-    parameter int SRAM_DEPTH = 8192,
+    parameter int SRAM_DEPTH = 1024,        // OFB 深度 (core_top 实例化按 FLUX_OFB_DEPTH override)
     parameter int ADDR_W     = 20,
     // SB_ADDR_W = $clog2(SHORTCUT_DEPTH); 默认跟 SRAM_DEPTH 共用 (向后兼容).
     // core_top 实例化时显式传 SHB 独立宽, 让 IFB / SHB 物理深度可不同.

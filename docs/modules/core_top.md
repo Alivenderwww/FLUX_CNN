@@ -28,13 +28,14 @@ core_top
 | `NUM_COL / NUM_PE` | PE 阵列 | 16 / 16 |
 | `DATA_WIDTH / PSUM_WIDTH` | 数据/psum 位宽 | 8 / 32 |
 | `WRF_DEPTH / ARF_DEPTH / PARF_DEPTH` | 各 RF 深度 | 32 / 32 / 32 |
-| `SRAM_DEPTH` | IFB / WB / OFB SRAM 深度 | 8192 |
+| `SRAM_DEPTH` | IFB 物理深度 (params.py IFB_DEPTH) | 1024 |
+| `SHORTCUT_DEPTH` | 残差 shortcut bank 深度 | 2048 |
 | `CSR_ADDR_W / CSR_DATA_W` | AXI-Lite 参数 | 12 / 32 |
 | `BUS_ADDR_W / BUS_DATA_W` | AXI4 M 参数 | 32 / 128 |
 | `AXI_M_ID / AXI_M_WIDTH` | per-DMA ID 宽 / log2(masters) | 2 / 2 |
 | `DMA_LEN_W` | DMA byte_len 宽 | 24 |
 
-派生量：`ADDR_W=20`（core 内部 SRAM 地址）、`IFB_WIDTH=128`、`WB_WIDTH=2048`、`OFB_WIDTH=128`、`AW=$clog2(SRAM_DEPTH)=13`。
+派生量：`ADDR_W=20`（core 内部 SRAM 地址）、`IFB_WIDTH=128`、`WB_WIDTH=2048`、`OFB_WIDTH=128`、`AW=$clog2(SRAM_DEPTH)=10`（IFB=1024）。WB 深度 640、OFB 深度 1024 单独 override，跟 IFB AW 复用。
 
 ## 接口
 

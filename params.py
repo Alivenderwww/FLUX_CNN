@@ -52,9 +52,6 @@ SHORTCUT_DEPTH  = 2048  # 8192→2048 省 24 BRAM36/core. 实际 ≤ 2044 word, 
                         # 取 2^11 = 2048 而非 2560: Vivado BRAM mapping 友好 (power of 2),
                         # 综合 4×u_shortcut_bank 减 28 BRAM (vs 2560 不友好 mapping).
 
-# 兼容: RTL 不少地方用 SRAM_DEPTH 默认指代 IFB
-SRAM_DEPTH = IFB_DEPTH
-
 # 派生: word size in bytes
 IFB_WORD_BYTES      = NUM_PE  * DATA_WIDTH // 8           # 16
 WB_WORD_BYTES       = NUM_COL * NUM_PE * DATA_WIDTH // 8  # 256
@@ -257,7 +254,6 @@ def gen_svh(out_path: str = 'RTL/flux_cnn_params.svh') -> str:
         ('WB_DEPTH',        WB_DEPTH,       '256 KB (1 word = 2048 bit)'),
         ('OFB_DEPTH',       OFB_DEPTH,      '32 KB (1 word = 128 bit)'),
         ('SHORTCUT_DEPTH',  SHORTCUT_DEPTH, '128 KB Shortcut Bank'),
-        ('SRAM_DEPTH',      SRAM_DEPTH,     'legacy alias for IFB_DEPTH'),
     ], 'SRAM 容量'))
 
     # AXI

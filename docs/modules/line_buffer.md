@@ -9,7 +9,7 @@
 | `NUM_PE` | 每像素的 cin 通道数 | 16 |
 | `DATA_WIDTH` | 每通道位宽 | 8 |
 | `ARF_DEPTH` | act_buf 深度 | 32 |
-| `SRAM_DEPTH / ADDR_W` | IFB SRAM 深度 / 地址宽 | 8192 / 20 |
+| `SRAM_DEPTH / ADDR_W` | IFB SRAM 深度 / 地址宽 | 1024 / 20 |
 
 ## 接口
 

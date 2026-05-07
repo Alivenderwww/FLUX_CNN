@@ -31,7 +31,7 @@ module ifb_axi_slave #(
     parameter int ADDR_W   = 32,
     parameter int DATA_W   = 128,
     parameter int ID_W     = 5,
-    parameter int SRAM_AW  = 13,        // log2(SRAM_DEPTH)=13
+    parameter int SRAM_AW  = 10,        // log2(IFB_DEPTH)=10 (params.py IFB_DEPTH=1024)
     parameter int IFB_W    = DATA_W     // = NUM_PE × DATA_WIDTH = 128
 )(
     input  logic                clk,

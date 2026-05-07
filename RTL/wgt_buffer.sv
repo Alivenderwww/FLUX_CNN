@@ -41,7 +41,7 @@ module wgt_buffer #(
     parameter int DATA_WIDTH      = 8,
     parameter int PSUM_WIDTH      = 32,
     parameter int WRF_DEPTH       = 32,
-    parameter int SRAM_DEPTH      = 8192,
+    parameter int SRAM_DEPTH      = 640,    // WB 深度 (core_top 实例化按 FLUX_WB_DEPTH override)
     parameter int ADDR_W          = 20
 )(
     input  logic                                 clk,

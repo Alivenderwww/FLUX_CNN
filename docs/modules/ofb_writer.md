@@ -9,7 +9,7 @@
 | `NUM_COL` | cout 通道数 | 16 |
 | `DATA_WIDTH` | 输出位宽 | 8 |
 | `PSUM_WIDTH` | psum 位宽 | 32 |
-| `SRAM_DEPTH / ADDR_W` | OFB SRAM 深度 / 地址宽 | 8192 / 20 |
+| `SRAM_DEPTH / ADDR_W` | OFB SRAM 深度 / 地址宽 | 1024 / 20 |
 
 ## 接口
 

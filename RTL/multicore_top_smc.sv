@@ -18,16 +18,9 @@
 //   mem[2]: [0x0200_0000, 0x02FF_FFFF]
 //   mem[3]: [0x0300_0000, 0x03FF_FFFF]
 //
-// 跟 multicore_top_mesh.sv 的差别:
-//   - 删 mesh_4x2 + router_node + AXIS packet 协议 (用 axi crossbar IP 替代)
-//   - 删 mesh_core_wrapper (ConvCore 直接 expose axi master 给 crossbar)
-//   - 删 mem_core_stub 的 desc engine + axis_packet_tx (mem 是哑 axi slave)
-//   - mem 用 axi_slave_mem.sv (sim model, 真硬件用 axi_dm + DDR 控制器)
-//
-// TODO:
-//   - 等待 axi_dm IP SG mode 重生 (Syn/gen_axi_datamover.tcl 升级)
-//   - 等待 axi_smc IP 生成 (Syn/gen_axi_smc_4to4.tcl 新建)
-//   - idma_ctrl / odma_ctrl / wdma_ctrl 改 SG cmd 接口
+// mem 实现:
+//   - sim: axi_slave_mem.sv (tb_axi_m_mux 内的 sim model, 哑 axi slave)
+//   - synth: 接 axi_dm + DDR 控制器
 // =============================================================================
 
 module multicore_top_smc #(
@@ -288,9 +281,7 @@ module multicore_top_smc #(
     endgenerate
 
     // =========================================================================
-    // 3. AXI Crossbar 4M ↔ 4S
-    //    TODO: 用 Vivado axi_crossbar / axi_smc IP 实例化
-    //    暂时用 placeholder, 等 Syn/gen_axi_smc_4to4.tcl 跑完后填充实际 IP 名
+    // 3. AXI Crossbar 4M ↔ 4S (Vivado axi_smc_4to4 IP, Syn/gen_axi_smc_4to4.tcl 生成)
     //
     // 配置参数 (driver 编译期跟硬件 IP config 必须一致):
     //   M00_AXI_BASE = 0x0000_0000, RANGE = 16 MB → mem[0]
@@ -328,16 +319,12 @@ module multicore_top_smc #(
     logic                               m_bus_rvalid  [NUM_CORES];
     logic                               m_bus_rready  [NUM_CORES];
 
-    // ===== AXI Crossbar 4M ↔ 4S
-    //   USE_AXI_SMC_IP=0: axi_crossbar_4to4_sim (sim model, 默认)
-    //   USE_AXI_SMC_IP=1: Vivado axi_smc_4to4 IP (Syn/gen_axi_smc_4to4.tcl 生成)
-    //
+    // ===== AXI Crossbar 4M ↔ 4S (Vivado axi_smc_4to4 IP)
     //   ID 宽: SI 端 ConvCore 出口 = CORE_BUS_ID = 4 bit; MI 端 = 6 bit
     //   (CB_ID_W = CORE_BUS_ID + CORE_ID_W = 6, IP 把 SI tag 加到 ID 高位).
+    //   旧 sim model (axi_crossbar_4to4_sim.sv) + ifdef 切换已删, sim/synth 统一走 IP.
     // =========================================================================
     localparam int CB_ID_W = CORE_BUS_ID + CORE_ID_W;     // 6
-    // 用 ifdef 选 IP 还是 sim model. 默认 sim model (兼容已 PASS 的 sim regression).
-    // 用户跑完 Syn/gen_axi_smc_4to4.tcl 后, 在 vlog 加 +define+USE_AXI_SMC_IP 切到 IP.
 
     // pack 4 SI signals (ID 高位 padding 0)
     logic [NUM_CORES*CB_ID_W-1:0]   sb_awid_pack;

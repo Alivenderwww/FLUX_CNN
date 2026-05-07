@@ -1810,7 +1810,72 @@ Round F 漏出来的小尾巴才被 Round G 收掉.
 3. **act_id 在 ds 层** (cross-mem cmd 串行): 需要 dispatcher prefetch (Round C+ 失败 L0 退化, 现在有 mm2s_arb 兜底可重试, 但工作量大).
 4. **per-core layer barrier 软化** (无 halo K=1 layer): driver 加数据依赖图分析. K=1 ds layer 可以 per-core 启动, 但 ResNet11 K=1 layer 占总 cy 比例 ~21%, 收益估 1-2%.
 
-ROI 排序:
-- 短期: Round H 候选 = dispatcher prefetch 重试 (3-5%, 1-2 周, 需小心 L0)
-- 中期: Round I = bias_rf ping-pong 修复 (1-2%, 1 周, 需 fixe state machine bug)
-- 长期: Round J = mac_array Ky-cout-fold (6-10%, 2-3 周, 论文价值高)
+> **更新 (2026-05-08, §20 控制变量实验)**: 上面这 4 条推测被实验数据推翻 / 修正:
+> - 推测 #1 (ds 阵列空转) **错**, 实际是 memory-bound (见 §20 实验 5)
+> - 推测 #2 (bias_rf 流水化) **收益微乎其微** (-0.06%, 见实验 1)
+> - 推测 #3 (dispatcher prefetch) **收益上限 ≤ 2-3%**, ring_wait 反弹吃掉一半 (见实验 4)
+> - 推测 #4 仍然有效, 但 ROI 估计被高估
+>
+> **真正高 ROI 优化方向 (基于 §20 实验)**:
+> 1. SMC 互联简化: -7.0% (实验 2 实测)
+> 2. ds layer IFB 复用 (skip_idma + sequencer): -7-10% (实验 5 推论)
+> 3. **算法层 K=1 ds + K=3 conv 合并: -16%** (实验 5 推论, 论文创新点)
+
+---
+
+## 20. Round H — 进一步 quick wins + 控制变量瓶颈分析 (2026-05-08)
+
+### Round H steps (commits)
+
+- **step 1** (`3b47e06`): TB OFM check pause 200 → 30 cy (axi_dm S2MM commit 实测 ~20 cy 足够). ResNet11 -1870 cy (-0.91%).
+- **step 2** (`4c4d057`): ODMA SG dispatcher sts 后台 collect (跟 IDMA Round B 一致). ResNet11 -11 cy (微小).
+
+### 控制变量实验 (commits + paper/data/)
+
+为支持论文写作, 加性能 counter + ifdef 切换理想模型:
+- `c9d41a8` Round E mm2s_arb WDMA starve (实验 3 验证 0 触发)
+- `55f72c4` IDEAL_SMC ifdef 切换 + 恢复 sim crossbar (实验 2)
+- `1e41af0` 加 mm2s_arb + dispatcher state counter (实验 3, 4) + IDEAL_BIAS_RF ifdef (实验 1)
+
+5 个实验文档在 `paper/data/exp{1..5}*.md` (用户自管 paper/, 不进 git) + `summary_bottleneck_analysis.md`.
+
+### 关键发现
+
+| 实验 | 发现 | 论文价值 |
+|---|---|---|
+| 1 (IDEAL_BIAS_RF) | bias_rf cs 切换 stall 占 **0.06%** | 否定 §12 推测 D |
+| 2 (IDEAL_SMC) | SMC 互联 IP 占 **7.0%** wall cy (14354 cy) | 最大单一可量化瓶颈 |
+| 2b | SMC overhead 双峰分布: IDMA-bound 12% / compute-bound 1% | layer 类型差异化优化 |
+| 3 (mm2s_arb counter) | WDMA `starve_preempt = 0` (Round E 0 触发) | 仲裁不是瓶颈 |
+| 4 (dispatcher counter) | dispatcher 时间 fetch 17.5% / ring_wait 12.6% / data 44.7% / IDLE 24.2% | dispatcher prefetch 收益上限 ≤ 2-3% |
+| 5 (ds layer 数学分析) | ds layer 是 **memory-bound 不是 compute-bound** | 否定 §12 推测 C, 论文创新方向 |
+
+### Round 总览 (累计)
+
+| Round | ResNet11 cy | Δ vs prev | 累计 vs IP baseline | 关键改动 |
+|---|----:|----:|----:|---|
+| Round B (sim crossbar) | 203320 | - | (老 baseline) | (sim model crossbar) |
+| → 切真 IP | 217311 | +6.9% | 0% | sim crossbar → axi_smc IP |
+| Round C (cout slice) | 210784 | -3.0% | -3.0% | scheduler 优先 cout slice for L10 |
+| Round E (mm2s_arb 防御) | 210784 | 0% | -3.0% | WDMA 饥饿提优先级 |
+| Round F (host parallel) | 206589 | -2.0% | -4.9% | TB fork wait_dfe_done |
+| Round G (desc preload) | 206121 | -0.23% | -5.2% | TB fork preload layer N+1 desc |
+| Round H step 1 (S2MM pause) | 204251 | -0.91% | -6.0% | TB OFM check pause 200→30 cy |
+| Round H step 2 (ODMA sts bg) | **204240** | -0.005% | **-6.0%** | ODMA dispatcher sts 后台 collect |
+| @100 MHz Latency | **2.04 ms** | (vs IP baseline 2.17 ms) | | |
+| FPS | **490** | (+30 vs baseline 460) | | |
+
+### 失败 round 记录
+
+- **Round D**: bias_rf ping-pong (state machine bug, cs > 1 hang). 实验 1 证明就算成功收益 0.06%, 不值得.
+- **Round C+**: dispatcher cmd FIFO prefetch (L0 退化 +17K cy). 实验 4 证明 ring_wait 反弹会吃 50% 收益, 净 ≤2%.
+
+### 下一步: 论文写作准备
+
+实验数据齐全, 5 大瓶颈都有实证:
+1. 性能 baseline + 6 round 优化路径
+2. SMC 互联 overhead 量化
+3. ds layer 根因 (memory-bound 创新论证)
+4. 各种早期推测的实验证伪 (科学方法亮点)
+
+可直接引用 `paper/data/` 内 5 个 exp 报告 + summary 写论文 §性能瓶颈分析章节.

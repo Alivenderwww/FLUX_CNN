@@ -786,15 +786,24 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         raise ValueError(
             f"OFB SRAM 容量不足: W_OUT*cout_slices={ofb_row_words_calc}, "
             f"max rows={ofb_strip_rows_max} < 2")
+    # J-5 timing fix: ring_full 寄存器化引入 1-cycle latency, 多写 ≤1 cell.
+    # 让 ring 物理 wrap 多 1 行, ring_full 阈值不变, 防止多写 wrap 覆盖 row 0.
+    RING_FULL_SLACK = 1
     if H_OUT <= ofb_strip_rows_max:
-        ofb_strip = H_OUT
+        ofb_strip = H_OUT      # 整图装下, 无 ring wrap, 不需 slack
+        ofb_ring_words = ofb_strip * W_OUT * cout_slices
     else:
-        ofb_strip = min(8, ofb_strip_rows_max)
+        # strip mode: 留 1 行 slack 给 ring_full 寄存延迟
+        ofb_strip = min(8, ofb_strip_rows_max - RING_FULL_SLACK)
+        if ofb_strip < 2:
+            raise ValueError(
+                f"OFB SRAM 容量不足 (slack 后): max-{RING_FULL_SLACK}={ofb_strip_rows_max-RING_FULL_SLACK}")
+        # 物理 ring 多 1 行 slack: ring_words = (strip + slack) * row_words
+        ofb_ring_words = (ofb_strip + RING_FULL_SLACK) * W_OUT * cout_slices
 
     sram_depth = 8192
 
     ifb_ring_words = ifb_strip * W_IN  * cin_slices
-    ofb_ring_words = ofb_strip * W_OUT * cout_slices
     ofb_row_words  = W_OUT * cout_slices
 
     return {

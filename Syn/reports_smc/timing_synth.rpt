@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version : Vivado v.2023.1 (win64) Build 3865809 Sun May  7 15:05:29 MDT 2023
-| Date         : Thu May  7 00:07:21 2026
+| Date         : Thu May  7 09:41:04 2026
 | Host         : DESKTOP-73784OM running 64-bit major release  (build 9200)
 | Command      : report_timing_summary -file C:/_Project/FLUX_CNN/Syn/reports_smc/timing_synth.rpt -max_paths 10
 | Design       : multicore_top_smc
@@ -137,7 +137,7 @@ Table of Contents
 
     WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
     -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-      0.300        0.000                      0               281195        0.112        0.000                      0               281195        3.232        0.000                       0                 82366  
+      0.439        0.000                      0               281199        0.112        0.000                      0               281199        2.982        0.000                       0                 82370  
 
 
 All user specified timing constraints are met.
@@ -150,7 +150,7 @@ All user specified timing constraints are met.
 
 Clock  Waveform(ns)         Period(ns)      Frequency(MHz)
 -----  ------------         ----------      --------------
-clk    {0.000 4.000}        8.000           125.000         
+clk    {0.000 3.750}        7.500           133.333         
 
 
 ------------------------------------------------------------------------------------------------
@@ -160,7 +160,7 @@ clk    {0.000 4.000}        8.000           125.000
 
 Clock             WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
 -----             -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-clk                 0.300        0.000                      0               281195        0.112        0.000                      0               281195        3.232        0.000                       0                 82366  
+clk                 0.439        0.000                      0               281199        0.112        0.000                      0               281199        2.982        0.000                       0                 82370  
 
 
 ------------------------------------------------------------------------------------------------
@@ -191,26 +191,26 @@ Path Group    From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing 
 From Clock:  clk
   To Clock:  clk
 
-Setup :            0  Failing Endpoints,  Worst Slack        0.300ns,  Total Violation        0.000ns
+Setup :            0  Failing Endpoints,  Worst Slack        0.439ns,  Total Violation        0.000ns
 Hold  :            0  Failing Endpoints,  Worst Slack        0.112ns,  Total Violation        0.000ns
-PW    :            0  Failing Endpoints,  Worst Slack        3.232ns,  Total Violation        0.000ns
+PW    :            0  Failing Endpoints,  Worst Slack        2.982ns,  Total Violation        0.000ns
 ---------------------------------------------------------------------------------------------------
 
 
 Max Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_0/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[0]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -223,85 +223,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_0/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[0]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_0/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_0
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[0]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[0]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_1/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[10]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -314,85 +302,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_1/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[10]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_1/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_1
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[10]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[10]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_10/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[11]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -405,85 +381,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_10/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[11]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_10/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_10
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[11]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[11]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_11/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[12]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -496,85 +460,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_11/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[12]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_11/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_11
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[12]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[12]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_12/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[13]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -587,85 +539,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_12/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[13]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_12/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_12
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[13]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[13]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_13/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[14]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -678,85 +618,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_13/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[14]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_13/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_13
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[14]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[14]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_14/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -769,85 +697,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_14/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_14/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_14
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_15/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[1]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -860,85 +776,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_15/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[1]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_15/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_15
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[1]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[1]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_16/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[2]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -951,85 +855,73 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_16/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[2]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_16/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_16
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[2]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[2]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
-Slack (MET) :             0.300ns  (required time - arrival time)
-  Source:                 gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
-  Destination:            gen_core[0].u_core/u_wb/mem_reg_17/ADDRBWRADDR[14]
-                            (rising edge-triggered cell RAMB36E1 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+Slack (MET) :             0.439ns  (required time - arrival time)
+  Source:                 gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
+  Destination:            gen_core[0].u_core/u_line_buffer/yout_cnt_reg[3]/R
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
-  Requirement:            8.000ns  (clk rise@8.000ns - clk rise@0.000ns)
-  Data Path Delay:        7.142ns  (logic 2.073ns (29.027%)  route 5.069ns (70.973%))
-  Logic Levels:           19  (CARRY4=7 LUT2=2 LUT3=2 LUT4=1 LUT5=2 LUT6=5)
+  Requirement:            7.500ns  (clk rise@7.500ns - clk rise@0.000ns)
+  Data Path Delay:        6.693ns  (logic 1.962ns (29.314%)  route 4.731ns (70.686%))
+  Logic Levels:           14  (CARRY4=6 LUT1=1 LUT3=1 LUT4=2 LUT6=4)
   Clock Path Skew:        -0.027ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.510ns = ( 8.510 - 8.000 ) 
+    Destination Clock Delay (DCD):    0.510ns = ( 8.010 - 7.500 ) 
     Source Clock Delay      (SCD):    0.537ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
@@ -1042,72 +934,60 @@ Slack (MET) :             0.300ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.537     0.537    gen_core[0].u_core/u_ofb_writer/clk
-                         FDRE                                         r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/C
+                         net (fo=82561, unset)        0.537     0.537    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/C
   -------------------------------------------------------------------    -------------------
-                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_ofb_writer/r_rows_written_reg[3]/Q
-                         net (fo=3, unplaced)         0.514     1.274    gen_core[0].u_core/u_ofb_writer/r_rows_written_reg_n_0_[3]
-                         CARRY4 (Prop_carry4_DI[3]_CO[3])
-                                                      0.270     1.544 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34/CO[3]
-                         net (fo=1, unplaced)         0.007     1.551    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_34_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     1.604 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33/CO[3]
-                         net (fo=1, unplaced)         0.000     1.604    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_33_n_0
-                         CARRY4 (Prop_carry4_CI_O[3])
-                                                      0.155     1.759 f  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_30/O[3]
-                         net (fo=2, unplaced)         0.505     2.264    gen_core[0].u_core/u_ofb_writer/ring_full00_out[11]
-                         LUT2 (Prop_lut2_I1_O)        0.120     2.384 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14/O
-                         net (fo=1, unplaced)         0.000     2.384    gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_i_14_n_0
-                         CARRY4 (Prop_carry4_S[1]_CO[3])
-                                                      0.267     2.651 r  gen_core[0].u_core/u_ofb_writer/pipe_evt_cs_wrap_reg_i_3/CO[3]
-                         net (fo=2, unplaced)         0.639     3.290    gen_core[0].u_core/u_ofb_writer/ring_full
-                         LUT5 (Prop_lut5_I4_O)        0.043     3.333 f  gen_core[0].u_core/u_ofb_writer/rd_addr[4]_i_4/O
-                         net (fo=5, unplaced)         0.298     3.631    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/acc_out_ready
-                         LUT6 (Prop_lut6_I4_O)        0.043     3.674 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20/O
-                         net (fo=1, unplaced)         0.270     3.944    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_20_n_0
-                         LUT6 (Prop_lut6_I1_O)        0.043     3.987 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9/O
-                         net (fo=1, unplaced)         0.270     4.257    gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_9_n_0
-                         LUT2 (Prop_lut2_I0_O)        0.043     4.300 r  gen_core[0].u_core/u_parf_accum/g_col[15].u_col/drain_tile_cnt[7]_i_4/O
-                         net (fo=7, unplaced)         0.305     4.605    gen_core[0].u_core/u_parf_accum/rd_addr_reg[2]_rep_0
-                         LUT6 (Prop_lut6_I5_O)        0.043     4.648 f  gen_core[0].u_core/u_parf_accum/prod_out[15]_i_3/O
-                         net (fo=5, unplaced)         0.298     4.946    gen_core[0].u_core/u_mac_array/psum_in_ready
-                         LUT3 (Prop_lut3_I1_O)        0.043     4.989 f  gen_core[0].u_core/u_mac_array/x_cnt[5]_i_3/O
-                         net (fo=2, unplaced)         0.281     5.270    gen_core[0].u_core/u_wgt_buffer/wgt_ready
-                         LUT4 (Prop_lut4_I0_O)        0.043     5.313 f  gen_core[0].u_core/u_wgt_buffer/load_caught_up_i_3/O
-                         net (fo=2, unplaced)         0.281     5.594    gen_core[0].u_core/u_cfg/load_caught_up_reg_3
-                         LUT6 (Prop_lut6_I4_O)        0.043     5.637 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_9/O
-                         net (fo=2, unplaced)         0.281     5.918    gen_core[0].u_core/u_cfg/wgt_bubble_i_9_n_0
-                         LUT5 (Prop_lut5_I3_O)        0.043     5.961 r  gen_core[0].u_core/u_cfg/wgt_bubble_i_2/O
-                         net (fo=10, unplaced)        0.313     6.274    gen_core[0].u_core/u_wgt_buffer/pos_cnt_reg[3]_rep__8_1
-                         LUT6 (Prop_lut6_I1_O)        0.043     6.317 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1/O
-                         net (fo=24, unplaced)        0.334     6.651    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_52__1_n_0
-                         LUT3 (Prop_lut3_I1_O)        0.049     6.700 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_68__1/O
-                         net (fo=1, unplaced)         0.000     6.700    gen_core[0].u_core/u_wgt_buffer/p_1_in[0]
-                         CARRY4 (Prop_carry4_DI[0]_CO[3])
-                                                      0.280     6.980 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2/CO[3]
-                         net (fo=1, unplaced)         0.007     6.987    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_15__2_n_0
-                         CARRY4 (Prop_carry4_CI_CO[3])
-                                                      0.053     7.040 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1/CO[3]
-                         net (fo=1, unplaced)         0.000     7.040    gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_14__1_n_0
+                         FDRE (Prop_fdre_C_Q)         0.223     0.760 r  gen_core[0].u_core/u_line_buffer/y_row_base_reg[7]/Q
+                         net (fo=3, unplaced)         0.686     1.446    gen_core[0].u_core/u_line_buffer/y_row_base[7]
+                         CARRY4 (Prop_carry4_S[3]_CO[3])
+                                                      0.311     1.757 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54/CO[3]
+                         net (fo=1, unplaced)         0.000     1.757    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_54_n_0
                          CARRY4 (Prop_carry4_CI_O[1])
-                                                      0.173     7.213 r  gen_core[0].u_core/u_wgt_buffer/mem_reg_0_i_13__1/O[1]
-                         net (fo=57, unplaced)        0.466     7.679    gen_core[0].u_core/u_wb/ADDRBWRADDR[9]
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_17/ADDRBWRADDR[14]
+                                                      0.173     1.930 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_53/O[1]
+                         net (fo=4, unplaced)         0.375     2.305    gen_core[0].u_core/u_line_buffer/y_row_base_reg[11]_0[1]
+                         LUT4 (Prop_lut4_I0_O)        0.134     2.439 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66/O
+                         net (fo=1, unplaced)         0.000     2.439    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_66_n_0
+                         CARRY4 (Prop_carry4_DI[0]_CO[3])
+                                                      0.280     2.719 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56/CO[3]
+                         net (fo=1, unplaced)         0.000     2.719    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_56_n_0
+                         CARRY4 (Prop_carry4_CI_CO[0])
+                                                      0.152     2.871 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_51/CO[0]
+                         net (fo=24, unplaced)        0.255     3.126    gen_core[0].u_core/u_line_buffer/rows_needed2
+                         LUT4 (Prop_lut4_I1_O)        0.128     3.254 f  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44/O
+                         net (fo=2, unplaced)         0.281     3.535    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_44_n_0
+                         LUT6 (Prop_lut6_I5_O)        0.043     3.578 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20/O
+                         net (fo=1, unplaced)         0.497     4.075    gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_20_n_0
+                         CARRY4 (Prop_carry4_DI[1]_CO[3])
+                                                      0.250     4.325 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9/CO[3]
+                         net (fo=1, unplaced)         0.007     4.332    gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_9_n_0
+                         CARRY4 (Prop_carry4_CI_CO[3])
+                                                      0.053     4.385 r  gen_core[0].u_core/u_line_buffer/iss_offset_reg[0]_i_4/CO[3]
+                         net (fo=3, unplaced)         0.646     5.031    gen_core[0].u_core/u_line_buffer/streaming_rows_ready
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.074 r  gen_core[0].u_core/u_line_buffer/iss_offset[0]_i_1/O
+                         net (fo=24, unplaced)        0.334     5.408    gen_core[0].u_core/u_line_buffer/issue_ok_std
+                         LUT3 (Prop_lut3_I2_O)        0.043     5.451 r  gen_core[0].u_core/u_line_buffer/iss_pos[5]_i_1/O
+                         net (fo=8, unplaced)         0.308     5.759    gen_core[0].u_core/u_cfg/kx_cnt_reg[3][0]
+                         LUT6 (Prop_lut6_I4_O)        0.043     5.802 r  gen_core[0].u_core/u_cfg/kx_cnt[3]_i_1/O
+                         net (fo=22, unplaced)        0.332     6.134    gen_core[0].u_core/u_cfg/evt_iss_pos_wrap
+                         LUT6 (Prop_lut6_I1_O)        0.043     6.177 f  gen_core[0].u_core/u_cfg/y_row_base[16]_i_8/O
+                         net (fo=78, unplaced)        0.363     6.540    gen_core[0].u_core/u_cfg/iss_pos_reg[4]_0
+                         LUT1 (Prop_lut1_I0_O)        0.043     6.583 r  gen_core[0].u_core/u_cfg/yout_cnt[0]_i_1__0/O
+                         net (fo=16, unplaced)        0.647     7.230    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[15]_1
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[3]/R
   -------------------------------------------------------------------    -------------------
 
-                         (clock clk rise edge)        8.000     8.000 r  
-                                                      0.000     8.000 r  clk (IN)
-                         net (fo=82557, unset)        0.510     8.510    gen_core[0].u_core/u_wb/clk
-                         RAMB36E1                                     r  gen_core[0].u_core/u_wb/mem_reg_17/CLKBWRCLK
-                         clock pessimism              0.000     8.510    
-                         clock uncertainty           -0.035     8.475    
-                         RAMB36E1 (Setup_ramb36e1_CLKBWRCLK_ADDRBWRADDR[14])
-                                                     -0.496     7.979    gen_core[0].u_core/u_wb/mem_reg_17
+                         (clock clk rise edge)        7.500     7.500 r  
+                                                      0.000     7.500 r  clk (IN)
+                         net (fo=82561, unset)        0.510     8.010    gen_core[0].u_core/u_line_buffer/clk
+                         FDRE                                         r  gen_core[0].u_core/u_line_buffer/yout_cnt_reg[3]/C
+                         clock pessimism              0.000     8.010    
+                         clock uncertainty           -0.035     7.975    
+                         FDRE (Setup_fdre_C_R)       -0.306     7.669    gen_core[0].u_core/u_line_buffer/yout_cnt_reg[3]
   -------------------------------------------------------------------
-                         required time                          7.979    
-                         arrival time                          -7.679    
+                         required time                          7.669    
+                         arrival time                          -7.230    
   -------------------------------------------------------------------
-                         slack                                  0.300    
+                         slack                                  0.439    
 
 
 
@@ -1117,9 +997,9 @@ Min Delay Paths
 --------------------------------------------------------------------------------------
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/DP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1134,7 +1014,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1144,7 +1024,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/DP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1157,9 +1037,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/SP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1174,7 +1054,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1184,7 +1064,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/SP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1197,9 +1077,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/DP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1214,7 +1094,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1224,7 +1104,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/DP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1237,9 +1117,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/SP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1254,7 +1134,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1264,7 +1144,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/data_mem_reg_0_7_1_1/SP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1277,9 +1157,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/DP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1294,7 +1174,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/Q
@@ -1304,7 +1184,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/DP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1317,9 +1197,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/SP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1334,7 +1214,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/Q
@@ -1344,7 +1224,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_0_0/SP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1357,9 +1237,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/DP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1374,7 +1254,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/Q
@@ -1384,7 +1264,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/DP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1397,9 +1277,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/SP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1414,7 +1294,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[0].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[0].u_core/u_mm2s_arb/sts_wr_reg[1]/Q
@@ -1424,7 +1304,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/WCLK
                          RAMD32                                       r  gen_core[0].u_core/u_mm2s_arb/sts_mem_reg_0_7_1_1/SP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1437,9 +1317,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/DP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1454,7 +1334,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[1].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[1].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1464,7 +1344,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/DP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1477,9 +1357,9 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
 Slack (MET) :             0.112ns  (arrival time - required time)
   Source:                 gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/C
-                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Destination:            gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/SP/WADR1
-                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@4.000ns period=8.000ns})
+                            (rising edge-triggered cell RAMD32 clocked by clk  {rise@0.000ns fall@3.750ns period=7.500ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
@@ -1494,7 +1374,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.266     0.266    gen_core[1].u_core/u_mm2s_arb/clk
+                         net (fo=82561, unset)        0.266     0.266    gen_core[1].u_core/u_mm2s_arb/clk
                          FDRE                                         r  gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/C
   -------------------------------------------------------------------    -------------------
                          FDRE (Prop_fdre_C_Q)         0.100     0.366 r  gen_core[1].u_core/u_mm2s_arb/data_wr_reg[1]/Q
@@ -1504,7 +1384,7 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=82557, unset)        0.280     0.280    gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
+                         net (fo=82561, unset)        0.280     0.280    gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/WCLK
                          RAMD32                                       r  gen_core[1].u_core/u_mm2s_arb/data_mem_reg_0_7_0_0/SP/CLK
                          clock pessimism              0.000     0.280    
                          RAMD32 (Hold_ramd32_CLK_WADR1)
@@ -1522,41 +1402,41 @@ Slack (MET) :             0.112ns  (arrival time - required time)
 Pulse Width Checks
 --------------------------------------------------------------------------------------
 Clock Name:         clk
-Waveform(ns):       { 0.000 4.000 }
-Period(ns):         8.000
+Waveform(ns):       { 0.000 3.750 }
+Period(ns):         7.500
 Sources:            { clk }
 
 Check Type        Corner  Lib Pin      Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location  Pin
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[0]/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[0]__0/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[10]/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[10]__0/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[11]/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[11]__0/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[12]/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[12]__0/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[13]/CLK
-Min Period        n/a     DSP48E1/CLK  n/a            2.634         8.000       5.366                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[13]__0/CLK
-Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
-Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
-Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
-Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
-Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
-Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
-Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
-Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
-Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
-Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
-High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
-High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
-High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
-High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
-High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
-High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
-High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
-High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
-High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
-High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         4.000       3.232                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[0]/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[0]__0/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[10]/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[10]__0/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[11]/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[11]__0/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[12]/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[12]__0/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[13]/CLK
+Min Period        n/a     DSP48E1/CLK  n/a            2.634         7.500       4.866                gen_core[0].u_core/u_ofb_writer/u_sdp/prod_d_reg[13]__0/CLK
+Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
+Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
+Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
+Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
+Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
+Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
+Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
+Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
+Low Pulse Width   Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
+Low Pulse Width   Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
+High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
+High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA/CLK
+High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
+High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMA_D1/CLK
+High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
+High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB/CLK
+High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
+High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMB_D1/CLK
+High Pulse Width  Slow    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
+High Pulse Width  Fast    RAMD32/CLK   n/a            0.768         3.750       2.982                gen_core[0].u_core/u_axi_dm/U0/GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER.I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO.I_SYNC_FIFO/NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO/xpm_fifo_instance.xpm_fifo_sync_inst/xpm_fifo_base_inst/gen_sdpram.xpm_memory_base_inst/gen_wr_a.gen_word_narrow.mem_reg_0_15_0_5/RAMC/CLK
 
 
 

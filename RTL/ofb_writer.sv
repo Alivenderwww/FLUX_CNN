@@ -125,12 +125,19 @@ module ofb_writer #(
     // 握手 + 边界
     // =========================================================================
     // Ring 反压 (永启): 写满 strip_rows 行未被 ODMA 消费则停
-    logic ring_full;
-    assign ring_full = ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
+    // J-5 timing fix: ring_full 寄存器化, 打断 r_rows_written → 19-level critical chain
+    //   acc_out_ready 现在用 register 输出, 起点不再是 r_rows_written (CARRY4 减法链).
+    //   driver 配合 ofb_ring_words 多算 1 行 slack (cfg_ofb_strip_rows 比物理 wrap 边界小 1),
+    //   让 ring_full 寄存延迟 1 cycle 多写 ≤1 cell 时不 wrap 覆盖 row 0.
+    logic ring_full_d;
+    always_ff @(posedge clk) begin
+        if (!rst_n) ring_full_d <= 1'b0;
+        else        ring_full_d <= ((rows_written - rows_drained) >= {10'd0, cfg_ofb_strip_rows});
+    end
 
     // R.1: bias_rf 在 cs 切换时 4 拍 prefetch, bias_ready=0 期间不放行 acc_fire
     logic acc_fire;
-    assign acc_out_ready = (state == S_RUN) && !ring_full && bias_ready;
+    assign acc_out_ready = (state == S_RUN) && !ring_full_d && bias_ready;
     assign acc_fire      = acc_out_valid && acc_out_ready;
 
     // 暴露 cs_cnt 给 bias_rf (driven by 内部 counter, declared 后)

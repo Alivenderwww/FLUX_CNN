@@ -48,6 +48,13 @@ foreach xci $ip_list {
 generate_target -force synthesis [get_ips]
 foreach ip [get_ips] {
     puts "=== synth_ip $ip ==="
+    # 检查 dcp 是否存在, 不在就强制重 synth (.Xil 清理后 Vivado 误判 up_to_date)
+    set ip_dcp "c:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/$ip/$ip.dcp"
+    if {![file exists $ip_dcp]} {
+        puts "  forcing reset+resynth (dcp missing)"
+        reset_target -quiet synthesis [get_ips $ip]
+        generate_target -force synthesis [get_ips $ip]
+    }
     synth_ip [get_ips $ip]
 }
 puts "=== All IPs synthesized ==="
@@ -97,7 +104,7 @@ set_property verilog_define USE_AXI_SMC_IP=1 [current_fileset]
 # -----------------------------------------------------------------------------
 # 4. Clock constraint
 # -----------------------------------------------------------------------------
-set CLK_PERIOD_NS 8.0    ;# 125 MHz target (J-4 SDP 3-stage 后)
+set CLK_PERIOD_NS 7.5    ;# 133 MHz target (J-5 ring_full 寄存器化, 留 0.5ns 给 P&R)
 
 set xdc_file "$SCRIPT_DIR/cnn_smc_ooc.xdc"
 set fd [open $xdc_file w]

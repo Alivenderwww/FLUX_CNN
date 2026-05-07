@@ -1466,3 +1466,66 @@ hardcode 切片公式.
 
 **验证**: SMC sim 三 case PASS (resnet11 205752 cy 跟 commit 4b4be0c 一致, bit-exact),
 单核 regression 26/26 PASS.
+
+---
+
+## 14. Round B IDMA SG dispatcher sts 后台化 (2026-05-07) — ResNet11 SMC N=4 cycle 205752 → 203320 (-1.18%)
+
+### 解决方案
+
+**问题**: `RTL/DMA/idma_sg_dispatcher.sv` 主 FSM 每条 cmd 必须等 sts 才进下条 (S_FETCH_CMD_STS + S_STS
+两个等 sts 状态), cross-mem cmd per_row=2 时累积 turnaround 浪费.
+
+**修改**: sts collector 跟主 FSM 解耦.
+  - `mm2s_sts_tready` 永远 = 1 (后台 collect, 不阻塞 main FSM).
+  - 主 FSM 跳过 S_FETCH_CMD_STS / S_STS, 状态从 9 个减到 7 个.
+  - cmd_fire / sts_fire 计数器并行累计, S_DONE 时 `r_cmd_fires_total == r_sts_collected` 才置 r_done.
+  - r_cmd_idx / r_rows_pushed 改成 S_DATA tlast (= 数据写完 IFB 那拍) 推进, 不等 sts.
+  - r_err sts[7] sticky 不变 (后台 collector 也检查).
+
+### 仿真数据对比
+
+| Layer | Round A cy | Round B cy | Δ | Δ% |
+|---|----:|----:|----:|----:|
+| 0 Patch (K=1 s=1, cs=4 cross-mem) | 41227 | **40795** | -432 | -1.0% |
+| 1 L1.B1.C1 (K=3 s=2 halo cross-mem) | 24956 | **24483** | -473 | -1.9% |
+| 2 L1.B1.C2 (K=3 s=1) | 20174 | 20162 | -12 | 0% |
+| 3 L1.B2.ds (K=1 s=2) | 17478 | **16999** | -479 | -2.7% |
+| 4 L2.B1.C1 (K=3 s=2) | 10888 | 10880 | -8 | 0% |
+| 5 L2.B1.C2 (K=3 s=1) | 22413 | 22401 | -12 | 0% |
+| **6 L2.B2.ds (K=1 s=2 cross-mem)** | 11439 | **10732** | **-707** | **-6.2%** |
+| 7 L3.B1.C1 (K=3 s=2) | 12841 | 12834 | -7 | 0% |
+| 8 L3.B1.C2 (K=3 s=1) | 27687 | 27679 | -8 | 0% |
+| **9 L3.B2.ds (K=1 s=2 cross-mem)** | 4404 | **4112** | **-292** | **-6.6%** |
+| 10 FC | 10045 | 10043 | -2 | 0% |
+| **TOTAL** | **205752** | **203320** | **-2432** | **-1.18%** |
+
+其他 case:
+- smc_wslice1: 4339 → **4125 cy (-4.9%)**
+- smc_wslice5: 21699 → **20629 cy (-4.9%)**
+- 单核 regression 26/26 PASS
+
+### 收益分析
+
+ds 层 (L6/L9, K=1 stride=2 cross-mem) 收益最高 (6.2%/6.6%), 因为它们 cmd 数密集 + sts wait 占总 cycle 比重大.
+K=3 主 conv 层收益较低 (~0%), 因为 user data 传输 D 远大于 sts wait, 节省 2 cy/cmd 在大 D 下占比小.
+
+**实测 < 预估 (5-8% → 1.18%)**: axi_dm IP 内部 sts 跟 data tlast 几乎同 cycle 返回 (不需要等几拍),
+sts wait 实际仅 1-2 cycle. 真正的 cross-mem 串行损失 (axi_dm 内部 cmd FIFO 严格按序处理) 没法在自写
+dispatcher 层面消除. 要拿到 30+% 必须改 IP 架构 (axi_mcdma 多 channel 真并行).
+
+### 综合
+
+- WNS: +0.196 ns (跟 Round A 完全一致, sts collector 解耦不影响 critical path)
+- Fmax: 142.8 MHz (timing MET)
+- 资源不变
+
+### Round 总览 (cycle 累计收益)
+
+| Round | ResNet11 cy | Δ vs prev | 累计 vs baseline | 关键改动 |
+|---|----:|----:|----:|---|
+| baseline (R6 timing, IFB=1024) | 220286 | - | 0% | (起点) |
+| Round A (切片公平) | 205752 | -6.6% | -6.6% | driver 余数分散 + 隐性 mem boundary 对齐 |
+| Round B (sts 后台 collect) | 203320 | -1.18% | -7.7% | dispatcher main FSM 跳 sts wait |
+| @100 MHz Latency | 2.03 ms | (vs 2.20 ms baseline) | **-7.7%** | |
+| FPS | 492 | (vs 454 baseline) | **+8.4%** | |

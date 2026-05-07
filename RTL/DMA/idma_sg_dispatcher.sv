@@ -33,21 +33,20 @@
 //   这里是简化 PoC 格式, 不跟 Xilinx axi_dma SG 64-byte descriptor 对齐;
 //   driver (mesh_cmd.py write_sg_cmd_list) 跟 RTL 同步即可.
 //
-// FSM:
+// FSM (J-7 Round B 流水化, 2026-05-07):
 //   S_IDLE       → start → S_FETCH_CMD_ISSUE
-//   S_FETCH_CMD_ISSUE: 装 cmd 拉 cmd_list[r_cmd_idx] (32 byte) → S_FETCH_CMD_DATA
-//   S_FETCH_CMD_DATA : 收 1 beat (DATA_W=128 = 16 byte; 32 byte cmd 仅 word0..3
-//                       前 16 byte 有效, 后 16 byte reserved 跳过) → S_FETCH_CMD_STS
-//                       简化: 我们一条 cmd 实际只用 16 byte, btt=16, 1 beat
-//   S_FETCH_CMD_STS  : 等 sts → S_RING_WAIT
-//   S_RING_WAIT      : 检查 ring 是否有空间 (rows_pushed - rows_consumed
-//                       < cfg_ifb_strip_rows). 不够 → 等; 够 → S_ISSUE
+//   S_FETCH_CMD_ISSUE: 装 cmd 拉 cmd_list[r_cmd_idx] (16 byte) → S_FETCH_CMD_DATA
+//   S_FETCH_CMD_DATA : 收 1 beat 16 byte, latch cmd info → S_RING_WAIT
+//                       (跳过原 S_FETCH_CMD_STS, sts 后台 collect)
+//   S_RING_WAIT      : 检查 ring 有空间 → S_ISSUE
 //   S_ISSUE          : 装实际 cmd 拉 user data → S_DATA
-//   S_DATA           : 收 data, 写 IFB SRAM[sram_wptr] (sram_wptr 从 r_sram_offset
-//                       起递增, 跨 ring_words wrap). tlast → S_STS
-//   S_STS            : 等 sts. 推进 r_cmds_done. 看是否 last_cmd / 全部跑完
-//                       → S_DONE; 否则 S_FETCH_CMD_ISSUE 拉下一条
-//   S_DONE           : r_done sticky → S_IDLE
+//   S_DATA           : 收 data, 写 IFB SRAM. tlast → next cmd (跳过原 S_STS)
+//                       后台 sts collector 单独累计 r_cmds_done.
+//   S_DONE           : 等 r_cmds_done == r_cmd_idx (所有 sts 收完) → r_done sticky.
+//
+// Round B 省去 S_FETCH_CMD_STS + S_STS 共 2 拍/cmd 的 sts wait turnaround.
+// cross-mem layer per_row=2 时 C1/C2 cmd_count 翻倍, 省 ~2*H 拍/layer ≈ 5~8% 整网.
+// sts 后台 collector 永远 ready, 错误 sticky 不阻塞 main FSM.
 // =============================================================================
 
 module idma_sg_dispatcher #(
@@ -111,15 +110,14 @@ module idma_sg_dispatcher #(
     // SG cmd 一条占 16 byte 实际有效 (我们设计 32 byte 但只用 word 0..3 共 16 byte)
     localparam int CMD_BTT       = 16;        // 拉 cmd 的 transfer 长度 (byte)
 
+    // J-7 Round B: 跳过 S_FETCH_CMD_STS / S_STS (sts 后台 collect), main FSM 6 状态.
     typedef enum logic [3:0] {
         S_IDLE          = 4'd0,
         S_FETCH_CMD_ISS = 4'd1,
         S_FETCH_CMD_DAT = 4'd2,
-        S_FETCH_CMD_STS = 4'd3,
         S_RING_WAIT     = 4'd4,
         S_ISSUE         = 4'd5,
         S_DATA          = 4'd6,
-        S_STS           = 4'd7,
         S_DONE          = 4'd8
     } state_t;
     state_t st, st_next;
@@ -174,7 +172,8 @@ module idma_sg_dispatcher #(
 
     // data tready: 拉 cmd 时 OR 拉用户 data 时
     assign mm2s_data_tready = (st == S_FETCH_CMD_DAT) || (st == S_DATA);
-    assign mm2s_sts_tready  = (st == S_FETCH_CMD_STS) || (st == S_STS);
+    // J-7 Round B: sts 后台 collector 永远 ready, 不让 main FSM 等 sts
+    assign mm2s_sts_tready  = 1'b1;
 
     // =========================================================================
     // IFB SRAM 写: 仅 S_DATA 阶段 (拉 cmd 阶段不写 IFB)
@@ -203,22 +202,22 @@ module idma_sg_dispatcher #(
     // =========================================================================
     // FSM next-state
     // =========================================================================
+    // J-7 Round B: main FSM 跳过 STS state, sts 后台 collect.
+    //   S_DATA tlast 后直接判断是否最后 cmd (r_last_cmd / r_cmd_idx>=cmd_count):
+    //     是 → S_DONE (但 S_DONE 内还要等所有 sts 收完才置 r_done)
+    //     否 → S_FETCH_CMD_ISS 下一条
     always_comb begin
         st_next = st;
         case (st)
             S_IDLE          : if (start && cfg_cmd_count > 0) st_next = S_FETCH_CMD_ISS;
             S_FETCH_CMD_ISS : if (mm2s_cmd_tvalid && mm2s_cmd_tready) st_next = S_FETCH_CMD_DAT;
             S_FETCH_CMD_DAT : if (mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast)
-                                                                         st_next = S_FETCH_CMD_STS;
-            S_FETCH_CMD_STS : if (mm2s_sts_tvalid && mm2s_sts_tready)    st_next = S_RING_WAIT;
+                                                                         st_next = S_RING_WAIT;
             S_RING_WAIT     : if (ring_has_space)                         st_next = S_ISSUE;
             S_ISSUE         : if (mm2s_cmd_tvalid && mm2s_cmd_tready)    st_next = S_DATA;
-            S_DATA          : if (mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast)
-                                                                         st_next = S_STS;
-            S_STS           : if (mm2s_sts_tvalid && mm2s_sts_tready) begin
-                // 注意: r_cmd_idx 在 cmd_fire 时 +1, 表示已装载几个 cmd. 装第 N 个 cmd 后
-                // r_cmd_idx=N, 这条 sts 完成时算 list 跑完. 用 r_cmd_idx >= cfg_cmd_count
-                // 而不是 +1 (避免 off-by-one 漏装最后一条 cmd).
+            S_DATA          : if (mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast) begin
+                // r_cmd_idx 在 cmd_fire 时 +1, 装第 N 个 cmd 后 r_cmd_idx=N.
+                // 不等 sts (后台 collect), 直接判断是否末 cmd.
                 if (r_last_cmd || (r_cmd_idx >= cfg_cmd_count))           st_next = S_DONE;
                 else                                                       st_next = S_FETCH_CMD_ISS;
             end
@@ -272,32 +271,32 @@ module idma_sg_dispatcher #(
     end
 
     // =========================================================================
-    // r_cmd_idx ++ 在 S_STS 完成时
+    // r_cmd_idx ++ 在 S_DATA tlast (= dispatch 完一条 cmd 的 user data, J-7 改)
+    //   每条 cmd 实际有 2 次 cmd_fire: fetch_cmd_list (16 byte) + issue_user_data (变长).
+    //   r_cmd_idx 用于 fetch ptr (cmd_list[r_cmd_idx]) 跟 cmds_per_row 累加.
+    //   S_DATA tlast = 第 N 条 cmd 完整 dispatch (data 已写 IFB, sts 还在路上).
     // =========================================================================
     always_ff @(posedge clk) begin
-        if      (!rst_n)         r_cmd_idx <= '0;
-        else if (start)          r_cmd_idx <= '0;
-        else if (st == S_STS && mm2s_sts_tvalid && mm2s_sts_tready)
-                                 r_cmd_idx <= r_cmd_idx + 16'd1;
+        if      (!rst_n) r_cmd_idx <= '0;
+        else if (start)  r_cmd_idx <= '0;
+        else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast)
+                         r_cmd_idx <= r_cmd_idx + 16'd1;
     end
 
     // =========================================================================
-    // r_cmds_done / r_rows_pushed
-    //   每条 cmd 完成 (S_STS) 时 r_cmds_done++
-    //   每 cfg_cmds_per_row 条 cmd 完成时 r_rows_pushed++
+    // r_rows_pushed: 跟 r_cmd_idx 同步推进 (issue-driven, 不等 sts)
+    //   ring 反压用此 → in-flight 但未 sts 的 cmd 也占 ring 空间, 安全保守.
+    //   line_buffer 看 rows_available = r_rows_pushed, data 已写入 IFB (S_DATA tlast 后).
     // =========================================================================
-    logic [7:0] r_cmds_in_row;     // 当前行内已完成几条 cmd (0..cfg_cmds_per_row-1)
+    logic [7:0] r_cmds_in_row;     // 当前行内已 dispatch 几条 cmd (0..cfg_cmds_per_row-1)
     always_ff @(posedge clk) begin
         if (!rst_n) begin
-            r_cmds_done   <= '0;
             r_cmds_in_row <= '0;
             r_rows_pushed <= '0;
         end else if (start) begin
-            r_cmds_done   <= '0;
             r_cmds_in_row <= '0;
             r_rows_pushed <= '0;
-        end else if (st == S_STS && mm2s_sts_tvalid && mm2s_sts_tready) begin
-            r_cmds_done <= r_cmds_done + 16'd1;
+        end else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast) begin
             if (cfg_cmds_per_row == 8'd0 || r_cmds_in_row + 8'd1 >= cfg_cmds_per_row) begin
                 r_cmds_in_row <= '0;
                 r_rows_pushed <= r_rows_pushed + 16'd1;
@@ -308,25 +307,50 @@ module idma_sg_dispatcher #(
     end
 
     // =========================================================================
-    // r_done sticky
+    // J-7 后台 sts collector (跟 main FSM 解耦, 永远 ready)
+    //   r_cmds_done 累计 sts 收到的条数 (跨 fetch_cmd 跟 user_data 的所有 sts).
+    //   每条逻辑 cmd 实际有 2 次 sts (fetch + user_data), 所以 sts 总数 = 2 × cmd_count.
+    //   只用作 S_DONE drain 检查 (等 r_cmds_done == r_cmd_idx*2 ?).
+    //
+    //   实际更简单: r_cmds_done 单独 count, S_DONE 时检查 sts_pending = 0.
+    //   sts_pending = (cmd_fire 计数 - sts_fire 计数), 只在 0 时才真 done.
     // =========================================================================
+    logic [15:0] r_cmd_fires_total;     // 累计 mm2s_cmd_tvalid&ready 次数 (= 总 cmd 数)
+    logic [15:0] r_sts_collected;       // 累计 sts_fire 次数
     always_ff @(posedge clk) begin
-        if      (!rst_n)              r_done <= 1'b0;
-        else if (start)               r_done <= 1'b0;
-        else if (st == S_DONE)        r_done <= 1'b1;
+        if (!rst_n || start) begin
+            r_cmd_fires_total <= '0;
+            r_sts_collected   <= '0;
+            r_cmds_done       <= '0;
+        end else begin
+            if (mm2s_cmd_tvalid && mm2s_cmd_tready)
+                r_cmd_fires_total <= r_cmd_fires_total + 16'd1;
+            if (mm2s_sts_tvalid && mm2s_sts_tready) begin
+                r_sts_collected   <= r_sts_collected   + 16'd1;
+                r_cmds_done       <= r_cmds_done       + 16'd1;
+            end
+        end
     end
 
     // =========================================================================
-    // r_err: sts[7] = 0 表示 OK, = 1 表错误 (跟 idma_ctrl 一致)
-    //   注意: Xilinx datamover sts 字段 [7]=OKAY → r_err = ~sts[7]; 但项目内
-    //   idma_ctrl 用的是相反约定, 这里跟 idma_sg_dispatcher 已有逻辑一致即可.
-    //   sticky.
+    // r_done sticky: 进 S_DONE 后等所有 sts 收完才置 r_done
+    //   sts_pending = r_cmd_fires_total - r_sts_collected (in-flight cmd 数)
+    //   pending = 0 才允许 r_done = 1
+    // =========================================================================
+    logic sts_drained;
+    assign sts_drained = (r_cmd_fires_total == r_sts_collected);
+    always_ff @(posedge clk) begin
+        if      (!rst_n)                              r_done <= 1'b0;
+        else if (start)                               r_done <= 1'b0;
+        else if (st == S_DONE && sts_drained)         r_done <= 1'b1;
+    end
+
+    // =========================================================================
+    // r_err: sts[7] = 0 表示错误 (sticky). 后台 collect 时检查.
     // =========================================================================
     always_ff @(posedge clk) begin
         if      (!rst_n)                                                  r_err <= 1'b0;
-        else if ((st == S_FETCH_CMD_STS || st == S_STS)
-              && mm2s_sts_tvalid && mm2s_sts_tready
-              && !mm2s_sts_tdata[7])                                      r_err <= 1'b1;
+        else if (mm2s_sts_tvalid && mm2s_sts_tready && !mm2s_sts_tdata[7]) r_err <= 1'b1;
     end
 
 endmodule

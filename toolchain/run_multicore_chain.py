@@ -182,17 +182,33 @@ class DDRPlanner:
 # ---------------------------------------------------------------------------
 # 跑 chain 拿每层 IFM/WB/OFM 数据 (single-core 模式, 用作 DDR 数据)
 # ---------------------------------------------------------------------------
-def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
+def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42, input_image=None):
     """
     给每层调 gen_isa_test.generate_random 跑一次, 收集每层数据.
 
     ResNet block 不是线性 chain — 用 layer.input_src / layer.shortcut_src 按名字
     在 ofm_dict 里查输入跟 shortcut. 维持 prev_ofm 兼容老 demo (input_src=='' 时
     fallback 为 prev_ofm).
+
+    input_image: 若指定 (PNG/JPG 路径), layer 0 (root) IFM 用真图加载 + resize +
+                 INT8 量化, 替代 random. layers[0].h_in/w_in/c_in 决定 resize 目标.
     """
     chain_data = []
     prev_ofm = None              # 老 demo 兼容: input_src=='' 时用 prev (除了第一层)
     ofm_dict = {}                # layer.name → ofm_arr (ResNet 用)
+
+    # 真图 IFM: layer 0 (root) fallback 用
+    real_ifm_for_root = None
+    if input_image is not None:
+        if not layers:
+            raise ValueError("--input-image 需要至少 1 个 layer")
+        L0 = layers[0]
+        from load_input_image import load_image_as_ifm
+        print(f"  [input-image] {input_image} → layer 0 IFM ({L0.h_in}×{L0.w_in}×{L0.c_in})")
+        real_ifm_for_root = load_image_as_ifm(
+            input_image, H_in=L0.h_in, W_in=L0.w_in, cin=L0.c_in,
+            pad_value=0, normalize='center'
+        )
 
     for i, layer in enumerate(layers):
         layer_dir = os.path.join(out_dir, f'layer{i:02d}')
@@ -210,7 +226,8 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42):
                                  f"not in ofm_dict {list(ofm_dict.keys())}")
             ifm_arr_in = ofm_dict[layer.input_src]
         elif i == 0:
-            ifm_arr_in = None
+            # layer 0 root: 优先真图, 否则 random
+            ifm_arr_in = real_ifm_for_root
         elif layer.h_in != (chain_data[-1]['h_out'] if chain_data else 0) \
              or layer.w_in != (chain_data[-1]['w_out'] if chain_data else 0):
             # 维度不匹配 prev → 当 root, 用 random ifm (e.g. ResNet FC 接 GAP/Flatten)
@@ -500,7 +517,7 @@ def gen_core_per_layer_desc_lists(core_id, steps, layers, ddr_planner, n_layers,
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
-def run_multicore_chain(layers, n_cores, out_dir, smc=False):
+def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None):
     """生成多核多层 chain 的 case 目录 + desc list (SMC + NUMA 主线)."""
 
     # 1. Schedule
@@ -525,7 +542,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
     print("\n[Step 1] Generating chain data (single-core run)...")
     chain_data_dir = os.path.join(out_dir, 'chain_data')
     os.makedirs(chain_data_dir, exist_ok=True)
-    chain_data = run_chain_data_gen(layers, chain_data_dir, ddr)
+    chain_data = run_chain_data_gen(layers, chain_data_dir, ddr, input_image=input_image)
 
     # name → layer index 索引 (ResNet 用 input_src/shortcut_src 找上游 layer 的 DDR 区)
     name_to_idx = {l.name: i for i, l in enumerate(layers)}
@@ -1126,6 +1143,10 @@ if __name__ == '__main__':
                         help='wslice4/5: 4/5 层 chain | wslice_mixed: 多 K | '
                              'wslice_stride2: 含 ds 层 | wslice_oddw: W=33 奇 | '
                              'wslice_smallw: W=8 极小 | wslice_k7: K=7 大 halo | wslice_k1: K=1 无 halo')
+    parser.add_argument('--input-image', default=None,
+                        help='真图作为 layer 0 IFM (PNG/JPG, resize 到 layer 0 的 H_in/W_in/c_in). '
+                             '不指定则用 random IFM (默认). 适合 ResNet11 demo: 真图推理验证硬件 = '
+                             'PyTorch float 量化等价. 不分类 (random weights).')
     args = parser.parse_args()
 
     if args.demo == 'wslice1':
@@ -1285,7 +1306,8 @@ if __name__ == '__main__':
     # 或换 Versal NoC. RTL multicore_top_smc NUM_CORES 是 generic, 这里只是 driver 决定 cmd 数.
     if args.smc and args.n_cores not in (3, 4):
         sys.exit(f"ERROR: --smc supports n_cores=3 (VD100 demo) or 4 (K325T paper); got {args.n_cores}")
-    chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root, smc=args.smc)
+    chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root,
+                                                     smc=args.smc, input_image=args.input_image)
 
     # 写 active_case.txt 让 sim/tb_smc/run.tcl 自动跑刚生成的 case
     if args.smc:

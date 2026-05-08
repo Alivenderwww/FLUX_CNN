@@ -63,14 +63,14 @@ set rtl_files [list \
     "$RTL_DIR/bias_rf.sv"            "$RTL_DIR/ofb_writer.sv" \
     "$RTL_DIR/core_top.sv" \
     "$RTL_DIR/Versal/multicore_top_vd100.sv" \
-    "$tclpath/src/top.v" \
+    "$RTL_DIR/Versal/multicore_top_vd100_bd.sv" \
 ]
 add_files $rtl_files
 set_property FILE_TYPE {SystemVerilog} [get_files *.sv]
 set_property include_dirs $RTL_DIR [current_fileset]
 
-# Top wrapper (top.v 实例化 BD wrapper + multicore_top_vd100)
-set_property top top [current_fileset]
+# Top = BD wrapper (Vivado 自动从 BD 生成 design_1_wrapper.v 当顶层)
+# 不需要手写 top.v: BD 内部 multicore_top_vd100_bd 跟 PS/NoC 直接连
 
 # axi_dm IP (复用 K325T 的 xci, 跨设备 retarget)
 set IP_DIR  "$tclpath/../ip_managed/ip_managed.srcs/sources_1/ip"
@@ -78,9 +78,16 @@ read_ip "$IP_DIR/axi_dm/axi_dm.xci"
 generate_target -force synthesis [get_ips axi_dm]
 synth_ip [get_ips axi_dm]
 
-# Constraints (board pin assignment, ALINX 提供 system.xdc / ddr4.xdc)
-add_files -fileset constrs_1 -copy_to $projpath/$projName.srcs/constrs_1/new \
-    -force [glob -nocomplain $tclpath/src/xdc/*.xdc]
+# Constraints: 复用 ALINX 02_pl_rw_ddr 的 ddr4.xdc + system.xdc (板级 IO 一致)
+set ALINX_XDC_DIR "C:/_Project/Bishe/VD100/VD100_9_16/demo/course_s1/02_pl_rw_ddr/auto_create_project/src/constraints"
+if {[file exists $ALINX_XDC_DIR]} {
+    foreach xdc [glob -nocomplain $ALINX_XDC_DIR/*.xdc] {
+        add_files -fileset constrs_1 -copy_to $projpath/$projName.srcs/constrs_1/new -force $xdc
+    }
+    puts "  使用 ALINX 02_pl_rw_ddr 的 xdc: $ALINX_XDC_DIR"
+} else {
+    puts "  WARNING: ALINX xdc dir not found, 板级 IO 约束需手动加"
+}
 
 update_compile_order -fileset sources_1
 

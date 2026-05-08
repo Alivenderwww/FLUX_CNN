@@ -75,3 +75,7 @@ vivado_*.backup.log
 
 # toolchain transcript 临时
 toolchain/transcript
+# VD100 BD output (Vivado 自动生成, 大且 binary)
+Syn/vd100_bd/output/
+Syn/vd100_bd/*.log
+Syn/vd100_bd/.Xil/

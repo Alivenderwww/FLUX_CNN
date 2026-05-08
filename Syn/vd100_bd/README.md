@@ -22,7 +22,12 @@ cd C:\_Project\FLUX_CNN\Syn\vd100_bd
 
 ## 已知 TODO (BD 完整调通)
 
-当前脚本是骨架, 跑 create_project.tcl 后需要手动调通几件事:
+`create_project.tcl` 跑到 axi_noc 端口名设置时报错 `set_property expects at least one object`,
+原因是 **axi_noc IP 的 SI 端口名跟 IP 版本相关** (有些版本是 `S00_AXI`, 有些是 `S00_INI`),
+需要在 Vivado GUI 里看实际端口名再修 tcl. 这是 BD 自动化的常见 corner case,
+ALINX/Xilinx 推荐用 GUI 拖拽 + tcl 微调, 不能 100% script 自动化.
+
+当前脚本跑 create_project.tcl 后需要手动调通几件事:
 
 1. **multicore_top_vd100 AXI interface 识别**:
    - RTL 端口是 packed vector (NUM_CORES*BUS_DATA_W bit 等), Vivado BD `create_bd_cell -reference` 不会自动识别为 3 个独立 AXI interface

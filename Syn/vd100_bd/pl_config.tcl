@@ -72,11 +72,11 @@
   ] $xlconcat_irq
 
   # ====================================================================
-  # 6. multicore_top_vd100 — 加为 BD module (Vivado 自动从 RTL 提取端口签名)
+  # 6. multicore_top_vd100_bd — BD 友好 wrapper (X_INTERFACE_INFO attribute)
+  #    自动识别 csr_axil + m00_axi/m01_axi/m02_axi + irq_done 为 AXI/IRQ interface
   # ====================================================================
-  # 注: 必须 add_files multicore_top_vd100.sv 后, BD 才能 add_module
-  create_bd_cell -type module -reference multicore_top_vd100 u_mc_vd100
-  set_property -dict [list CONFIG.NUM_CORES {3}] [get_bd_cells u_mc_vd100]
+  # 注: 必须 add_files multicore_top_vd100_bd.sv 后, BD 才能 add_module
+  create_bd_cell -type module -reference multicore_top_vd100_bd u_mc_vd100
 
   # ====================================================================
   # 7. 连线 — Interface
@@ -105,16 +105,11 @@
   connect_bd_intf_net [get_bd_intf_pins smartconnect_0/M00_AXI] [get_bd_intf_pins u_mc_vd100/csr_axil]
   connect_bd_net [get_bd_pins versal_cips_0/m_axi_fpd_aclk] [get_bd_pins clk_wizard_0/clk_out1]
 
-  # multicore_top_vd100.m_axi[0/1/2] → axi_noc.S00/01/02
-  for {set i 0} {$i < 3} {incr i} {
-    set port [format "S%02d_AXI" $i]
-    set mc_port [format "m_axi_%d" $i]
-    # 注意: multicore_top_vd100 用 packed vector 端口 (m_axi_awid 等), Vivado BD
-    # 自动识别为 AXI4 interface 通过 X_INTERFACE_INFO attribute. 如果没识别, 需要
-    # 在 RTL 加 attribute 或写 wrapper 把 vector 拆 interface.
-    # 暂用 connect_bd_net (signal level), 后续板级集成补 X_INTERFACE attribute.
-    # connect_bd_intf_net [get_bd_intf_pins u_mc_vd100/$mc_port] [get_bd_intf_pins axi_noc_0/$port]
-  }
+  # multicore_top_vd100_bd.m00_axi/m01_axi/m02_axi → axi_noc.S00/01/02
+  # (BD wrapper 用 X_INTERFACE_INFO attribute, Vivado 自动识别成 AXI4 interface)
+  connect_bd_intf_net [get_bd_intf_pins u_mc_vd100/m00_axi] [get_bd_intf_pins axi_noc_0/S00_AXI]
+  connect_bd_intf_net [get_bd_intf_pins u_mc_vd100/m01_axi] [get_bd_intf_pins axi_noc_0/S01_AXI]
+  connect_bd_intf_net [get_bd_intf_pins u_mc_vd100/m02_axi] [get_bd_intf_pins axi_noc_0/S02_AXI]
 
   # IRQ done [2:0] → xlconcat → PS pl_ps_irq
   connect_bd_net [get_bd_pins u_mc_vd100/irq_done] [get_bd_pins xlconcat_irq/dout]

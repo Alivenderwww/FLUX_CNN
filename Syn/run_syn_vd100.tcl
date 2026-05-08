@@ -17,7 +17,7 @@ set SCRIPT_DIR [file dirname [file normalize [info script]]]
 set RTL_DIR    [file normalize "$SCRIPT_DIR/../RTL"]
 set RPT_DIR    "$SCRIPT_DIR/reports_vd100"
 
-set TOP_NAME           multicore_top_vd100
+set TOP_NAME           multicore_top_vd100_bd
 set NUM_CORES          3
 
 file mkdir $RPT_DIR
@@ -83,6 +83,7 @@ set rtl_files [list \
     "$RTL_DIR/ofb_writer.sv"                      \
     "$RTL_DIR/core_top.sv"                        \
     "$RTL_DIR/Versal/multicore_top_vd100.sv"      \
+    "$RTL_DIR/Versal/multicore_top_vd100_bd.sv"   \
 ]
 add_files $rtl_files
 set_property FILE_TYPE {SystemVerilog} [get_files *.sv]
@@ -114,8 +115,7 @@ synth_design \
     -top              $TOP_NAME \
     -part             $PART     \
     -mode             out_of_context \
-    -flatten_hierarchy rebuilt   \
-    -generic [list NUM_CORES=$NUM_CORES]
+    -flatten_hierarchy rebuilt
 
 puts "=== Synthesis Done ==="
 

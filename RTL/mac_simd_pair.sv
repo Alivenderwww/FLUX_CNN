@@ -135,14 +135,42 @@ module mac_simd_pair #(
     assign prod_1_raw  = $signed(dsp_p[32:17]);
     assign prod_1_corr_bit = w0_nonzero_pipe & act_in_pipe[DATA_WIDTH-1];
 
-    // sign correction 加 1 拍 LUT reg, 阻断 DSP cascade (否则 Vivado 把减法 + 加法树
-    // 跟前端 mul 串成多级 DSP 链, 每 simd_pair 占 2 DSP 直接打破 SIMD 收益)
-    (* USE_DSP = "no" *)
+    // sign correction 走独立 module + module-level USE_DSP="no" 强制 LUT 实现.
+    // (USE_DSP 加在 logic decl/always_ff/wire 上 Vivado 全不识别, 必须 module-level)
+    sign_corr_lut u_corr (
+        .clk          (clk),
+        .compute_en   (compute_en),
+        .prod_0_raw   (prod_0_raw),
+        .prod_0_corr  (prod_0_corr),
+        .prod_1_raw_se({prod_1_raw[15], prod_1_raw}),
+        .prod_1_corr_bit(prod_1_corr_bit),
+        .prod_0       (prod_0),
+        .prod_1       (prod_1)
+    );
+
+endmodule
+
+
+// =============================================================================
+// sign_corr_lut  --  独立 module 强制 sign correction 走 LUT (避免被 Vivado 推 DSP)
+//   module-level (* USE_DSP = "no" *) 是唯一对 Vivado 真正生效的写法.
+//   加在 always_ff / logic decl / wire 上都被 Vivado 忽略.
+// =============================================================================
+(* USE_DSP = "no" *)
+module sign_corr_lut (
+    input  logic               clk,
+    input  logic               compute_en,
+    input  logic signed [16:0] prod_0_raw,
+    input  logic signed [16:0] prod_0_corr,
+    input  logic signed [16:0] prod_1_raw_se,
+    input  logic               prod_1_corr_bit,
+    output logic signed [16:0] prod_0,
+    output logic signed [16:0] prod_1
+);
     always_ff @(posedge clk) begin
         if (compute_en) begin
             prod_0 <= prod_0_raw - prod_0_corr;
-            prod_1 <= $signed({prod_1_raw[15], prod_1_raw}) + $signed({16'd0, prod_1_corr_bit});
+            prod_1 <= prod_1_raw_se + $signed({16'd0, prod_1_corr_bit});
         end
     end
-
 endmodule

@@ -326,6 +326,15 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         )
         ifb_w_start = cfg['_W_SLICE_W_IN_START']
         ofb_w_start = cfg['_W_SLICE_W_OUT_START']
+
+        # Round I: K=1 stride>1 (ds layer) 时 IDMA 只拉 stride 行, mac_array 当 H stride=1 跑.
+        #   (W 维 mac_array 仍按原 stride 跳, 因为 axi_dm 不支持 W 维 strided burst.)
+        #   暂限 cin_slices==1: cin_slices>1 触发 OFM mismatch (待 debug)
+        if k_e == 1 and stride_e > 1 and cin_slices == 1:
+            h_in_idma = (h_in_e + stride_e - 1) // stride_e   # 跟 SMC SG cmd 生成同步
+            cfg['_STRIDE_H']  = 1
+            cfg['_H_IN_IDMA'] = h_in_idma
+            # ifb ring 大小不变 (按原 stride 算的 strip 已 K+1 行足够)
     elif step.mode == 'C_cout_slice':
         # cout 切: 每核读全图 IFM, 写自己 cout 段紧凑 layout. ifb/ofb_w_start=0
         # (W 维不切). cfg['cout_slices'] 是本核段的 cs 数 (整图 cs 的一段).
@@ -788,13 +797,25 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                 else:
                     seg_mem_bases_in = [smc_layer_data_addr(i, layer_idx - 1) for i in range(n_cores)]
 
+                # Round I: K=1 stride>1 (ds layer) 时只拉 stride 行 IFM (W stride 仍 mac_array 跳).
+                #   IDMA cmd 数 H 维减半, 数据量减半. cfg STRIDE_H=1 让 line_buffer 当 H stride=1 跑.
+                #   暂限 cin_slices==1: cin_slices>1 (e.g. L9 cin=32) 触发 OFM mismatch (待 debug)
+                ds_h_stride_compress = (k_e == 1 and stride_e > 1 and cin_slices == 1)
+                if ds_h_stride_compress:
+                    h_in_idma   = (h_in_e + stride_e - 1) // stride_e   # 实际拉的行数 (= H_out)
+                    h_compress  = stride_e
+                else:
+                    h_in_idma   = h_in_e
+                    h_compress  = 1
+
                 idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_w_slice(
-                    target_core_id=core_id, h_in=h_in_e, cin_slices=cin_slices,
+                    target_core_id=core_id, h_in=h_in_idma, cin_slices=cin_slices,
                     w_in_lo=w_in_lo, w_in_hi=w_in_hi,
                     seg_w_starts=seg_w_starts_in,
                     seg_mem_bases=seg_mem_bases_in,
                     seg_widths=seg_widths_in,
                     ifb_ring_words=_ifb_ring_words_eff,
+                    h_compress_stride=h_compress,
                 )
                 idma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_idma_sg.hex')
                 idma_hdr = [
@@ -802,10 +823,11 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     f"H_in={h_in_e} W_in={w_in_e} cin_slices={cin_slices}",
                     f"my W slice: w_in[{w_in_lo}:{w_in_hi+1}] sub_W={geom['sub_W']}",
                     f"seg_widths_in={seg_widths_in} seg_w_starts_in={seg_w_starts_in}",
+                    f"H stride compress: h_in_idma={h_in_idma} h_compress={h_compress}",
                 ]
                 mesh_cmd.write_sg_cmd_list(idma_cmd_path, idma_cmds, header_lines=idma_hdr)
-                # cmds_per_row = idma_cmds 总数 / h_in_e
-                idma_cmds_per_row = len(idma_cmds) // h_in_e
+                # cmds_per_row = idma_cmds 总数 / h_in_idma
+                idma_cmds_per_row = len(idma_cmds) // h_in_idma
                 smc_per_layer_cmds[('idma', core_id, layer_idx)] = {
                     'ptr':           smc_core_layer_idma_cmd_addr(core_id, layer_idx),
                     'count':         len(idma_cmds),

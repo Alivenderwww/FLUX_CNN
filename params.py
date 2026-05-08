@@ -152,6 +152,7 @@ CSR_ADDR_MAP = {
     'IDMA_CMD_LIST_PTR' : 0x1D8,    # SMC: IDMA SG cmd list 在全局地址起点 (32-bit)
     'IDMA_CMD_COUNT'    : 0x1DC,    # SMC: IDMA SG cmd 总数 (16-bit)
     'IDMA_CMDS_PER_ROW' : 0x1E0,    # SMC: 每行 IFM 由几条 cmd 组成 (W slice 跨 mem 时 > 1)
+    'STRIDE_H'          : 0x1F0,    # H 维 stride (跟 W 维 stride 分离, 让 IDMA H stride 拉时 line_buffer 当 stride=1 走). default = STRIDE.
     'ODMA_CMD_LIST_PTR' : 0x1E4,    # SMC: ODMA SG cmd list 在全局地址起点
     'ODMA_CMD_COUNT'    : 0x1E8,    # SMC: ODMA SG cmd 总数
     'ODMA_CMDS_PER_ROW' : 0x1EC,    # SMC: 每行 OFM 由几条 cmd 组成 (W/cout 跨 mem 时 > 1)

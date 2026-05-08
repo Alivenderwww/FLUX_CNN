@@ -134,6 +134,7 @@ module cfg_regs #(
     output logic [3:0]               k,
     output logic [3:0]               ky,
     output logic [2:0]               stride,
+    output logic [2:0]               stride_h,           // Round I: H 维 stride (跟 W stride 分离, 默认 = stride)
     output logic [5:0]               cin_slices,
     output logic [5:0]               cout_slices,
     output logic [5:0]               tile_w,
@@ -227,6 +228,7 @@ module cfg_regs #(
     localparam [ADDR_W-1:0] ADDR_W_IN             = `FLUX_ADDR_W_IN;
     localparam [ADDR_W-1:0] ADDR_K                = `FLUX_ADDR_K;
     localparam [ADDR_W-1:0] ADDR_STRIDE           = `FLUX_ADDR_STRIDE;
+    localparam [ADDR_W-1:0] ADDR_STRIDE_H         = `FLUX_ADDR_STRIDE_H;
     localparam [ADDR_W-1:0] ADDR_CIN_SLICES       = `FLUX_ADDR_CIN_SLICES;
     localparam [ADDR_W-1:0] ADDR_COUT_SLICES      = `FLUX_ADDR_COUT_SLICES;
     localparam [ADDR_W-1:0] ADDR_TILE_W           = `FLUX_ADDR_TILE_W;
@@ -403,6 +405,7 @@ module cfg_regs #(
     logic [3:0]              r_k;
     logic [3:0]              r_ky;
     logic [2:0]              r_stride;
+    logic [2:0]              r_stride_h;
     logic [5:0]              r_cin_slices;
     logic [5:0]              r_cout_slices;
     logic [5:0]              r_tile_w;
@@ -470,7 +473,11 @@ module cfg_regs #(
                 ADDR_W_OUT           : r_w_out           <= seq_w_data[15:0];
                 ADDR_W_IN            : r_w_in            <= seq_w_data[15:0];
                 ADDR_K               : r_k               <= seq_w_data[3:0];
-                ADDR_STRIDE          : r_stride          <= seq_w_data[2:0];
+                ADDR_STRIDE          : begin
+                    r_stride          <= seq_w_data[2:0];
+                    r_stride_h        <= seq_w_data[2:0];   // Round I: 写 STRIDE 同步设 stride_h (默认 = W stride). 后续 STRIDE_H 可单独 override.
+                end
+                ADDR_STRIDE_H        : r_stride_h        <= seq_w_data[2:0];
                 ADDR_CIN_SLICES      : r_cin_slices      <= seq_w_data[5:0];
                 ADDR_COUT_SLICES     : r_cout_slices     <= seq_w_data[5:0];
                 ADDR_TILE_W          : r_tile_w          <= seq_w_data[5:0];
@@ -538,6 +545,7 @@ module cfg_regs #(
     assign k               = r_k;
     assign ky              = r_ky;
     assign stride          = r_stride;
+    assign stride_h        = r_stride_h;
     assign cin_slices      = r_cin_slices;
     assign cout_slices     = r_cout_slices;
     assign tile_w          = r_tile_w;

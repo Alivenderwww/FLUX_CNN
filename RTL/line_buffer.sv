@@ -52,6 +52,7 @@ module line_buffer #(
     input  logic [3:0]                           cfg_k,   // Kx (Ky-fold 时 = kyper)
     input  logic [3:0]                           cfg_ky,  // Ky (无 fold 时 = cfg_k)
     input  logic [2:0]                           cfg_stride,
+    input  logic [2:0]                           cfg_stride_h,    // Round I: H 维 stride (默认 = cfg_stride). IDMA H 维 strided 拉时设 1.
     input  logic [5:0]                           cfg_cin_slices,
     input  logic [5:0]                           cfg_cout_slices,
     input  logic [5:0]                           cfg_tile_w,
@@ -246,7 +247,7 @@ module line_buffer #(
     logic [15:0] rows_needed_d;
     logic signed [16:0] rows_needed_next_signed;
     logic [15:0] rows_needed_next;
-    assign rows_needed_next_signed = $signed({1'b0, rows_needed_d}) + $signed({14'd0, cfg_stride});
+    assign rows_needed_next_signed = $signed({1'b0, rows_needed_d}) + $signed({14'd0, cfg_stride_h});  // Round I: H 维用 stride_h
     assign rows_needed_next        = (rows_needed_next_signed > $signed({1'b0, cfg_h_in}))
                                    ? cfg_h_in
                                    : rows_needed_next_signed[15:0];
@@ -561,7 +562,7 @@ module line_buffer #(
     logic [15:0] rows_consumed_raw;
     always_ff @(posedge clk) begin
         if      (evt_start)                           rows_consumed_raw <= 16'd0;
-        else if (evt_iss_cs_wrap)                     rows_consumed_raw <= rows_consumed_raw + {13'd0, cfg_stride};
+        else if (evt_iss_cs_wrap)                     rows_consumed_raw <= rows_consumed_raw + {13'd0, cfg_stride_h};  // Round I: H 维 stride_h
         else                                          rows_consumed_raw <= rows_consumed_raw;
     end
 
@@ -586,7 +587,7 @@ module line_buffer #(
     always_ff @(posedge clk) begin
         if      (evt_start)                            y_row_base <= neg_pad_top_ext;
         else if (evt_iss_yout_wrap)     y_row_base <= neg_pad_top_ext;
-        else if (evt_iss_cs_wrap && !yout_is_last)   y_row_base <= y_row_base + $signed({14'd0, cfg_stride});
+        else if (evt_iss_cs_wrap && !yout_is_last)   y_row_base <= y_row_base + $signed({14'd0, cfg_stride_h});  // Round I: H 维 stride_h
         else                                           y_row_base <= y_row_base;
     end
 

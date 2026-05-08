@@ -212,6 +212,7 @@ module core_top #(
     logic [3:0]        cfg_k;
     logic [3:0]        cfg_ky;
     logic [2:0]        cfg_stride;
+    logic [2:0]        cfg_stride_h;     // Round I: H 维 stride (跟 W stride 分离)
     logic [5:0]        cfg_cin_slices, cfg_cout_slices, cfg_tile_w, cfg_last_valid_w;
     logic [7:0]        cfg_num_tiles;
     logic [9:0]        cfg_total_wrf, cfg_kk;
@@ -335,7 +336,7 @@ module core_top #(
         .start_layer_pulse(cfg_start_layer_pulse),
         .core_done_sticky(cfg_core_done_sticky),
         .h_out(cfg_h_out), .w_out(cfg_w_out), .w_in(cfg_w_in),
-        .k(cfg_k), .ky(cfg_ky), .stride(cfg_stride),
+        .k(cfg_k), .ky(cfg_ky), .stride(cfg_stride), .stride_h(cfg_stride_h),
         .cin_slices(cfg_cin_slices), .cout_slices(cfg_cout_slices),
         .tile_w(cfg_tile_w), .num_tiles(cfg_num_tiles), .last_valid_w(cfg_last_valid_w),
         .total_wrf(cfg_total_wrf),
@@ -569,6 +570,7 @@ module core_top #(
         .cfg_k            (cfg_k),
         .cfg_ky           (cfg_ky),
         .cfg_stride       (cfg_stride),
+        .cfg_stride_h     (cfg_stride_h),
         .cfg_cin_slices   (cfg_cin_slices),
         .cfg_cout_slices  (cfg_cout_slices),
         .cfg_tile_w       (cfg_tile_w),

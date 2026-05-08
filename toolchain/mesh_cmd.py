@@ -59,6 +59,7 @@ def gen_idma_sg_cmd_list_w_slice(
     seg_mem_bases:     list,
     seg_widths:        list,
     ifb_ring_words:    int = 0,
+    h_compress_stride: int = 1,
 ) -> list:
     """生成 ConvCore[c] 的 IDMA SG cmd list (W slice 紧凑 + 跨 mem halo 拉取).
 
@@ -67,6 +68,11 @@ def gen_idma_sg_cmd_list_w_slice(
 
     seg_* 数组描述整图 W 段散布: 段 i 在整图 W 列 [seg_w_starts[i], seg_w_starts[i]+seg_widths[i]),
     物理在 mem[i].ddr_mem 内全局地址 seg_mem_bases[i] 起.
+
+    Round I 优化: h_compress_stride > 1 时只发 stride 行 cmd (跳过 K=1 stride>1 layer
+    用不到的奇数行). 此时 cmd 数 = h_in / h_compress_stride. 调用方需保证 h_in
+    跟 stride 整除 (= layer 实际拉的行数, 通常 = H_out).
+    src_addr 内 r 直接用 cmd index, 但每 cmd 跨度 = h_compress_stride × row_stride.
     """
     n_segs = len(seg_w_starts)
     assert len(seg_mem_bases) == n_segs and len(seg_widths) == n_segs
@@ -91,8 +97,10 @@ def gen_idma_sg_cmd_list_w_slice(
 
             seg_w = seg_widths[seg_id]
             w_local_lo = chunk_lo - seg_w_starts[seg_id]
+            # Round I: h_compress_stride > 1 时, 每 cmd src_addr 跳 stride 行
+            #   r=0 → original row 0, r=1 → original row stride, r=2 → 2*stride, ...
             byte_addr = (seg_mem_bases[seg_id]
-                         + r * seg_w * cin_slices * 16
+                         + r * h_compress_stride * seg_w * cin_slices * 16
                          + w_local_lo * cin_slices * 16)
             chunk_btt = chunk_cols * cin_slices * 16
 

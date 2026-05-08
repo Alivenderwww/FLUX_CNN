@@ -1120,6 +1120,7 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'K'              : cfg['K'],
         'KY'             : cfg.get('KY', cfg['K']),   # fold 时 < K, 否则默认 = K
         'STRIDE'         : cfg['stride'],
+        'STRIDE_H'       : cfg.get('_STRIDE_H', cfg['stride']),   # Round I: H 维 stride (默认 = stride)
         'CIN_SLICES'     : cfg['cin_slices'],
         'COUT_SLICES'    : cfg['cout_slices'],
         'TILE_W'         : cfg['TILE_W'],
@@ -1144,7 +1145,7 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'SDP_ROUND_EN'   : sdp_round_en,
         'PAD_TOP'        : cfg['pad_top'],
         'PAD_LEFT'       : cfg['pad_left'],
-        'H_IN_TOTAL'     : cfg['H_IN'],
+        'H_IN_TOTAL'     : cfg.get('_H_IN_IDMA', cfg['H_IN']),    # Round I: ds layer H 维 strided 拉时 = H_OUT (而非 H_IN)
         'IFB_STRIP_ROWS' : cfg['ifb_strip'],
         'OFB_STRIP_ROWS' : cfg['ofb_strip'],
         # W slice 下 DDR row stride 用整层 W (DDR 存全图, 每核只读自己一段)

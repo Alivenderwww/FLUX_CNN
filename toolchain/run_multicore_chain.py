@@ -1271,7 +1271,8 @@ if __name__ == '__main__':
         from run_regression import CASES
         layers = scheduler.chain_to_layers(CASES[:11])
 
-    # SMC 模式输出到独立目录 sim/tb_smc/cases/{case_name}
+    # SMC 模式输出到 sim/tb_smc/cases. n_cores=3 也输出到这里 (vd100-demo 分支板级化重点
+    # 是 Vitis/Versal 综合改造, sim 暂不单独 N=3, 用 main 分支 N=4 SIMD sim 验证 RTL 即可)
     if args.smc:
         out_root = os.path.join(_THIS_DIR, '..', 'sim', 'tb_smc', 'cases', args.case_name)
     else:
@@ -1280,11 +1281,13 @@ if __name__ == '__main__':
         shutil.rmtree(out_root)
     os.makedirs(out_root, exist_ok=True)
 
-    if args.smc and args.n_cores != 4:
-        sys.exit("ERROR: --smc only supports n_cores=4 (4 SI / 4 MI crossbar fixed topology)")
+    # SMC 模式默认 4 核 (axi_smc_4to4 IP). VD100 demo 用 3 核, axi_smc 第 4 路 tie 0
+    # 或换 Versal NoC. RTL multicore_top_smc NUM_CORES 是 generic, 这里只是 driver 决定 cmd 数.
+    if args.smc and args.n_cores not in (3, 4):
+        sys.exit(f"ERROR: --smc supports n_cores=3 (VD100 demo) or 4 (K325T paper); got {args.n_cores}")
     chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root, smc=args.smc)
 
-    # 写 active_case.txt 让 sim/tb_smc/run.tcl 自动跑刚生成的 case (无需手动传 case 名)
+    # 写 active_case.txt 让 sim/tb_smc/run.tcl 自动跑刚生成的 case
     if args.smc:
         active_case_path = os.path.join(_THIS_DIR, '..', 'sim', 'tb_smc', 'active_case.txt')
         with open(active_case_path, 'w') as f:

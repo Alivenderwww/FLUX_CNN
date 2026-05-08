@@ -1865,13 +1865,19 @@ Round F 漏出来的小尾巴才被 Round G 收掉.
 | Round I L3/L6 only (9957414) | 192158 | -5.9% | -11.6% | ds K=1 stride>1, cin_slices==1 |
 | **Round I L9 fix (e8ca7b0)** | **190977** | **-0.6%** | **-12.1%** | IFB_ROW_STEP 跟 STRIDE_H 同步, ds cin_slices>1 也 enable |
 | Round J 探针 W 压缩 (软件层) | 261627 | **+37%** | **+20%** | ❌ axi_dm cmd 颗粒度反噬 (paper/data/exp7) |
-| @100 MHz Latency | **1.91 ms** | (vs IP baseline 2.17 ms) | | |
-| FPS | **524** | (+64 vs baseline 460) | | |
+| **Round K (driver L1 cmd reorder)** | **190133** | **-0.44%** | **-12.5%** | 本地 mem 段优先, head-of-line 缓解 (paper/data/exp8) |
+| @100 MHz Latency | **1.90 ms** | (vs IP baseline 2.17 ms) | | |
+| FPS | **526** | (+66 vs baseline 460) | | |
 
 **Round J 含义**: W 维 stride 走 axi_dm IP 软件层不可行 — cmd 数膨胀 6-17×, fetch
 overhead 增加 37K cy + data 时间 +30K cy 完全吃掉数据量减半收益. 推动论点:
 **硬件 2D 寻址才是 W 压缩出路** (mem core 端解码寻址 pattern), 投入 1-2 周换 ~2-3% 整网.
 当前论文阶段不投, 用作"为什么必须改硬件"的实证素材. (探针默认 OFF, FLUX_W_COMPRESS=1 触发)
+
+**Round K 含义**: 验证 SMC head-of-line 假设方向对 (L1 C1-3 act_id 减 10%, 共 -843 cy),
+但收益比预期小 (-0.44% vs 预期 -2~3%). 说明 L1 idle 主要瓶颈不在 SMC 仲裁,
+而在 axi_dm IP cmd setup latency. 跟 Round J 互补: axi_dm IP 是性能天花板,
+软件层 cmd 优化上限有限. (driver only, FLUX_LOCAL_FIRST=1 默认 ON, 详见 paper/data/exp8)
 
 ---
 

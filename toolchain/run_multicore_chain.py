@@ -817,6 +817,8 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     h_compress  = 1
                 w_compress = stride_e if ds_w_stride_compress else 1
 
+                # Round K: FLUX_LOCAL_FIRST=1 启用行内 cmd 重排 (本地 mem 段优先).
+                local_seg_first = os.environ.get('FLUX_LOCAL_FIRST', '1') == '1'
                 idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_w_slice(
                     target_core_id=core_id, h_in=h_in_idma, cin_slices=cin_slices,
                     w_in_lo=w_in_lo, w_in_hi=w_in_hi,
@@ -826,6 +828,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     ifb_ring_words=_ifb_ring_words_eff,
                     h_compress_stride=h_compress,
                     w_compress_stride=w_compress,
+                    local_seg_first=local_seg_first,
                 )
                 idma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_idma_sg.hex')
                 idma_hdr = [

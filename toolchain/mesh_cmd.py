@@ -61,6 +61,7 @@ def gen_idma_sg_cmd_list_w_slice(
     ifb_ring_words:    int = 0,
     h_compress_stride: int = 1,
     w_compress_stride: int = 1,
+    local_seg_first:   bool = False,
 ) -> list:
     """生成 ConvCore[c] 的 IDMA SG cmd list (W slice 紧凑 + 跨 mem halo 拉取).
 
@@ -79,6 +80,11 @@ def gen_idma_sg_cmd_list_w_slice(
     cmd 数 H 维不变, W 维从 chunk_cols → ceil(chunk_cols / w_compress_stride). 调用方
     保证 w_in_lo 是 W 压缩后的"采样起点". axi_dm 不支持 strided burst, 所以单像素
     cmd 是唯一拿到数据量减半的方式 (代价: cmd 数膨胀 sub_W_out 倍, 测 ROI 用).
+
+    Round K: local_seg_first=True 时每行内 cmd 重排 — 本地 mem 段 (seg_id==target_core_id)
+    cmd 排前, 远端 (跨 mem halo) cmd 排后. sram_offset 仍按 col 顺序 (不影响 IFB layout).
+    意图: 让 4 核同时 hammer 4 不同 mem (并行), 远端 halo 后发避开 mem 0 head-of-line.
+    dispatcher r_rows_pushed 按 cmds_per_row 计 cmd 完成数, 跟 cmd issue 顺序无关.
     """
     n_segs = len(seg_w_starts)
     assert len(seg_mem_bases) == n_segs and len(seg_widths) == n_segs
@@ -86,6 +92,8 @@ def gen_idma_sg_cmd_list_w_slice(
     cmds = []
     sram_offset = 0
     for r in range(h_in):
+        # 第一遍按 col 顺序生成本行 cmd (含 seg_id), sram_offset 按 col 顺序累加
+        row_cmds = []
         cur_w = w_in_lo
         while cur_w <= w_in_hi:
             seg_id = -1
@@ -109,25 +117,31 @@ def gen_idma_sg_cmd_list_w_slice(
             seg_w = seg_widths[seg_id]
             w_local_lo = chunk_lo - seg_w_starts[seg_id]
             # Round I: h_compress_stride > 1 时, 每 cmd src_addr 跳 stride 行
-            #   r=0 → original row 0, r=1 → original row stride, r=2 → 2*stride, ...
             byte_addr = (seg_mem_bases[seg_id]
                          + r * h_compress_stride * seg_w * cin_slices * 16
                          + w_local_lo * cin_slices * 16)
             chunk_btt = chunk_cols * cin_slices * 16
 
             sram_offset_eff = (sram_offset % ifb_ring_words) if ifb_ring_words > 0 else sram_offset
-            cmds.append(SgCmd(
+            row_cmds.append((seg_id, SgCmd(
                 src_addr    = byte_addr,
                 btt         = chunk_btt,
                 sram_offset = sram_offset_eff,
                 last_cmd    = False,
                 name        = f"r{r}_w[{chunk_lo}:{chunk_hi+1}]_seg{seg_id}",
-            ))
+            )))
             sram_offset += chunk_cols * cin_slices
             if w_compress_stride > 1:
                 cur_w = chunk_hi + w_compress_stride
             else:
                 cur_w = chunk_hi + 1
+
+        # Round K: 行内 cmd 重排 (本地 mem 段优先). sram_offset 已固定 (按 col 顺序),
+        # 只改 issue 顺序. dispatcher 按 cmds_per_row 计完成数, 跟 issue 顺序无关.
+        if local_seg_first and len(row_cmds) > 1:
+            row_cmds.sort(key=lambda x: 0 if x[0] == target_core_id else 1)
+        for _, c in row_cmds:
+            cmds.append(c)
 
     if cmds:
         cmds[-1].last_cmd = True

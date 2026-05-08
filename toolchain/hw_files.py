@@ -1131,7 +1131,8 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'IFB_BASE'       : 0,
         'WB_BASE'        : 0,                       # R.1: WB 不再有 bias prefix
         'OFB_BASE'       : 0,
-        'IFB_ROW_STEP'   : cfg['IFB_ROW_STEP'],
+        # Round I: IFB_ROW_STEP 跟 stride_h 关联 (H stride compress 时 IFB 内行 dense, step=W*cs 而非 stride*W*cs)
+        'IFB_ROW_STEP'   : cfg.get('_STRIDE_H', cfg['stride']) * cfg['W_IN'] * cfg['cin_slices'],
         'WB_COUT_STEP'   : cfg['WB_COUT_STEP'],
         'NUM_TILES'      : cfg['num_tiles'],
         'LAST_VALID_W'   : cfg['last_valid_w'],

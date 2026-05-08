@@ -330,7 +330,7 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         # Round I: K=1 stride>1 (ds layer) 时 IDMA 只拉 stride 行, mac_array 当 H stride=1 跑.
         #   (W 维 mac_array 仍按原 stride 跳, 因为 axi_dm 不支持 W 维 strided burst.)
         #   暂限 cin_slices==1: cin_slices>1 触发 OFM mismatch (待 debug)
-        if k_e == 1 and stride_e > 1 and cin_slices == 1:
+        if k_e == 1 and stride_e > 1:
             h_in_idma = (h_in_e + stride_e - 1) // stride_e   # 跟 SMC SG cmd 生成同步
             cfg['_STRIDE_H']  = 1
             cfg['_H_IN_IDMA'] = h_in_idma
@@ -800,7 +800,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                 # Round I: K=1 stride>1 (ds layer) 时只拉 stride 行 IFM (W stride 仍 mac_array 跳).
                 #   IDMA cmd 数 H 维减半, 数据量减半. cfg STRIDE_H=1 让 line_buffer 当 H stride=1 跑.
                 #   暂限 cin_slices==1: cin_slices>1 (e.g. L9 cin=32) 触发 OFM mismatch (待 debug)
-                ds_h_stride_compress = (k_e == 1 and stride_e > 1 and cin_slices == 1)
+                ds_h_stride_compress = (k_e == 1 and stride_e > 1)
                 if ds_h_stride_compress:
                     h_in_idma   = (h_in_e + stride_e - 1) // stride_e   # 实际拉的行数 (= H_out)
                     h_compress  = stride_e

@@ -1,13 +1,23 @@
 # =============================================================================
-# tb_smc/run_chain.tcl  --  Phase 7 SMC + NUMA chain sim 共享 prelude
-#   跑 toolchain/run_multicore_chain.py --smc 生成的 case 目录
+# tb_smc/run.tcl  --  Phase 7 SMC + NUMA chain sim
 #   DUT: multicore_top_smc (4 ConvCore + axi_smc_4to4 IP + 4 mem stub)
 #
-#   Case-specific tcl (run_resnet11/wslice1/wslice5.tcl) 设 CASE_DIR_REL 后 source 本文件.
+# Case 由 driver 决定: toolchain/run_multicore_chain.py 生成 case 时同时写
+# sim/tb_smc/active_case.txt, 本脚本读它确定跑哪个 case. 无需手动传参.
+#
+# 用法:
+#   python toolchain/run_multicore_chain.py --smc --demo resnet11 --case_name smc_resnet11 ...
+#   cd sim/tb_smc && vsim -c -do run.tcl
 # =============================================================================
 
-if {![info exists CASE_DIR_REL]} {
-    set CASE_DIR_REL "cases/smc_wslice1"     ;# 默认 case
+set ACTIVE_CASE_FILE "active_case.txt"
+if {[file exists $ACTIVE_CASE_FILE]} {
+    set fp [open $ACTIVE_CASE_FILE r]
+    set CASE_DIR_REL [string trim [read $fp]]
+    close $fp
+    puts "\[INFO\] CASE_DIR_REL = $CASE_DIR_REL (from $ACTIVE_CASE_FILE)"
+} else {
+    error "active_case.txt 不存在. 请先跑 toolchain/run_multicore_chain.py 生成 case."
 }
 
 set XLNX_INI    {C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini}
@@ -42,8 +52,10 @@ vlog -work xil_defaultlib \
     "$IP_SMC_DIR/sim/axi_smc_4to4.v"
 
 # RTL
+# 默认走真 axi_smc_4to4 IP path. 加 +define+IDEAL_SMC 重启实验会切到 sim model crossbar
+# (axi_crossbar_4to4_sim.sv) 测 0-latency 互联 baseline (paper/data/exp2_ideal_smc.md).
 vlog -sv -work work -mfcu -suppress 2902,13314 \
-    +incdir+../../RTL +define+IDEAL_SMC \
+    +incdir+../../RTL \
     ../../RTL/AXI4/axi_crossbar_4to4_sim.sv \
     ../../RTL/std_rf.sv \
     ../../RTL/sdp.sv \

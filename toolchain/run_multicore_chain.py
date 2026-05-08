@@ -1284,4 +1284,11 @@ if __name__ == '__main__':
         sys.exit("ERROR: --smc only supports n_cores=4 (4 SI / 4 MI crossbar fixed topology)")
     chain_data, per_core_plan = run_multicore_chain(layers, args.n_cores, out_root, smc=args.smc)
 
+    # 写 active_case.txt 让 sim/tb_smc/run.tcl 自动跑刚生成的 case (无需手动传 case 名)
+    if args.smc:
+        active_case_path = os.path.join(_THIS_DIR, '..', 'sim', 'tb_smc', 'active_case.txt')
+        with open(active_case_path, 'w') as f:
+            f.write(f"cases/{args.case_name}\n")
+        print(f"  Active case written to {active_case_path}")
+
     print(f"\n=== Done. Output: {out_root} ===")

@@ -1862,9 +1862,10 @@ Round F 漏出来的小尾巴才被 Round G 收掉.
 | Round G (desc preload) | 206121 | -0.23% | -5.2% | TB fork preload layer N+1 desc |
 | Round H step 1 (S2MM pause) | 204251 | -0.91% | -6.0% | TB OFM check pause 200→30 cy |
 | Round H step 2 (ODMA sts bg) | 204240 | -0.005% | -6.0% | ODMA dispatcher sts 后台 collect |
-| **Round I (H stride 分离)** | **192158** | **-5.9%** | **-11.6%** | ds layer K=1 stride>1: cfg.STRIDE_H 让 H 维 stride 跟 W 分离, IDMA H 维只拉 stride 行 |
-| @100 MHz Latency | **1.92 ms** | (vs IP baseline 2.17 ms) | | |
-| FPS | **520** | (+60 vs baseline 460) | | |
+| Round I L3/L6 only (9957414) | 192158 | -5.9% | -11.6% | ds K=1 stride>1, cin_slices==1 |
+| **Round I L9 fix (e8ca7b0)** | **190977** | **-0.6%** | **-12.1%** | IFB_ROW_STEP 跟 STRIDE_H 同步, ds cin_slices>1 也 enable |
+| @100 MHz Latency | **1.91 ms** | (vs IP baseline 2.17 ms) | | |
+| FPS | **524** | (+64 vs baseline 460) | | |
 
 ---
 
@@ -1910,10 +1911,16 @@ W 维不能优化 (axi_dm 不支持 strided burst).
 | L10 FC | 2926 | 2927 | +1 |
 | **Total** | **204240** | **192158** | **-12082 (-5.9%)** |
 
-### L9 待 debug
+### L9 fix (commit `e8ca7b0`, 2026-05-08)
 
-L9 (cin_slices=2) 启用 H stride compress 时 OFM r=21,22 没写. driver 暂限 cin_slices==1
-才启用. 修复后预期再 -1.5%.
+L9 cin_slices=2 启用 H stride compress 时 OFM mismatch 根因: `cfg.IFB_ROW_STEP`
+原算法 = stride × W × cs (dense H_in IFB 视角). H compress 后 IFB 行 dense,
+应该 = stride_h × W × cs (跟 IDMA 实际写 layout 对齐).
+
+修复: `hw_files.cfg_to_dict` 改 IFB_ROW_STEP 用 `_STRIDE_H` 字段 (默认 = stride 兼容).
+
+修复后 L9 cy 4151 → 2972 (-28.4%, -1179 cy). 整网 192158 → 190977 (-0.6% 增量).
+ResNet11 累计 vs IP baseline: -12.1%, FPS 524.
 
 ### 论文意义
 

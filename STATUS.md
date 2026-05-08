@@ -1861,9 +1861,66 @@ Round F 漏出来的小尾巴才被 Round G 收掉.
 | Round F (host parallel) | 206589 | -2.0% | -4.9% | TB fork wait_dfe_done |
 | Round G (desc preload) | 206121 | -0.23% | -5.2% | TB fork preload layer N+1 desc |
 | Round H step 1 (S2MM pause) | 204251 | -0.91% | -6.0% | TB OFM check pause 200→30 cy |
-| Round H step 2 (ODMA sts bg) | **204240** | -0.005% | **-6.0%** | ODMA dispatcher sts 后台 collect |
-| @100 MHz Latency | **2.04 ms** | (vs IP baseline 2.17 ms) | | |
-| FPS | **490** | (+30 vs baseline 460) | | |
+| Round H step 2 (ODMA sts bg) | 204240 | -0.005% | -6.0% | ODMA dispatcher sts 后台 collect |
+| **Round I (H stride 分离)** | **192158** | **-5.9%** | **-11.6%** | ds layer K=1 stride>1: cfg.STRIDE_H 让 H 维 stride 跟 W 分离, IDMA H 维只拉 stride 行 |
+| @100 MHz Latency | **1.92 ms** | (vs IP baseline 2.17 ms) | | |
+| FPS | **520** | (+60 vs baseline 460) | | |
+
+---
+
+## 21. Round I — H 维 stride 分离 ds layer IDMA 数据量减半 (2026-05-08)
+
+### 优化思路
+
+实验 5 (paper/data/exp5) 推导出 ds layer (K=1 stride>1) 是 memory-bound: mac_array
+fire 数 K²=1 vs K²=9 少 9×, 但 IDMA 拉的数据量相同 → mac_array 75% 时间等数据.
+
+K=1 stride=2 数学上每行 IFM 只用 stride 间隔行 (1/4 像素), 当前实现拉 dense H × W 浪费.
+让 IDMA 跳行拉 (H 维 stride 后 cmd), mac_array 当 H stride=1 跑.
+
+W 维不能优化 (axi_dm 不支持 strided burst).
+
+### RTL 改动 (~25 行)
+
+- `params.py` + svh: CSR_ADDR_MAP 加 `STRIDE_H = 0x1F0`
+- `cfg_regs.sv`: 加 `r_stride_h` reg + `stride_h` 输出. 写 STRIDE 同步 stride_h (默认兼容). 写 STRIDE_H 单独 override.
+- `line_buffer.sv`: 3 处 H 维 stride 用法 (rows_needed_next / rows_consumed_raw / y_row_base) 改用 `cfg_stride_h`. W 维 (`iss_pos_s`) 保持 `cfg_stride`.
+- `core_top.sv`: `cfg_stride_h` wire
+
+### Driver 改动
+
+- `mesh_cmd.gen_idma_sg_cmd_list_w_slice`: 加 `h_compress_stride` 参数, 每 cmd src_addr 跳 stride 行
+- `run_multicore_chain.py`: 检测 ds layer (K=1, stride>1, cin_slices=1) 启用
+- `hw_files.cfg_to_dict`: 加 STRIDE_H + 改 H_IN_TOTAL = h_in_idma
+
+### 实测每层 cy 对比
+
+| L | Round H | Round I | Δ |
+|---|---:|---:|---:|
+| L0 Patch | 46015 | 46019 | +4 (噪音) |
+| L1 | 27367 | 27709 | +342 (噪音) |
+| L2 | 19798 | 19800 | +2 |
+| **L3 ds (cin_slices=1)** | 18369 | **10921** | **-7448 (-40.5%)** ★ |
+| L4 | 11303 | 11305 | +2 |
+| L5 | 22174 | 22176 | +2 |
+| **L6 ds (cin_slices=1)** | 11721 | **6726** | **-4995 (-42.6%)** ★ |
+| L7 | 12537 | 12539 | +2 |
+| L8 | 27362 | 27364 | +2 |
+| L9 ds (cin_slices=2 跳过) | 4151 | 4153 | +2 |
+| L10 FC | 2926 | 2927 | +1 |
+| **Total** | **204240** | **192158** | **-12082 (-5.9%)** |
+
+### L9 待 debug
+
+L9 (cin_slices=2) 启用 H stride compress 时 OFM r=21,22 没写. driver 暂限 cin_slices==1
+才启用. 修复后预期再 -1.5%.
+
+### 论文意义
+
+- **打到瓶颈**: 实验 5 推论 (ds memory-bound) 实施验证, ds layer cy 减 40%+ 印证
+  memory-bound 假设
+- **RTL 改动小**: < 15 行实质 RTL 改动拿 5.9% 收益, 控制变量实验的高 ROI 案例
+- **跟其他 round 对比**: bias_rf ping-pong (Round D 失败) 即使成功 0.06% < Round I 0.5 天投入 5.9%
 
 ### 失败 round 记录
 

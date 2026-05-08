@@ -283,6 +283,16 @@ def split_into_stages(layers: List[Layer], n_cores: int,
 #   stage 内 N 个核 ping-pong 跑流水线: 给每层选 mode + 分核.
 #   简化版策略 (M2.5 第一步): 优先 mode A (单核独占), 大层考虑 mode C.
 # ---------------------------------------------------------------------------
+# Round L 探针: 全局 set 标记哪些 layer.name 强制走 cout slice
+# (因为 choose_mode 通过 assign_cores_in_stage 调用, 不直接知道 layer idx)
+_FORCE_COUT_LAYER_NAMES = set()
+
+
+def set_force_cout_layer_names(names):
+    global _FORCE_COUT_LAYER_NAMES
+    _FORCE_COUT_LAYER_NAMES = set(names)
+
+
 def can_w_slice(layer: Layer, n_split: int) -> bool:
     """W 切片可行性: w_in >= n_split * (K+1) 留 halo."""
     return layer.w_in >= n_split * (layer.k + 1)
@@ -312,6 +322,10 @@ def choose_mode(layer: Layer, n_cores: int, target_per_core_cycles: int,
     """
     cyc = layer.cycles_estimate
     n_split = n_cores
+
+    # Round L 探针: 强制特定 layer 走 cout slice (跳过 prefer_w_slice 默认)
+    if layer.name in _FORCE_COUT_LAYER_NAMES and can_cout_slice(layer, n_split):
+        return (Mode.C_COUT_SLICE, n_split)
 
     # ★ 优先级特例: W 切不动 (e.g., FC W=1) 但 cout 切可行 → 用 cout slice 让所有核
     # 都干活, 不要退化到 mode A 单核. ResNet11 L10 (FC W=H=1 cout=528) 命中这条.

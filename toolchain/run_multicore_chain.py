@@ -508,6 +508,12 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
           f"{', SMC' if smc else ''} ===")
     # SMC 模式强制全 W slice (driver layout 假设每层都按整图 W 4 等分散布到 4 mem)
     force_multicore = True if smc else False
+    # Round L 探针: FLUX_FORCE_COUT_LAYERS 指定 layer name 强制走 cout slice
+    _force_cout_env = os.environ.get('FLUX_FORCE_COUT_LAYERS', '').strip()
+    if _force_cout_env:
+        names = [layers[int(x)].name for x in _force_cout_env.split(',') if x.strip()]
+        scheduler.set_force_cout_layer_names(names)
+        print(f"  [Round L] Force cout slice for layers: {names}")
     stages = scheduler.schedule(layers, n_cores, force_multicore=force_multicore)
     per_core_plan = scheduler.gen_per_core_plan(stages, n_cores)
     scheduler.print_per_core_plan(per_core_plan)

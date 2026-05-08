@@ -1879,6 +1879,12 @@ overhead 增加 37K cy + data 时间 +30K cy 完全吃掉数据量减半收益. 
 而在 axi_dm IP cmd setup latency. 跟 Round J 互补: axi_dm IP 是性能天花板,
 软件层 cmd 优化上限有限. (driver only, FLUX_LOCAL_FIRST=1 默认 ON, 详见 paper/data/exp8)
 
+**Round L 评估 (放弃)**: L8 cout slice 替 W slice 估收益 -2.6%, 但 driver 当前
+不支持 W slice ↔ cout slice 跨 layer transition (L7→L8→L9 stitch 复杂),
+实施成本 1-2 周. ROI 不划算放弃. 加 scheduler.set_force_cout_layer_names + env hook
+留给 future work. 跟 Round J/K 形成完整链: 软件层优化路径基本枚举完,
+剩余空间需硬件改动. (paper/data/exp8 §5)
+
 ---
 
 ## 21. Round I — H 维 stride 分离 ds layer IDMA 数据量减半 (2026-05-08)

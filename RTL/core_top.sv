@@ -644,8 +644,17 @@ module core_top #(
     );
 
     // =========================================================================
-    // 6. mac_array
+    // 6. mac_array  (FLUX_MAC_SIMD: 加 +define+FLUX_MAC_SIMD 切到 INT8 SIMD on DSP48E1)
     // =========================================================================
+`ifdef FLUX_MAC_SIMD
+    mac_array_simd #(
+        .NUM_COL   (NUM_COL),
+        .NUM_PE    (NUM_PE),
+        .DATA_WIDTH(DATA_WIDTH),
+        .PSUM_WIDTH(PSUM_WIDTH),
+        .WRF_DEPTH (WRF_DEPTH)
+    ) u_mac_array (
+`else
     mac_array #(
         .NUM_COL   (NUM_COL),
         .NUM_PE    (NUM_PE),
@@ -653,6 +662,7 @@ module core_top #(
         .PSUM_WIDTH(PSUM_WIDTH),
         .WRF_DEPTH (WRF_DEPTH)
     ) u_mac_array (
+`endif
         .clk            (clk),
         .rst_n          (rst_n),
         .wrf_we         (wrf_we),

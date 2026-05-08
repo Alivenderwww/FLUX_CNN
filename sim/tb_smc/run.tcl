@@ -54,7 +54,14 @@ vlog -work xil_defaultlib \
 # RTL
 # 默认走真 axi_smc_4to4 IP path. 加 +define+IDEAL_SMC 重启实验会切到 sim model crossbar
 # (axi_crossbar_4to4_sim.sv) 测 0-latency 互联 baseline (paper/data/exp2_ideal_smc.md).
+# env FLUX_MAC_SIMD=1 切到 mac_array_simd (INT8 SIMD on DSP48E1, 128 DSP/核).
+set EXTRA_DEFS ""
+if {[info exists ::env(FLUX_MAC_SIMD)] && $::env(FLUX_MAC_SIMD) == "1"} {
+    set EXTRA_DEFS "+define+FLUX_MAC_SIMD"
+    puts "\[INFO\] FLUX_MAC_SIMD enabled"
+}
 vlog -sv -work work -mfcu -suppress 2902,13314 \
+    {*}$EXTRA_DEFS \
     +incdir+../../RTL \
     ../../RTL/AXI4/axi_crossbar_4to4_sim.sv \
     ../../RTL/std_rf.sv \
@@ -71,6 +78,8 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/mac_pe.sv \
     ../../RTL/mac_col.sv \
     ../../RTL/mac_array.sv \
+    ../../RTL/mac_simd_pair.sv \
+    ../../RTL/mac_array_simd.sv \
     ../../RTL/parf_col.sv \
     ../../RTL/parf_accum.sv \
     ../../RTL/line_buffer.sv \

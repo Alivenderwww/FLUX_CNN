@@ -86,6 +86,8 @@ set rtl_files [list \
     "$RTL_DIR/mac_pe.sv"                          \
     "$RTL_DIR/mac_col.sv"                         \
     "$RTL_DIR/mac_array.sv"                       \
+    "$RTL_DIR/mac_simd_pair.sv"                   \
+    "$RTL_DIR/mac_array_simd.sv"                  \
     "$RTL_DIR/parf_col.sv"                        \
     "$RTL_DIR/parf_accum.sv"                      \
     "$RTL_DIR/line_buffer.sv"                     \
@@ -99,7 +101,13 @@ add_files $rtl_files
 set_property FILE_TYPE {SystemVerilog} [get_files *.sv]
 
 # +define USE_AXI_SMC_IP: 让 multicore_top_smc 走 IP 路径 (vs sim model crossbar)
-set_property verilog_define USE_AXI_SMC_IP=1 [current_fileset]
+# env FLUX_MAC_SIMD=1 切到 mac_array_simd (INT8 SIMD on DSP48E1, 128 DSP/核)
+set DEFS [list USE_AXI_SMC_IP=1]
+if {[info exists ::env(FLUX_MAC_SIMD)] && $::env(FLUX_MAC_SIMD) == "1"} {
+    lappend DEFS FLUX_MAC_SIMD=1
+    puts "=== FLUX_MAC_SIMD enabled (INT8 SIMD on DSP48E1) ==="
+}
+set_property verilog_define $DEFS [current_fileset]
 
 # -----------------------------------------------------------------------------
 # 4. Clock constraint
@@ -148,7 +156,7 @@ report_utilization
 # 6. Implementation (P&R)  -- 默认 skip, 只看 synth-stage 报告确认 critical path 结构
 #    需要跑完整 P&R 时 set RUN_IMPL = 1 (会 +20-30 min)
 # -----------------------------------------------------------------------------
-set RUN_IMPL 0
+set RUN_IMPL 1
 if {$RUN_IMPL} {
 puts "=== Starting Implementation ==="
 opt_design

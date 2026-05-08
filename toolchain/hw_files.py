@@ -1119,7 +1119,7 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'W_IN'           : cfg['W_IN'],
         'K'              : cfg['K'],
         'KY'             : cfg.get('KY', cfg['K']),   # fold 时 < K, 否则默认 = K
-        'STRIDE'         : cfg['stride'],
+        'STRIDE'         : cfg.get('_STRIDE_W', cfg['stride']),   # Round J: W 维 stride (默认 = stride). W 压缩时 = 1
         'STRIDE_H'       : cfg.get('_STRIDE_H', cfg['stride']),   # Round I: H 维 stride (默认 = stride)
         'CIN_SLICES'     : cfg['cin_slices'],
         'COUT_SLICES'    : cfg['cout_slices'],
@@ -1132,7 +1132,8 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'WB_BASE'        : 0,                       # R.1: WB 不再有 bias prefix
         'OFB_BASE'       : 0,
         # Round I: IFB_ROW_STEP 跟 stride_h 关联 (H stride compress 时 IFB 内行 dense, step=W*cs 而非 stride*W*cs)
-        'IFB_ROW_STEP'   : cfg.get('_STRIDE_H', cfg['stride']) * cfg['W_IN'] * cfg['cin_slices'],
+        # Round J: W 压缩时 IFB 内每行只有 sub_W_out 列, 用 _IFB_ROW_DENSE_W (默认 = W_IN)
+        'IFB_ROW_STEP'   : cfg.get('_STRIDE_H', cfg['stride']) * cfg.get('_IFB_ROW_DENSE_W', cfg['W_IN']) * cfg['cin_slices'],
         'WB_COUT_STEP'   : cfg['WB_COUT_STEP'],
         'NUM_TILES'      : cfg['num_tiles'],
         'LAST_VALID_W'   : cfg['last_valid_w'],
@@ -1156,9 +1157,9 @@ def cfg_to_dict(cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         'IFB_RING_WORDS' : cfg['ifb_ring_words'],
         'OFB_ROW_WORDS'  : cfg['ofb_row_words'],
         'OFB_RING_WORDS' : cfg['ofb_ring_words'],
-        'IFB_ISS_STEP'   : cfg['stride'] * cfg['cin_slices'],
+        'IFB_ISS_STEP'   : cfg.get('_STRIDE_W', cfg['stride']) * cfg['cin_slices'],   # Round J: W 压缩时 IFB 内 W 维 dense
         'IFB_KY_STEP'    : cfg['W_IN']   * cfg['cin_slices'],
-        'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg['stride'],
+        'TILE_PIX_STEP'  : cfg['TILE_W'] * cfg.get('_STRIDE_W', cfg['stride']),
         'ARF_REUSE_EN'   : 1 if cfg['arf_reuse_en'] else 0,
         # --- R.1/R.2: residual / shortcut / bias / rdma ---
         'RESIDUAL_EN'    : 1 if residual_en else 0,

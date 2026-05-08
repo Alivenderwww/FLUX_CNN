@@ -60,6 +60,7 @@ def gen_idma_sg_cmd_list_w_slice(
     seg_widths:        list,
     ifb_ring_words:    int = 0,
     h_compress_stride: int = 1,
+    w_compress_stride: int = 1,
 ) -> list:
     """生成 ConvCore[c] 的 IDMA SG cmd list (W slice 紧凑 + 跨 mem halo 拉取).
 
@@ -73,6 +74,11 @@ def gen_idma_sg_cmd_list_w_slice(
     用不到的奇数行). 此时 cmd 数 = h_in / h_compress_stride. 调用方需保证 h_in
     跟 stride 整除 (= layer 实际拉的行数, 通常 = H_out).
     src_addr 内 r 直接用 cmd index, 但每 cmd 跨度 = h_compress_stride × row_stride.
+
+    Round J 探针: w_compress_stride > 1 时每 cmd 只读 1 像素 + cur_w 跳 w_compress_stride.
+    cmd 数 H 维不变, W 维从 chunk_cols → ceil(chunk_cols / w_compress_stride). 调用方
+    保证 w_in_lo 是 W 压缩后的"采样起点". axi_dm 不支持 strided burst, 所以单像素
+    cmd 是唯一拿到数据量减半的方式 (代价: cmd 数膨胀 sub_W_out 倍, 测 ROI 用).
     """
     n_segs = len(seg_w_starts)
     assert len(seg_mem_bases) == n_segs and len(seg_widths) == n_segs
@@ -92,8 +98,13 @@ def gen_idma_sg_cmd_list_w_slice(
 
             seg_w_end = seg_w_starts[seg_id] + seg_widths[seg_id] - 1
             chunk_lo = cur_w
-            chunk_hi = min(w_in_hi, seg_w_end)
-            chunk_cols = chunk_hi - chunk_lo + 1
+            if w_compress_stride > 1:
+                # Round J 探针: 单像素 cmd (chunk_cols=1), cur_w 跳 w_compress_stride
+                chunk_hi = chunk_lo
+                chunk_cols = 1
+            else:
+                chunk_hi = min(w_in_hi, seg_w_end)
+                chunk_cols = chunk_hi - chunk_lo + 1
 
             seg_w = seg_widths[seg_id]
             w_local_lo = chunk_lo - seg_w_starts[seg_id]
@@ -113,7 +124,10 @@ def gen_idma_sg_cmd_list_w_slice(
                 name        = f"r{r}_w[{chunk_lo}:{chunk_hi+1}]_seg{seg_id}",
             ))
             sram_offset += chunk_cols * cin_slices
-            cur_w = chunk_hi + 1
+            if w_compress_stride > 1:
+                cur_w = chunk_hi + w_compress_stride
+            else:
+                cur_w = chunk_hi + 1
 
     if cmds:
         cmds[-1].last_cmd = True

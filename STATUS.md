@@ -1864,8 +1864,14 @@ Round F 漏出来的小尾巴才被 Round G 收掉.
 | Round H step 2 (ODMA sts bg) | 204240 | -0.005% | -6.0% | ODMA dispatcher sts 后台 collect |
 | Round I L3/L6 only (9957414) | 192158 | -5.9% | -11.6% | ds K=1 stride>1, cin_slices==1 |
 | **Round I L9 fix (e8ca7b0)** | **190977** | **-0.6%** | **-12.1%** | IFB_ROW_STEP 跟 STRIDE_H 同步, ds cin_slices>1 也 enable |
+| Round J 探针 W 压缩 (软件层) | 261627 | **+37%** | **+20%** | ❌ axi_dm cmd 颗粒度反噬 (paper/data/exp7) |
 | @100 MHz Latency | **1.91 ms** | (vs IP baseline 2.17 ms) | | |
 | FPS | **524** | (+64 vs baseline 460) | | |
+
+**Round J 含义**: W 维 stride 走 axi_dm IP 软件层不可行 — cmd 数膨胀 6-17×, fetch
+overhead 增加 37K cy + data 时间 +30K cy 完全吃掉数据量减半收益. 推动论点:
+**硬件 2D 寻址才是 W 压缩出路** (mem core 端解码寻址 pattern), 投入 1-2 周换 ~2-3% 整网.
+当前论文阶段不投, 用作"为什么必须改硬件"的实证素材. (探针默认 OFF, FLUX_W_COMPRESS=1 触发)
 
 ---
 

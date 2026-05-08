@@ -328,13 +328,19 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         ofb_w_start = cfg['_W_SLICE_W_OUT_START']
 
         # Round I: K=1 stride>1 (ds layer) 时 IDMA 只拉 stride 行, mac_array 当 H stride=1 跑.
-        #   (W 维 mac_array 仍按原 stride 跳, 因为 axi_dm 不支持 W 维 strided burst.)
-        #   暂限 cin_slices==1: cin_slices>1 触发 OFM mismatch (待 debug)
+        # Round J 探针: K=1 stride>1 + 环境变量 FLUX_W_COMPRESS=1 时 W 维也压缩 (单像素 cmd).
+        #   axi_dm 不支持 strided burst → cmd 数 H_out × W_out (膨胀 sub_W_out 倍). 测 ROI 用.
         if k_e == 1 and stride_e > 1:
             h_in_idma = (h_in_e + stride_e - 1) // stride_e   # 跟 SMC SG cmd 生成同步
             cfg['_STRIDE_H']  = 1
             cfg['_H_IN_IDMA'] = h_in_idma
             # ifb ring 大小不变 (按原 stride 算的 strip 已 K+1 行足够)
+            if os.environ.get('FLUX_W_COMPRESS', '0') == '1':
+                cfg['_STRIDE_W']  = 1   # IFB 内 W 维 dense, line_buffer iss_pos_s 不再 ×stride
+                # W 压缩后 IFB 内每行只有 sub_W_out 列 (= ceil(sub_W_in / stride)). IFB_ROW_STEP
+                # 应跨 sub_W_out × cin_slices, 而非原 W_IN × cin_slices.
+                sub_w_in_dense = (cfg['W_IN'] + stride_e - 1) // stride_e
+                cfg['_IFB_ROW_DENSE_W'] = sub_w_in_dense
     elif step.mode == 'C_cout_slice':
         # cout 切: 每核读全图 IFM, 写自己 cout 段紧凑 layout. ifb/ofb_w_start=0
         # (W 维不切). cfg['cout_slices'] 是本核段的 cs 数 (整图 cs 的一段).
@@ -799,14 +805,17 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
 
                 # Round I: K=1 stride>1 (ds layer) 时只拉 stride 行 IFM (W stride 仍 mac_array 跳).
                 #   IDMA cmd 数 H 维减半, 数据量减半. cfg STRIDE_H=1 让 line_buffer 当 H stride=1 跑.
-                #   暂限 cin_slices==1: cin_slices>1 (e.g. L9 cin=32) 触发 OFM mismatch (待 debug)
+                # Round J 探针: FLUX_W_COMPRESS=1 时 W 维也压缩 (每 cmd 1 像素跳 stride).
+                #   cmd 数膨胀 sub_W_out 倍, 但 IFM 数据量再减半. 测 axi_dm overhead vs 数据量收益.
                 ds_h_stride_compress = (k_e == 1 and stride_e > 1)
+                ds_w_stride_compress = ds_h_stride_compress and os.environ.get('FLUX_W_COMPRESS', '0') == '1'
                 if ds_h_stride_compress:
                     h_in_idma   = (h_in_e + stride_e - 1) // stride_e   # 实际拉的行数 (= H_out)
                     h_compress  = stride_e
                 else:
                     h_in_idma   = h_in_e
                     h_compress  = 1
+                w_compress = stride_e if ds_w_stride_compress else 1
 
                 idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_w_slice(
                     target_core_id=core_id, h_in=h_in_idma, cin_slices=cin_slices,
@@ -816,6 +825,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False):
                     seg_widths=seg_widths_in,
                     ifb_ring_words=_ifb_ring_words_eff,
                     h_compress_stride=h_compress,
+                    w_compress_stride=w_compress,
                 )
                 idma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_idma_sg.hex')
                 idma_hdr = [

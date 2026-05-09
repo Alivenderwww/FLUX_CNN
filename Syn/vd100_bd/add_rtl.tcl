@@ -58,6 +58,7 @@ set rtl_files [list \
     "$RTL_DIR/core_top.sv" \
     "$RTL_DIR/Versal/multicore_top_vd100.sv" \
     "$RTL_DIR/Versal/multicore_top_vd100_bd.sv" \
+    "$RTL_DIR/Versal/multicore_top_vd100_bd_v.v" \
 ]
 
 # add 所有 RTL (跳过已存在的)
@@ -77,6 +78,7 @@ puts "  added $added new RTL files (skipped existing ones)"
 
 # 设 SystemVerilog 类型 (svh 不需要 add, include 路径搞定)
 set_property FILE_TYPE {SystemVerilog} [get_files *.sv]
+# .v 文件保持 Verilog (默认), 不要设成 SV — 因为 BD module reference 顶必须是 Verilog
 
 # 加 include path 让 RTL 能找到 RTL/flux_cnn_params.svh
 set inc_path [list $RTL_DIR]

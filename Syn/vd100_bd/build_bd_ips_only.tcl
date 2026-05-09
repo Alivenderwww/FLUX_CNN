@@ -127,11 +127,12 @@ foreach i {0 1 2} {
 #    要求 RTL 已经 add_files 进 sources_1
 # -----------------------------------------------------------------------------
 if {[get_bd_cells -quiet u_mc_vd100] eq ""} {
-    if {[catch {create_bd_cell -type module -reference multicore_top_vd100_bd u_mc_vd100} err]} {
-        puts "  ! Failed to add multicore_top_vd100_bd: $err"
+    # 注: BD -type module 不接受 SV 顶层, 用 .v wrapper (multicore_top_vd100_bd_v)
+    if {[catch {create_bd_cell -type module -reference multicore_top_vd100_bd_v u_mc_vd100} err]} {
+        puts "  ! Failed to add multicore_top_vd100_bd_v: $err"
         puts "    Run: source C:/_Project/FLUX_CNN/Syn/vd100_bd/add_rtl.tcl first"
     } else {
-        puts "  + u_mc_vd100 (multicore_top_vd100_bd) added as BD module"
+        puts "  + u_mc_vd100 (multicore_top_vd100_bd_v) added as BD module"
     }
 }
 

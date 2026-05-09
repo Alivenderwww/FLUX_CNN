@@ -1,0 +1,49 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (win64) Build 4029153 Fri Oct 13 20:14:34 MDT 2023
+| Date         : Sat May  9 11:55:19 2026
+| Host         : DESKTOP-73784OM running 64-bit major release  (build 9200)
+| Command      : report_utilization -file C:/_Project/FLUX_CNN/Syn/reports_vd100/utilization_routed_bd.rpt -hierarchical -hierarchical_depth 3
+| Design       : design_1_wrapper
+| Device       : xcve2302-sfva784-1LP-e-S
+| Speed File   : -1LP
+| Design State : Routed
+-----------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++----------------------+------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+|       Instance       |                     Module                     | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++----------------------+------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+| design_1_wrapper     |                                          (top) |     117384 |     108846 |    7966 |  572 | 41571 |     81 |      0 |   64 |        144 |
+|   design_1_i         |                                       design_1 |     117384 |     108846 |    7966 |  572 | 41571 |     81 |      0 |   64 |        144 |
+|     (design_1_i)     |                                       design_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     axi_noc_0        |                           design_1_axi_noc_0_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       inst           |                   design_1_axi_noc_0_1_bd_4b24 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     clk_wizard_0     |                        design_1_clk_wizard_0_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       inst           |            design_1_clk_wizard_0_1_clk_wiz_top |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     irq_s0           |                              design_1_irq_s0_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     irq_s1           |                              design_1_irq_s1_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     irq_s2           |                              design_1_irq_s2_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     proc_sys_reset_0 |                    design_1_proc_sys_reset_0_1 |         16 |         15 |       0 |    1 |    35 |      0 |      0 |    0 |          0 |
+|       U0             |     design_1_proc_sys_reset_0_1_proc_sys_reset |         16 |         15 |       0 |    1 |    35 |      0 |      0 |    0 |          0 |
+|     smartconnect_0   |                      design_1_smartconnect_0_1 |        543 |        542 |       0 |    1 |   753 |      0 |      0 |    0 |          0 |
+|       inst           |              design_1_smartconnect_0_1_bd_886d |        543 |        542 |       0 |    1 |   753 |      0 |      0 |    0 |          0 |
+|     u_mc_vd100       |                          design_1_u_mc_vd100_1 |     116826 |     108290 |    7966 |  570 | 40783 |     81 |      0 |   64 |        144 |
+|       (u_mc_vd100)   |                          design_1_u_mc_vd100_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       inst           | design_1_u_mc_vd100_1_multicore_top_vd100_bd_v |     116826 |     108290 |    7966 |  570 | 40783 |     81 |      0 |   64 |        144 |
+|     util_ds_buf_0    |                       design_1_util_ds_buf_0_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       U0             |           design_1_util_ds_buf_0_1_util_ds_buf |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|     versal_cips_0    |                       design_1_versal_cips_0_1 |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
+|       inst           |                                        bd_b01b |          0 |          0 |       0 |    0 |     0 |      0 |      0 |    0 |          0 |
++----------------------+------------------------------------------------+------------+------------+---------+------+-------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

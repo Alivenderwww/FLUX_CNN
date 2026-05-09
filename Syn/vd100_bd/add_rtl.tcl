@@ -11,6 +11,16 @@
 
 set RTL_DIR "C:/_Project/FLUX_CNN/RTL"
 
+# ---- Xilinx IP: axi_dm (axi_datamover) — core_top.sv 实例化它 ----
+# 跨设备通用 IP, 复用 K325T 工程 xci, 综合时 Vivado 自动 retarget VE2302
+set AXI_DM_XCI "C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_dm/axi_dm.xci"
+if {[file exists $AXI_DM_XCI] && [get_ips -quiet axi_dm] eq ""} {
+    read_ip $AXI_DM_XCI
+    generate_target -force synthesis [get_ips axi_dm]
+    synth_ip [get_ips axi_dm]
+    puts "  + axi_dm IP added (retargeted to current part)"
+}
+
 # Verilog header (svh): BD module 集成时 Vivado 要求 svh 也 add 进工程, 不仅 include path
 set svh_files [list \
     "$RTL_DIR/flux_cnn_params.svh" \

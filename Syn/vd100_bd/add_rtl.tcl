@@ -59,7 +59,7 @@ foreach f $rtl_files {
         incr added
     }
 }
-puts "  added $added new RTL files"
+puts "  added $added new RTL files (skipped existing ones)"
 
 # 设 SystemVerilog 类型 (svh 不需要 add, include 路径搞定)
 set_property FILE_TYPE {SystemVerilog} [get_files *.sv]
@@ -77,5 +77,5 @@ update_compile_order -fileset sources_1
 
 puts ""
 puts "============================================================"
-puts " RTL added. 现在可以再 source build_bd_ips_only.tcl 创建 u_mc_vd100"
+puts " RTL added. Now source build_bd_ips_only.tcl to create u_mc_vd100"
 puts "============================================================"

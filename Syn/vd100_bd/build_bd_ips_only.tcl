@@ -35,7 +35,7 @@ if {[get_bd_cells -quiet versal_cips_0] eq ""} {
         } \
       ] [get_bd_cells versal_cips_0]
     puts "  + versal_cips_0 created"
-} else { puts "  versal_cips_0 already exists" }
+} else { puts "  - versal_cips_0 already exists, skipped" }
 
 # -----------------------------------------------------------------------------
 # 2. clk_wizard (200 MHz → 100 MHz axi_clk)
@@ -82,9 +82,9 @@ if {[get_bd_cells -quiet axi_noc_0] eq ""} {
       CONFIG.NUM_MI {0} \
     ] [get_bd_cells axi_noc_0]
     puts "  + axi_noc_0 created (3 SI 128-bit + 1 DDRMC)"
-    puts "    注: GUI 双击 axi_noc_0 进 Inputs 页, 把 S00/S01/S02_AXI 的 'Connected To'"
-    puts "        设为 MC (在 Inputs 表格里点对应行的 'Connected To' 下拉, 选 MC_0)"
-    puts "        DATA_WIDTH 设 128, CATEGORY 设 pl, 然后 Save"
+    puts "    NOTE: double-click axi_noc_0 -> Inputs page,"
+    puts "          set S00/S01/S02_AXI 'Connected To' = MC_0,"
+    puts "          DATA_WIDTH = 128, CATEGORY = pl, then Save"
 }
 
 # -----------------------------------------------------------------------------
@@ -128,8 +128,8 @@ foreach i {0 1 2} {
 # -----------------------------------------------------------------------------
 if {[get_bd_cells -quiet u_mc_vd100] eq ""} {
     if {[catch {create_bd_cell -type module -reference multicore_top_vd100_bd u_mc_vd100} err]} {
-        puts "  ! 无法 add multicore_top_vd100_bd: $err"
-        puts "    确认 RTL 已 add_files. 跑: add_files -norecurse <path>/multicore_top_vd100_bd.sv"
+        puts "  ! Failed to add multicore_top_vd100_bd: $err"
+        puts "    Run: source C:/_Project/FLUX_CNN/Syn/vd100_bd/add_rtl.tcl first"
     } else {
         puts "  + u_mc_vd100 (multicore_top_vd100_bd) added as BD module"
     }
@@ -152,6 +152,6 @@ regenerate_bd_layout
 save_bd_design
 puts ""
 puts "============================================================"
-puts " BD IP-only build done. 现在 GUI 上有所有 IP, 但没连线."
-puts " 按 BRINGUP.md 1.3-1.5 步手动拖线 (Connection Automation 也能帮)"
+puts " BD IP-only build done. All IPs on canvas, no connections yet."
+puts " Next: drag wires per Syn/vd100_bd/STEP_BY_STEP.md Step 2-7"
 puts "============================================================"

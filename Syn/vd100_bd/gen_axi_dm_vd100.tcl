@@ -19,7 +19,10 @@ if {[llength [get_ips -quiet $IP_DM]] > 0} {
     set cur_part  [get_property PART [current_project]]
     if {$is_locked || $ip_part ne $cur_part} {
         puts "  - existing axi_dm IP locked or wrong part ($ip_part vs $cur_part), deleting"
-        delete_ips $IP_DM
+        # Vivado tcl 删 IP 标准方法: export_ip_user_files -reset + remove_files .xci
+        export_ip_user_files -of_objects [get_ips $IP_DM] -no_script -reset -force -quiet
+        set xci [get_files $IP_DM.xci]
+        if {$xci ne ""} { remove_files $xci }
     } else {
         puts "  - axi_dm already exists for VE2302, reusing"
     }

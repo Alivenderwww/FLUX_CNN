@@ -40,12 +40,17 @@
 
 routed LUT **少 11K** 是 P&R 优化 (packed cell 更紧凑). Fmax 比 OOC 低 (含 BD framework 完整 timing path), 但**100 MHz target 富余 19.5%**, 实际可拉到 ~119 MHz 跑.
 
-### bitstream 状态
+### Bitstream + .xsa
 - routed_dcp: ✅ `design_1_wrapper_routed.dcp` 已生成
-- **bitstream (.pdi)**: ❌ Vivado evaluation license 不能 generate Versal device image
-- **.xsa**: ❌ 待 license 解决
+- **bitstream (.pdi)**: ✅ `design_1_wrapper.pdi` (5.9 MB)
+- **.xsa**: ✅ `vd100_resnet11.xsa` (2.5 MB, 含 bitstream)
 
-License 解决: AMD account → Generate "Vivado ML Standard - Free" license (Versal AI Edge VE2302 在 Standard 范围内).
+**License 解决**: 
+- 之前 .lic 里 Enterprise Eval 30 day evaluation 优先级覆盖 built-in Standard,
+  Vivado 选 Eval license → write_device_image disabled
+- 修复: 编辑 .lic 注释/移除 Enterprise Eval entries, 让 Vivado 退到 built-in
+  Standard (含 VE2302, 永久, 能 write bitstream)
+- 验证: 不设 XILINXD_LICENSE_FILE=空 也能 write_device_image, license 干净
 
 ---
 

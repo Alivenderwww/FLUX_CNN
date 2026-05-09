@@ -54,9 +54,25 @@ routed LUT **少 11K** 是 P&R 优化 (packed cell 更紧凑). Fmax 比 OOC 低 
 
 ---
 
-## Step 2: Vitis app build (待 .xsa)
+## Step 2: Vitis baremetal app build (xsct create_vitis_app.tcl)
 
-(license 解决, .xsa 出来后填)
+### Platform from .xsa
+- Source: `Syn/vd100_bd/output/vd100_resnet11.xsa`
+- Target: Versal AI Edge VE2302
+- Processor: **`versal_cips_0_pspmc_0_psv_cortexa72_0`** (Vitis 2023.2 完整 BD path)
+- Domain: `standalone_psv_cortexa72_0` (baremetal A72)
+- BSP: lwip213 (lwIP 2.1.3 TCP stack)
+
+### Application
+- Template: lwIP Echo Server
+- Modified: src/echo.c → resnet11_main.c (我们的 ResNet11 socket server)
+- ELF: `host/vd100_ps_baremetal/workspace/resnet11_app/Debug/resnet11_app.elf`
+
+### Build status
+(待 xsct b13tx3rvp 完成填数据)
+- platform generate: TBD
+- app build: TBD
+- ELF size: TBD KB
 
 ---
 

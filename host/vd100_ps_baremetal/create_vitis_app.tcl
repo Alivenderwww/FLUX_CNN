@@ -20,7 +20,8 @@ set WORKSPACE "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace"
 set PLATFORM_NAME "vd100_platform"
 set APP_NAME      "resnet11_app"
 set DOMAIN_NAME   "standalone_psv_cortexa72_0"
-set PROCESSOR     "psv_cortexa72_0"
+# Versal A72 完整 BD path (Vitis 2023.2): versal_cips_0_pspmc_0_psv_cortexa72_0
+set PROCESSOR     "versal_cips_0_pspmc_0_psv_cortexa72_0"
 
 # 1. 创建 workspace
 file mkdir $WORKSPACE
@@ -41,9 +42,8 @@ platform active $PLATFORM_NAME
 domain create -name $DOMAIN_NAME -proc $PROCESSOR -os standalone
 domain active $DOMAIN_NAME
 
-# 4. lwIP library (BSP add)
+# 4. lwIP library (BSP add) — baremetal echo server template 自带 lwip213
 puts "Adding lwIP library to BSP..."
-bsp config use_axi_dma "true"
 bsp setlib -name lwip213
 bsp regenerate
 

@@ -12,13 +12,15 @@
 set RTL_DIR "C:/_Project/FLUX_CNN/RTL"
 
 # ---- Xilinx IP: axi_dm (axi_datamover) — core_top.sv 实例化它 ----
-# 跨设备通用 IP, 复用 K325T 工程 xci, 综合时 Vivado 自动 retarget VE2302
-set AXI_DM_XCI "C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_dm/axi_dm.xci"
-if {[file exists $AXI_DM_XCI] && [get_ips -quiet axi_dm] eq ""} {
-    read_ip $AXI_DM_XCI
-    generate_target -force synthesis [get_ips axi_dm]
-    synth_ip [get_ips axi_dm]
-    puts "  + axi_dm IP added (retargeted to current part)"
+# VD100 native 版本: 用 gen_axi_dm_vd100.tcl 在当前 VE2302 工程内 native 创建,
+# 不依赖 K325T 工程, 一遍综合到位.
+if {[get_ips -quiet axi_dm] eq ""} {
+    set GEN_AXI_DM_TCL "C:/_Project/FLUX_CNN/Syn/vd100_bd/gen_axi_dm_vd100.tcl"
+    if {[file exists $GEN_AXI_DM_TCL]} {
+        source $GEN_AXI_DM_TCL
+    } else {
+        puts "  ! gen_axi_dm_vd100.tcl not found, axi_dm IP missing"
+    }
 }
 
 # Verilog header (svh): BD module 集成时 Vivado 要求 svh 也 add 进工程, 不仅 include path

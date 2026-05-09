@@ -12,13 +12,24 @@
 
 set IP_DM axi_dm
 
-# 创建 IP (如果不存在)
+# 如果已存在 (可能是 K325T retarget 的, 不能用), 先 delete
+if {[llength [get_ips -quiet $IP_DM]] > 0} {
+    set is_locked [get_property IS_LOCKED [get_ips $IP_DM]]
+    set ip_part   [get_property PART [get_ips $IP_DM]]
+    set cur_part  [get_property PART [current_project]]
+    if {$is_locked || $ip_part ne $cur_part} {
+        puts "  - existing axi_dm IP locked or wrong part ($ip_part vs $cur_part), deleting"
+        delete_ips $IP_DM
+    } else {
+        puts "  - axi_dm already exists for VE2302, reusing"
+    }
+}
+
+# 创建 (如果还没有)
 if {[llength [get_ips -quiet $IP_DM]] == 0} {
     create_ip -name axi_datamover -vendor xilinx.com -library ip \
               -module_name $IP_DM
     puts "  + IP $IP_DM created (axi_datamover, native VE2302)"
-} else {
-    puts "  - IP $IP_DM already exists, reusing"
 }
 
 # 配置 IP 参数 (跟 K325T gen_axi_datamover.tcl 完全一致)

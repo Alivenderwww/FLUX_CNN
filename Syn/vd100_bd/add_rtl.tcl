@@ -11,6 +11,20 @@
 
 set RTL_DIR "C:/_Project/FLUX_CNN/RTL"
 
+# Verilog header (svh): BD module 集成时 Vivado 要求 svh 也 add 进工程, 不仅 include path
+set svh_files [list \
+    "$RTL_DIR/flux_cnn_params.svh" \
+]
+foreach f $svh_files {
+    set basename [file tail $f]
+    if {[get_files -quiet $basename] eq ""} {
+        add_files -norecurse $f
+        set_property file_type {Verilog Header} [get_files $basename]
+        set_property is_global_include true [get_files $basename]
+        puts "  + svh: $basename added (global include)"
+    }
+}
+
 set rtl_files [list \
     "$RTL_DIR/std_rf.sv" \
     "$RTL_DIR/sram_model.sv" \

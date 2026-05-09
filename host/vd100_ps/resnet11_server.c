@@ -59,7 +59,7 @@
 /* ----- PL CSR (经 PS GP AXI-Lite 接到 multicore_top_vd100.csr_axil) -----
  * Petalinux Device Tree 把这块映射成 /dev/uio0 (推荐) 或者直接 mmap /dev/mem.
  * 这里用 /dev/mem 简化 (UIO 需 DT 配置, 之后再换). */
-#define CSR_BASE_PHYS    0xA0000000ul    /* CIPS GP slave aperture, 由 BD 决定 */
+#define CSR_BASE_PHYS    0xA4000000ul    /* PS M_AXI_FPD valid aperture (Versal default) */
 #define CSR_PER_CORE     0x1000ul        /* 每 core 4KB CSR (csr_axil_addr[13:12] 选 core) */
 #define CSR_REGIONLEN    0x4000ul        /* 总 16 KB (3 core × 4KB + spare) */
 

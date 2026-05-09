@@ -43,7 +43,7 @@
 #define DDR_DESC_OFFSET  0x00800000u    /* 8 MB 后 */
 #define DDR_OFM_OFFSET   0x07F00000u    /* 127 MB 处 */
 
-#define CSR_BASE         0xA0000000u    /* PS GP aperture */
+#define CSR_BASE         0xA4000000u    /* PS M_AXI_FPD valid aperture (Versal default) */
 #define CSR_PER_CORE     0x1000u
 #define CSR_CTRL         0x000
 #define CSR_STATUS       0x004

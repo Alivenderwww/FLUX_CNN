@@ -43,6 +43,8 @@ Syn/axi_dm_example/
 /expected_psum.txt
 
 Syn/reports
+Syn/reports_smc
+Syn/reports_vd100
 
 *.drawio.bkp
 
@@ -61,7 +63,7 @@ sim/tb_core_dma/cases/
 sim/tb_core_dma/vsim_all.log
 
 .claude
-paper
+paper/参考
 memory
 STATUS.md
 
@@ -79,3 +81,22 @@ toolchain/transcript
 Syn/vd100_bd/output/
 Syn/vd100_bd/*.log
 Syn/vd100_bd/.Xil/
+
+# Vivado 根目录临时 (write_device_image / wdi)
+.memdata_temp_mem_file.mem
+wdi_info.xml
+*.cmd_log
+*.str
+
+# Vitis baremetal workspace (~500MB Vitis 工程, 大量自动生成)
+host/vd100_ps_baremetal/workspace/
+host/vd100_ps_baremetal/workspace2/
+host/vd100_ps_baremetal/*.log
+
+# Python 上位机 cache
+host/vd100_pc/__pycache__/
+host/vd100_pc/*.pyc
+
+# 临时 license 备份 (用户敏感, 不进 git)
+*.lic.bak
+*.lic.backup

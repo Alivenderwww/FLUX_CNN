@@ -1,0 +1,662 @@
+Reading pref.tcl
+
+# 2020.4
+
+# do run.tcl
+# active_case.txt
+[INFO] CASE_DIR_REL = cases/v4d_n4_w128 (from active_case.txt)
+# C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini
+# C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm
+# C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to4
+# C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_smc_4to4
+# C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.srcs/sources_1/ip/axi_smc_4to4/axi_smc_4to4.xci
+# ** Warning: (vlib-34) Library already exists at "work".
+# Errors: 0, Warnings: 1
+# Model Technology ModelSim SE-64 vmap 2020.4 Lib Mapping Utility 2020.10 Oct 13 2020
+# vmap work work 
+# Modifying modelsim.ini
+# ** Warning: (vlib-34) Library already exists at "xil_defaultlib".
+# Errors: 0, Warnings: 1
+# Model Technology ModelSim SE-64 vmap 2020.4 Lib Mapping Utility 2020.10 Oct 13 2020
+# vmap xil_defaultlib xil_defaultlib 
+# Modifying modelsim.ini
+# Model Technology ModelSim SE-64 vcom 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:08:54 on May 09,2026
+# vcom -work xil_defaultlib -93 C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm/sim/axi_dm.vhd 
+# -- Loading package STANDARD
+# -- Loading package TEXTIO
+# -- Loading package std_logic_1164
+# -- Loading package NUMERIC_STD
+# -- Loading entity axi_datamover_mm2s_omit_wrap
+# -- Loading entity axi_datamover_reset
+# -- Loading package std_logic_arith
+# -- Loading package STD_LOGIC_UNSIGNED
+# -- Loading package lib_pkg
+# -- Loading entity srl_fifo_f
+# -- Loading package VCOMPONENTS
+# -- Loading entity sync_fifo_fg
+# -- Loading entity axi_datamover_sfifo_autord
+# -- Loading package ATTRIBUTES
+# -- Loading package std_logic_misc
+# -- Loading entity async_fifo_fg
+# -- Loading entity axi_datamover_afifo_autord
+# -- Loading entity axi_datamover_fifo
+# -- Loading entity axi_datamover_cmd_status
+# -- Loading entity axi_datamover_strb_gen2
+# -- Loading entity axi_datamover_pcc
+# -- Loading entity axi_datamover_addr_cntl
+# -- Loading entity axi_datamover_rdmux
+# -- Loading entity axi_datamover_rddata_cntl
+# -- Loading entity axi_datamover_rd_status_cntl
+# -- Loading entity axi_datamover_dre_mux8_1_x_n
+# -- Loading entity axi_datamover_dre_mux4_1_x_n
+# -- Loading entity axi_datamover_dre_mux2_1_x_n
+# -- Loading entity axi_datamover_mm2s_dre
+# -- Loading entity axi_datamover_rd_sf
+# -- Loading entity axi_datamover_skid_buf
+# -- Loading entity axi_datamover_mm2s_full_wrap
+# -- Loading entity axi_datamover_scc
+# -- Loading entity axi_datamover_mm2s_basic_wrap
+# -- Loading entity axi_datamover_s2mm_omit_wrap
+# -- Loading entity axi_datamover_ibttcc
+# -- Loading entity axi_datamover_stbs_set
+# -- Loading entity axi_datamover_stbs_set_nodre
+# -- Loading entity axi_datamover_indet_btt
+# -- Loading entity axi_datamover_s2mm_dre
+# -- Loading entity axi_datamover_ms_strb_set
+# -- Loading entity axi_datamover_mssai_skid_buf
+# -- Loading entity axi_datamover_slice
+# -- Loading entity axi_datamover_s2mm_scatter
+# -- Loading entity axi_datamover_s2mm_realign
+# -- Loading entity axi_datamover_wrdata_cntl
+# -- Loading entity axi_datamover_wr_status_cntl
+# -- Loading entity axi_datamover_wr_demux
+# -- Loading entity axi_datamover_skid2mm_buf
+# -- Loading entity axi_datamover_wr_sf
+# -- Loading entity axi_datamover_s2mm_full_wrap
+# -- Loading entity axi_datamover_s2mm_basic_wrap
+# -- Loading entity axi_datamover
+# -- Compiling entity axi_dm
+# -- Compiling architecture axi_dm_arch of axi_dm
+# End time: 15:08:55 on May 09,2026, Elapsed time: 0:00:01
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:08:55 on May 09,2026
+# vlog -work xil_defaultlib C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/glbl.v 
+# -- Compiling module glbl
+# 
+# Top level modules:
+# 	glbl
+# End time: 15:08:55 on May 09,2026, Elapsed time: 0:00:00
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:08:55 on May 09,2026
+# vlog -work xil_defaultlib C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_lite_1to4/sim/axi_lite_1to4.v 
+# -- Compiling module axi_lite_1to4
+# 
+# Top level modules:
+# 	axi_lite_1to4
+# End time: 15:08:55 on May 09,2026, Elapsed time: 0:00:00
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:08:55 on May 09,2026
+# vlog -work xil_defaultlib C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_smc_4to4/sim/axi_smc_4to4.v 
+# -- Compiling module axi_smc_4to4
+# 
+# Top level modules:
+# 	axi_smc_4to4
+# End time: 15:08:56 on May 09,2026, Elapsed time: 0:00:01
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:08:56 on May 09,2026
+# vlog -sv -work work -mfcu -suppress 2902,13314 "+incdir+../../RTL" ../../RTL/AXI4/axi_crossbar_4to4_sim.sv ../../RTL/std_rf.sv ../../RTL/sdp.sv ../../RTL/sram_model.sv ../../RTL/AXI4/axi_arbiter.sv ../../RTL/AXI4/axi_m_mux.sv ../../RTL/AXI4/axi_lite_csr.sv ../../RTL/AXI4/ifb_axi_slave.sv ../tb_axi_m_mux/axi_slave_mem.sv ../../RTL/desc_fifo.sv ../../RTL/sequencer.sv ../../RTL/cfg_regs.sv ../../RTL/mac_pe.sv ../../RTL/mac_col.sv ../../RTL/mac_array.sv ../../RTL/mac_simd_pair.sv ../../RTL/mac_array_simd.sv ../../RTL/parf_col.sv ../../RTL/parf_accum.sv ../../RTL/line_buffer.sv ../../RTL/wgt_buffer.sv ../../RTL/bias_rf.sv ../../RTL/ofb_writer.sv ../../RTL/DMA/idma_ctrl.sv ../../RTL/DMA/idma_sg_dispatcher.sv ../../RTL/DMA/wdma_ctrl.sv ../../RTL/DMA/odma_ctrl.sv ../../RTL/DMA/odma_sg_dispatcher.sv ../../RTL/DMA/rdma_ctrl.sv ../../RTL/DMA/mm2s_arb.sv ../../RTL/DMA/dfe.sv ../../RTL/core_top.sv ../../RTL/multicore_top_smc.sv tb_smc_chain.sv 
+# -- Compiling module axi_crossbar_4to4_sim
+# -- Compiling module std_rf
+# -- Compiling module sdp
+# -- Compiling module sram_model
+# -- Compiling module axi_master_arbiter
+# -- Compiling module axi_slave_arbiter
+# -- Compiling module axi_m_mux
+# -- Compiling module axi_lite_csr
+# -- Compiling module ifb_axi_slave
+# -- Compiling module axi_slave_mem
+# -- Compiling module desc_fifo
+# -- Compiling module sequencer
+# -- Compiling module cfg_regs
+# -- Compiling module mac_pe
+# -- Compiling module mac_col
+# -- Compiling module mac_array
+# ** Warning: ../../RTL/mac_array.sv(124): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array.sv(125): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# -- Compiling module mac_simd_pair
+# -- Compiling module sign_corr_lut
+# -- Compiling module mac_array_simd
+# ** Warning: ../../RTL/mac_array_simd.sv(149): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array_simd.sv(150): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array_simd.sv(151): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array_simd.sv(151): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array_simd.sv(152): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array_simd.sv(153): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# -- Compiling module parf_col
+# -- Compiling module parf_accum
+# -- Compiling module line_buffer
+# -- Compiling module wgt_buffer
+# -- Compiling module bias_rf
+# -- Compiling module ofb_writer
+# -- Compiling module idma_ctrl
+# -- Compiling module idma_sg_dispatcher
+# -- Compiling module wdma_ctrl
+# -- Compiling module odma_ctrl
+# -- Compiling module odma_sg_dispatcher
+# -- Compiling module rdma_ctrl
+# -- Compiling module mm2s_arb
+# -- Compiling module dfe
+# -- Compiling module core_top
+# -- Compiling module multicore_top_smc
+# -- Compiling module tb_smc_chain
+# 
+# Top level modules:
+# 	axi_crossbar_4to4_sim
+# 	axi_slave_arbiter
+# 	mac_array_simd
+# 	tb_smc_chain
+# End time: 15:08:56 on May 09,2026, Elapsed time: 0:00:00
+# Errors: 0, Warnings: 8, Suppressed Warnings: 18
+# vsim -c -voptargs=""+acc"" -L work -L xil_defaultlib -L axi_datamover_v5_1_30 -L fifo_generator_v13_2_8 -L lib_pkg_v1_0_2 -L lib_cdc_v1_0_2 -L lib_fifo_v1_0_17 -L lib_srl_fifo_v1_0_2 -L blk_mem_gen_v8_4_6 -L axi_crossbar_v2_1_29 -L axi_data_fifo_v2_1_27 -L axi_infrastructure_v1_1_0 -L axi_register_slice_v2_1_28 -L generic_baseblocks_v2_1_0 -L unisims_ver "+CASE_DIR=cases/v4d_n4_w128" work.tb_smc_chain xil_defaultlib.glbl 
+# Start time: 15:08:56 on May 09,2026
+# ** Note: (vsim-8009) Loading existing optimized design _opt
+# //  ModelSim SE-64 2020.4 Oct 13 2020
+# //
+# //  Copyright 1991-2020 Mentor Graphics Corporation
+# //  All Rights Reserved.
+# //
+# //  ModelSim SE-64 and its associated documentation contain trade
+# //  secrets and commercial or financial information that are the property of
+# //  Mentor Graphics Corporation and are privileged, confidential,
+# //  and exempt from disclosure under the Freedom of Information Act,
+# //  5 U.S.C. Section 552. Furthermore, this information
+# //  is prohibited from disclosure under the Trade Secrets Act,
+# //  18 U.S.C. Section 1905.
+# //
+# Loading sv_std.std
+# Loading work.tb_smc_chain(fast)
+# Loading work.multicore_top_smc(fast)
+# Loading xil_defaultlib.axi_lite_1to4(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_axi_crossbar(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_crossbar_sasd(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_addr_arbiter_sasd(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_addr_decoder(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_carry_and(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__2)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__3)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_splitter(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_splitter(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__2)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axic_register_slice(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__3)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_decerr_slave(fast)
+# Loading work.core_top(fast)
+# Loading work.axi_lite_csr(fast)
+# Loading work.cfg_regs(fast)
+# Loading work.desc_fifo(fast)
+# Loading work.sequencer(fast)
+# Loading work.sram_model(fast)
+# Loading work.sram_model(fast__1)
+# Loading work.line_buffer(fast)
+# Loading work.wgt_buffer(fast)
+# Loading work.mac_array(fast)
+# Loading work.mac_col(fast)
+# Loading work.mac_pe(fast)
+# Loading work.std_rf(fast)
+# Loading work.parf_accum(fast)
+# Loading work.parf_col(fast)
+# Loading work.ofb_writer(fast)
+# Loading work.sdp(fast)
+# Loading work.sram_model(fast__2)
+# Loading work.bias_rf(fast)
+# Loading work.dfe(fast)
+# Loading work.idma_sg_dispatcher(fast)
+# Loading work.wdma_ctrl(fast)
+# Loading work.rdma_ctrl(fast)
+# Loading work.mm2s_arb(fast)
+# Loading work.odma_sg_dispatcher(fast)
+# Loading work.axi_m_mux(fast)
+# Loading work.axi_master_arbiter(fast)
+# Loading work.ifb_axi_slave(fast)
+# Loading work.core_top(fast__1)
+# Loading work.mm2s_arb(fast__1)
+# Loading xil_defaultlib.axi_smc_4to4(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_axi_crossbar(fast__1)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_crossbar(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_addr_decoder(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__4)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__5)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__6)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_comparator_static(fast__7)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_arbiter_resp(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__4)
+# Loading unisims_ver.MUXF7(fast)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_srl_fifo(fast)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_ndeep_srl(fast)
+# Loading unisims_ver.SRLC32E(fast)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__5)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_wdata_router(fast)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_reg_srl_fifo(fast)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_ndeep_srl(fast__1)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__2)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__3)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__4)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__5)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__6)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_si_transactor(fast__7)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_addr_decoder(fast__2)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_wdata_mux(fast)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_reg_srl_fifo(fast__1)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__6)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_srl_fifo(fast__1)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axi_register_slice(fast)
+# Loading axi_infrastructure_v1_1_0.axi_infrastructure_v1_1_0_axi2vector(fast)
+# Loading axi_infrastructure_v1_1_0.axi_infrastructure_v1_1_0_vector2axi(fast)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axic_register_slice(fast__1)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axic_register_slice(fast__2)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axic_register_slice(fast__3)
+# Loading axi_register_slice_v2_1_28.axi_register_slice_v2_1_28_axic_register_slice(fast__4)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_wdata_mux(fast__1)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_reg_srl_fifo(fast__2)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_ndeep_srl(fast__2)
+# Loading axi_data_fifo_v2_1_27.axi_data_fifo_v2_1_27_axic_srl_fifo(fast__2)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_addr_arbiter(fast)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__7)
+# Loading generic_baseblocks_v2_1_0.generic_baseblocks_v2_1_0_mux_enc(fast__8)
+# Loading axi_crossbar_v2_1_29.axi_crossbar_v2_1_29_decerr_slave(fast__1)
+# Loading work.axi_slave_mem(fast)
+# Loading xil_defaultlib.glbl(fast)
+# Loading std.standard
+# Loading std.textio(body)
+# Loading ieee.std_logic_1164(body)
+# Loading ieee.numeric_std(body)
+# Loading ieee.std_logic_arith(body)
+# Loading ieee.std_logic_unsigned(body)
+# Loading lib_pkg_v1_0_2.lib_pkg(body)
+# Loading xpm.vcomponents
+# Loading synopsys.attributes
+# Loading ieee.std_logic_misc(body)
+# Loading xil_defaultlib.axi_dm(axi_dm_arch)#5
+# Loading axi_datamover_v5_1_30.axi_datamover(implementation)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_mm2s_full_wrap(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_reset(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_cmd_status(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#1
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#3
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#3
+# Loading axi_datamover_v5_1_30.axi_datamover_rd_status_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_pcc(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_addr_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#4
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#4
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#4
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#4
+# Loading axi_datamover_v5_1_30.axi_datamover_rddata_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_rdmux(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#5
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#5
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#5
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_mm2s_dre(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_dre_mux2_1_x_n(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_skid_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_full_wrap(implementation)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_wr_status_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#2
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#6
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#6
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#6
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#6
+# Loading axi_datamover_v5_1_30.axi_datamover_pcc(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_realign(implementation)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#7
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#7
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#7
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#7
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_dre(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_scatter(implementation)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_mssai_skid_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_ms_strb_set(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#3
+# Loading axi_datamover_v5_1_30.axi_datamover_slice(working)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#14
+# Loading axi_datamover_v5_1_30.axi_datamover_sfifo_autord(imp)#5
+# Loading verilog.vl_types(body)
+# Loading lib_fifo_v1_0_17.sync_fifo_fg(implementation)#5
+# Loading xpm.xpm_fifo_sync(fast)
+# Loading xpm.xpm_fifo_base(fast)
+# Loading xpm.xpm_fifo_rst(fast)
+# Loading xpm.xpm_fifo_reg_bit(fast)
+# Loading xpm.xpm_counter_updn(fast)
+# Loading xpm.xpm_counter_updn(fast__1)
+# Loading xpm.xpm_counter_updn(fast__2)
+# Loading xpm.xpm_counter_updn(fast__3)
+# Loading xpm.xpm_memory_base(fast)
+# Loading xpm.xpm_counter_updn(fast__4)
+# Loading axi_datamover_v5_1_30.axi_datamover_addr_cntl(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#8
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#8
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#8
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#8
+# Loading axi_datamover_v5_1_30.axi_datamover_wrdata_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#9
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#9
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#9
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#9
+# Loading axi_datamover_v5_1_30.axi_datamover_skid2mm_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_wr_demux(implementation)#1
+# ** Warning: (vsim-3015) [PCDPC] - Port size (11) does not match connection size (13) for port 'cfg_bias_base'. The port definition is at: ../../RTL/bias_rf.sv(41).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_bias_rf File: ../../RTL/core_top.sv Line: 819
+# ** Warning: (vsim-3015) [PCDPC] - Port size (11) does not match connection size (13) for port 'cfg_bias_base'. The port definition is at: ../../RTL/bias_rf.sv(41).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_bias_rf File: ../../RTL/core_top.sv Line: 819
+# ** Warning: (vsim-3015) [PCDPC] - Port size (11) does not match connection size (13) for port 'cfg_bias_base'. The port definition is at: ../../RTL/bias_rf.sv(41).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_bias_rf File: ../../RTL/core_top.sv Line: 819
+# ** Warning: (vsim-3015) [PCDPC] - Port size (11) does not match connection size (13) for port 'cfg_bias_base'. The port definition is at: ../../RTL/bias_rf.sv(41).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_bias_rf File: ../../RTL/core_top.sv Line: 819
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 1  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_DRE/I_S2MM_DRE_BLOCK/GEN_MUXFARM_128
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 1  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_DRE/I_S2MM_DRE_BLOCK/GEN_MUXFARM_128
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 1  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_DRE/I_S2MM_DRE_BLOCK/GEN_MUXFARM_128
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 1  Instance: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 1  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_DRE/I_S2MM_DRE_BLOCK/GEN_MUXFARM_128
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 2  Region: /tb_smc_chain/u_dut/gen_core[3]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/GEN_INCLUDE_MM2S_DRE/I_DRE_16_to_64/GEN_MUXFARM_128
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 2  Region: /tb_smc_chain/u_dut/gen_core[2]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/GEN_INCLUDE_MM2S_DRE/I_DRE_16_to_64/GEN_MUXFARM_128
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 2  Region: /tb_smc_chain/u_dut/gen_core[1]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/GEN_INCLUDE_MM2S_DRE/I_DRE_16_to_64/GEN_MUXFARM_128
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 2  Region: /tb_smc_chain/u_dut/gen_core[0]/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/GEN_INCLUDE_MM2S_DRE/I_DRE_16_to_64/GEN_MUXFARM_128
+# ** Info: [XPM_MEMORY 20-1] MEMORY_PRIMITIVE (0) instructs Vivado Synthesis to choose the memory primitive type. Depending on their values, other XPM_MEMORY parameters may preclude the choice of certain memory primitive types. Review XPM_MEMORY documentation and parameter values to understand any limitations, or set MEMORY_PRIMITIVE to a different value. tb_smc_chain.u_dut.gen_core[0].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc
+#    Time: 1 ps  Scope: tb_smc_chain.u_dut.gen_core[0].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc File: D:/Vivado/Vivado/2023.1/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv Line: 508
+# ** Info: [XPM_MEMORY 20-1] MEMORY_PRIMITIVE (0) instructs Vivado Synthesis to choose the memory primitive type. Depending on their values, other XPM_MEMORY parameters may preclude the choice of certain memory primitive types. Review XPM_MEMORY documentation and parameter values to understand any limitations, or set MEMORY_PRIMITIVE to a different value. tb_smc_chain.u_dut.gen_core[1].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc
+#    Time: 1 ps  Scope: tb_smc_chain.u_dut.gen_core[1].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc File: D:/Vivado/Vivado/2023.1/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv Line: 508
+# ** Info: [XPM_MEMORY 20-1] MEMORY_PRIMITIVE (0) instructs Vivado Synthesis to choose the memory primitive type. Depending on their values, other XPM_MEMORY parameters may preclude the choice of certain memory primitive types. Review XPM_MEMORY documentation and parameter values to understand any limitations, or set MEMORY_PRIMITIVE to a different value. tb_smc_chain.u_dut.gen_core[2].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc
+#    Time: 1 ps  Scope: tb_smc_chain.u_dut.gen_core[2].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc File: D:/Vivado/Vivado/2023.1/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv Line: 508
+# ** Info: [XPM_MEMORY 20-1] MEMORY_PRIMITIVE (0) instructs Vivado Synthesis to choose the memory primitive type. Depending on their values, other XPM_MEMORY parameters may preclude the choice of certain memory primitive types. Review XPM_MEMORY documentation and parameter values to understand any limitations, or set MEMORY_PRIMITIVE to a different value. tb_smc_chain.u_dut.gen_core[3].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc
+#    Time: 1 ps  Scope: tb_smc_chain.u_dut.gen_core[3].u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc File: D:/Vivado/Vivado/2023.1/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv Line: 508
+# == tb_smc_chain: SMC + NUMA multi-layer chain N=4 ==
+# [META] n_layers=1, n_cores=4
+#   Core 0 Layer 0: desc=0x0000000000a00000(63) idma=0x0000000000b00000(256) odma=0x0000000000c00000(128) w_out=[0:32]
+#   Core 1 Layer 0: desc=0x0000000001a00000(63) idma=0x0000000001b00000(384) odma=0x0000000001c00000(128) w_out=[32:64]
+#   Core 2 Layer 0: desc=0x0000000002a00000(63) idma=0x0000000002b00000(384) odma=0x0000000002c00000(128) w_out=[64:96]
+#   Core 3 Layer 0: desc=0x0000000003a00000(63) idma=0x0000000003b00000(256) odma=0x0000000003c00000(128) w_out=[96:128]
+#     IFB[0] W slice loaded (H=128 W=128 seg=32 32 32 32 cs=1)
+#   All preload done. Stage barrier loop start.
+#   Layer 0 done @ t=398335000 (cycles=39641, mask=1111)
+#     C0 L0 cy=39641 fire=36864 util=93.0% act_st=635 act_id=1598 wgt_st=2360 wgt_id=0 psm_st=768 psm_id=1990 acc_id=35144
+#     C1 L0 cy=39641 fire=36864 util=93.0% act_st=635 act_id=1654 wgt_st=2416 wgt_id=0 psm_st=768 psm_id=1990 acc_id=35200
+#     C2 L0 cy=39641 fire=36864 util=93.0% act_st=635 act_id=1674 wgt_st=2436 wgt_id=0 psm_st=768 psm_id=1990 acc_id=35220
+#     C3 L0 cy=39641 fire=36864 util=93.0% act_st=635 act_id=1599 wgt_st=2361 wgt_id=0 psm_st=768 psm_id=1990 acc_id=35145
+# 
+#   === mm2s_arb cmd_fire ?????¨ (???è?? 4 ???) ===
+#     C0: idma=512 wdma=1 rdma=1 ocmd=128 starve_preempt=0
+#     C1: idma=768 wdma=1 rdma=1 ocmd=128 starve_preempt=0
+#     C2: idma=768 wdma=1 rdma=1 ocmd=128
+#     C3: idma=512 wdma=1 rdma=1 ocmd=128
+# 
+#   === IDMA SG dispatcher state cy breakdown ===
+#     C0: fetch=9192 ring_wait=17164 issue=256 data=11232 done=1 (sum=37845)
+#     C1: fetch=9946 ring_wait=16364 issue=384 data=11226 done=1 (sum=37921)
+#     C2: fetch=6074 ring_wait=18624 issue=384 data=12842 done=1 (sum=37925)
+#     C3: fetch=7885 ring_wait=17842 issue=256 data=11873 done=1 (sum=37857)
+#   ALL layers done @ t=398635000 (total cycles=39860)
+# 
+# ============================================================
+#   RESULT: PASS  (All 1 layers OFM bit-exact, final 16384 words)
+#   Wall: 39860 cycles
+# ============================================================
+# ** Note: $finish    : tb_smc_chain.sv(1070)
+#    Time: 398635 ns  Iteration: 1  Instance: /tb_smc_chain
+# End time: 15:10:11 on May 09,2026, Elapsed time: 0:01:15
+# Errors: 0, Warnings: 124

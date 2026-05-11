@@ -39,7 +39,16 @@ from params import core_ifb_axi_base, IFB_DEPTH, OFB_DEPTH
 # Phase 7 SMC + NUMA: 全局地址 layout
 #   addr[25:24] = mem_id 路由 (跟 axi_crossbar_4to4_sim / SmartConnect IP 配置一致)
 #   每 mem 16 MB, 4 mem 总 64 MB. 每 mem 内分区:
+#
+# 板上部署时, 整体 SMC 全局地址 += SMC_GLOBAL_BASE 让 SMC 区段避开 PS 端 firmware
+#   占用地址段 (e.g. baremetal ELF / Linux kernel image).
+#   sim 默认用 0 (sim TB axi_slave_mem 4 mem 物理独立, 无冲突).
+#   部署模式下 (PS+PL 共享 DDR4) 用环境变量 FLUX_SMC_GLOBAL_BASE 指定, 例如
+#   ARM 64 baremetal 把 ELF link 在 0x0-0x01000000 时, export FLUX_SMC_GLOBAL_BASE=0x10000000.
 # ===========================================================================
+import os as _os
+SMC_GLOBAL_BASE             = int(_os.environ.get('FLUX_SMC_GLOBAL_BASE', '0'), 0)
+
 SMC_MEM_STRIDE              = 0x0100_0000   # 16 MB / mem (= 1 << 24)
 SMC_IFM_OFM_BASE            = 0x0000_0000   # 8 MB IFM/OFM (16 layer × 512 KB / layer)
 SMC_LAYER_DATA_OFFSET       = 0x0008_0000   # 512 KB / (layer, mem)
@@ -60,8 +69,9 @@ SMC_LAYER_INPUT_OFFSET      = 0x0008_0000   # 512 KB / root layer slot (layer 0 
 
 
 def smc_global_addr(mem_id: int, mem_offset: int) -> int:
-    """全局地址 = (mem_id << 24) | mem_offset"""
-    return (mem_id * SMC_MEM_STRIDE) + mem_offset
+    """全局地址 = SMC_GLOBAL_BASE + (mem_id << 24) | mem_offset
+    SMC_GLOBAL_BASE 让 VD100 板部署时避开 a72 ELF 区 (sim 用 0)."""
+    return SMC_GLOBAL_BASE + (mem_id * SMC_MEM_STRIDE) + mem_offset
 
 
 def smc_layer_data_addr(mem_id: int, layer_idx: int) -> int:

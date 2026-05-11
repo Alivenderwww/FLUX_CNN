@@ -21,6 +21,7 @@ module multicore_top_vd100_bd_v (
     input                rst_n,
 
     // CSR AXI-Lite slave
+    (* X_INTERFACE_PARAMETER = "MODE Slave, ADDR_WIDTH 14, DATA_WIDTH 32, PROTOCOL AXI4LITE, FREQ_HZ 100000000, ID_WIDTH 0, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0, HAS_BURST 0, HAS_LOCK 0, HAS_PROT 0, HAS_CACHE 0, HAS_QOS 0, HAS_REGION 0, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1" *)
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 csr_axil AWADDR" *)  input  [13:0] csr_axil_awaddr,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 csr_axil AWVALID" *) input         csr_axil_awvalid,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 csr_axil AWREADY" *) output        csr_axil_awready,
@@ -158,7 +159,39 @@ module multicore_top_vd100_bd_v (
 
     // IRQ output
     (* X_INTERFACE_INFO = "xilinx.com:signal:interrupt:1.0 irq_done INTERRUPT" *)
-    output [2:0]         irq_done
+    output [2:0]         irq_done,
+
+    // Debug expose (BD 端 axis_ila 接 probes)
+    output               dbg_awvalid_0,
+    output               dbg_awready_0,
+    output               dbg_arvalid_0,
+    output               dbg_arready_0,
+    output               dbg_wvalid_0,
+    output               dbg_rvalid_0,
+    output [31:0]        dbg_awaddr_0,
+    output [31:0]        dbg_araddr_0,
+    output [3:0]         dbg_awid_0,
+    output [3:0]         dbg_arid_0,
+    output [7:0]         dbg_awlen_0,
+    output [7:0]         dbg_arlen_0,
+    output [1:0]         dbg_dfe_state_0,
+    output               dbg_dfe_m_arvalid_0,
+    output               dbg_dfe_m_arready_0,
+    output               dbg_dfe_r_phase_0,
+    output               dbg_dfe_r_done_0,
+    output [15:0]        dbg_dfe_r_beats_rcvd_0,
+    output               dbg_arb_rd_lock_0,
+    output [1:0]         dbg_arb_rd_sel_0,
+    output [1:0]         dbg_arb_cu_rd_sel_0,
+    output [3:0]         dbg_master_arvalid_0,
+    output [3:0]         dbg_master_arready_0,
+    output [3:0]         dbg_master_rvalid_0,
+    output               dbg_start_dfe_pulse_0,
+    output               dbg_dfe_busy_0,
+    output               dbg_dfe_done_0,
+    output               dbg_idma_busy_0,
+    output               dbg_layer_busy_0,
+    output               dbg_csr_aw_fire_0
 );
 
     // 内部 instance SV module (Verilog 接受 SV module 当 black-box 实例化)
@@ -235,7 +268,32 @@ module multicore_top_vd100_bd_v (
         .m02_axi_rlast(m02_axi_rlast),     .m02_axi_rvalid(m02_axi_rvalid),
         .m02_axi_rready(m02_axi_rready),
 
-        .irq_done(irq_done)
+        .irq_done(irq_done),
+        // Debug
+        .dbg_awvalid_0(dbg_awvalid_0), .dbg_awready_0(dbg_awready_0),
+        .dbg_arvalid_0(dbg_arvalid_0), .dbg_arready_0(dbg_arready_0),
+        .dbg_wvalid_0(dbg_wvalid_0),   .dbg_rvalid_0(dbg_rvalid_0),
+        .dbg_awaddr_0(dbg_awaddr_0),   .dbg_araddr_0(dbg_araddr_0),
+        .dbg_awid_0(dbg_awid_0),       .dbg_arid_0(dbg_arid_0),
+        .dbg_awlen_0(dbg_awlen_0),     .dbg_arlen_0(dbg_arlen_0),
+        .dbg_dfe_state_0(dbg_dfe_state_0),
+        .dbg_dfe_m_arvalid_0(dbg_dfe_m_arvalid_0),
+        .dbg_dfe_m_arready_0(dbg_dfe_m_arready_0),
+        .dbg_dfe_r_phase_0(dbg_dfe_r_phase_0),
+        .dbg_dfe_r_done_0(dbg_dfe_r_done_0),
+        .dbg_dfe_r_beats_rcvd_0(dbg_dfe_r_beats_rcvd_0),
+        .dbg_arb_rd_lock_0(dbg_arb_rd_lock_0),
+        .dbg_arb_rd_sel_0(dbg_arb_rd_sel_0),
+        .dbg_arb_cu_rd_sel_0(dbg_arb_cu_rd_sel_0),
+        .dbg_master_arvalid_0(dbg_master_arvalid_0),
+        .dbg_master_arready_0(dbg_master_arready_0),
+        .dbg_master_rvalid_0(dbg_master_rvalid_0),
+        .dbg_start_dfe_pulse_0(dbg_start_dfe_pulse_0),
+        .dbg_dfe_busy_0(dbg_dfe_busy_0),
+        .dbg_dfe_done_0(dbg_dfe_done_0),
+        .dbg_idma_busy_0(dbg_idma_busy_0),
+        .dbg_layer_busy_0(dbg_layer_busy_0),
+        .dbg_csr_aw_fire_0(dbg_csr_aw_fire_0)
     );
 
 endmodule

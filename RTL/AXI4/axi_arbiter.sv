@@ -14,6 +14,9 @@ module axi_master_arbiter #(
     input  wire  [M_ID+M_WIDTH-1:0]  BUS_WR_BACK_ID,
     input  wire                      BUS_RD_ADDR_VALID,
     input  wire                      BUS_RD_ADDR_READY,
+    input  wire                      BUS_RD_DATA_VALID,    // VD100 fix: R lock
+    input  wire                      BUS_RD_DATA_READY,
+    input  wire                      BUS_RD_DATA_LAST,
     input  wire  [M_ID+M_WIDTH-1:0]  BUS_RD_BACK_ID,
     output logic [M_WIDTH-1:0]       wr_addr_master_sel,
     output logic                     wr_addr_master_lock,
@@ -96,13 +99,44 @@ always_comb begin: rd_addr_master
         rd_addr_master_sel = rev_i[M_WIDTH-1:0];
 end
 
+// VD100 fix 2026-05-11: R 通道 lock + valid-driven cu_sel update (不依赖 fire).
+// dfe.M_ARVALID=1 时立即 latch cu_sel=3 (高优先级 dfe), 不等 BUS_RD_ADDR_READY 握手.
+// 防综合 timing 让 fire 信号瞬态丢失, cu_sel 没正确 latch.
+reg                     rd_data_chan_lock;
+logic [M_WIDTH-1:0]     cu_rd_data_master_sel;
 always @(posedge clk or negedge rstn) begin
-    if(~rstn) cu_rd_addr_master_sel <= 0;
-    else cu_rd_addr_master_sel <= rd_addr_master_sel;
+    if (~rstn) begin
+        rd_data_chan_lock      <= 0;
+        cu_rd_data_master_sel  <= 2'd3;  // default dfe priority
+    end else begin
+        if (rd_addr_master_sel != cu_rd_data_master_sel && |MASTER_RD_ADDR_VALID && !rd_data_chan_lock) begin
+            // 任何 master 出 ARVALID 时 latch sel (不等 fire), 但 R outstanding 期间 hold
+            cu_rd_data_master_sel <= rd_addr_master_sel;
+        end
+        if (BUS_RD_ADDR_VALID && BUS_RD_ADDR_READY) begin
+            rd_data_chan_lock     <= 1;
+            cu_rd_data_master_sel <= rd_addr_master_sel;  // confirm latch on fire
+        end else if (rd_data_chan_lock && BUS_RD_DATA_VALID && BUS_RD_DATA_READY && BUS_RD_DATA_LAST) begin
+            rd_data_chan_lock <= 0;
+        end
+    end
 end
-/**********************读数据接口 支持写交织，无需lock**********************/
+// cu_rd_addr_master_sel: 上电默认 3 (dfe), AR fire 时 update
+always @(posedge clk or negedge rstn) begin
+    if(~rstn) cu_rd_addr_master_sel <= 2'd3;
+    else if (BUS_RD_ADDR_VALID && BUS_RD_ADDR_READY)
+        cu_rd_addr_master_sel <= rd_addr_master_sel;
+    else if (|MASTER_RD_ADDR_VALID)
+        cu_rd_addr_master_sel <= rd_addr_master_sel;  // valid-driven update (备用)
+end
+/**********************读数据接口 **********************/
 always @(*) begin
-    rd_data_master_sel = BUS_RD_BACK_ID[M_ID+:M_WIDTH];
+    if (rd_data_chan_lock)
+        rd_data_master_sel = cu_rd_data_master_sel;
+    else if (|MASTER_RD_ADDR_VALID)
+        rd_data_master_sel = rd_addr_master_sel;  // 跟随当前 AR sel
+    else
+        rd_data_master_sel = cu_rd_data_master_sel;  // hold 上次
 end
 
 endmodule //axi_master_arbiter

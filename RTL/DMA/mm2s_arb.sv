@@ -135,6 +135,7 @@ module mm2s_arb #(
     assign any_cmd_tvalid = idma_cmd_tvalid | wdma_cmd_tvalid | rdma_cmd_tvalid | ocmd_cmd_tvalid;
 
     logic data_full, sts_full;
+    logic data_empty_w, sts_empty_w;   // forward decl for serialization gate
 
     always_comb begin
         case (cmd_owner)
@@ -145,15 +146,28 @@ module mm2s_arb #(
             default: mm2s_cmd_tdata = idma_cmd_tdata;
         endcase
     end
-    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && !sts_full;
+    // VD100 fix 2026-05-11: 严格 single-outstanding — 等前一 cmd 的 data + sts 全
+    // collected 才允许下一 cmd_fire. 避 axi_smc IP / axi_noc 在 multi-outstanding
+    // 时 stream output 顺序错位.
+    // Sim 用 IDEAL_SMC (sim crossbar) PASS, IP 路径 FAIL → 问题在 IP 多-outstanding
+    // 处理. 严格 single-outstanding 让 IP 看每次都 sequential AR+R+sts, 跟 sim
+    // crossbar 行为等价.
+    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && !sts_full
+                          && data_empty_w && sts_empty_w;
 
     logic cmd_fire;
     assign cmd_fire = mm2s_cmd_tvalid && mm2s_cmd_tready;
 
-    assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
-    assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
-    assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
-    assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready && !data_full && !sts_full;
+    // VD100 fix 2026-05-11: cmd_tready 也需 serialization gate (data_empty + sts_empty),
+    // 否则 wdma/rdma 看 cmd_tready=1 误认为 cmd 发出去了, 但 mm2s_cmd_tvalid=0 没真发.
+    assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready
+                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+    assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready
+                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+    assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready
+                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+    assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready
+                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
 
     // =========================================================================
     // r_wdma_wait_cnt: WDMA 累计等待 cycle (Round E)
@@ -220,16 +234,19 @@ module mm2s_arb #(
     logic [OWN_W-1:0]  data_head, sts_head;
 
     assign data_empty = (data_cnt == '0);
+    assign data_empty_w = data_empty;   // wire to upstream gate
     assign data_full  = (data_cnt == CNT_W'(OFIFO_DEPTH));
     assign data_head  = data_mem[data_rd];
 
     assign sts_empty  = (sts_cnt == '0);
+    assign sts_empty_w = sts_empty;     // wire to upstream gate
     assign sts_full   = (sts_cnt == CNT_W'(OFIFO_DEPTH));
     assign sts_head   = sts_mem[sts_rd];
 
     logic data_tlast_fire, sts_fire;
     assign data_tlast_fire = mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast;
     assign sts_fire        = mm2s_sts_tvalid  && mm2s_sts_tready;
+
 
     always_ff @(posedge clk) begin
         if (!rst_n) begin

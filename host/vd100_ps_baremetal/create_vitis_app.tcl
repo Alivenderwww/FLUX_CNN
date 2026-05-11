@@ -16,7 +16,8 @@
 # =============================================================================
 
 set XSA       "C:/_Project/FLUX_CNN/Syn/vd100_bd/output/vd100_resnet11.xsa"
-set WORKSPACE "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace"
+# 用 workspace2 (原 workspace 被 stale Eclipse process locked, lazy 切新 dir)
+set WORKSPACE "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace2"
 set PLATFORM_NAME "vd100_platform"
 set APP_NAME      "resnet11_app"
 set DOMAIN_NAME   "standalone_psv_cortexa72_0"
@@ -51,22 +52,23 @@ bsp regenerate
 puts "Building platform (5-10 min)..."
 platform generate
 
-# 6. Application: lwIP echo server template
-puts "Creating app $APP_NAME from lwIP echo template..."
+# 6. Application: lwIP Echo Server 标准 template
+#    (fix_full_relaunch.tcl 后 BD 已启 PS_UART0/TTC0..3/IPI/FPD-CCI, lwIP template 不会拒)
+puts "Creating app $APP_NAME from lwIP Echo Server template..."
 app create -name $APP_NAME \
     -platform $PLATFORM_NAME \
     -domain   $DOMAIN_NAME \
     -template "lwIP Echo Server"
 
-# 7. 替换 echo.c 为我们的 resnet11_main.c
+# 7. 替换 echo.c 为我们的 resnet11_main.c (其他 main.c/platform_*.c 用模板自带)
 set src_dir "$WORKSPACE/$APP_NAME/src"
 set our_main "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/resnet11_main.c"
 if {[file exists "$src_dir/echo.c"]} {
     file delete "$src_dir/echo.c"
-    puts "  removed echo.c"
+    puts "  removed default echo.c"
 }
 file copy -force $our_main "$src_dir/echo.c"
-puts "  copied resnet11_main.c -> $src_dir/echo.c (name kept for lwIP template's main.c reference)"
+puts "  copied resnet11_main.c -> $src_dir/echo.c (impl start_application/transfer_data/print_app_header)"
 
 # 8. Build app
 puts "Building app $APP_NAME (3-5 min)..."

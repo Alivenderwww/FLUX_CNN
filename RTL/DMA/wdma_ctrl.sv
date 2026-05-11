@@ -165,6 +165,14 @@ module wdma_ctrl #(
         else        state <= state_next;
     end
 
+    `ifdef SIM_DEBUG_WDMA
+    always_ff @(posedge clk) begin
+        if (state != state_next)
+            $display("[t=%0t] wdma_ctrl [%m] state %0d → %0d start=%b cmd_fire=%b src_base=0x%08h byte_len=%0d",
+                     $time, state, state_next, start, cmd_fire, src_base, byte_len);
+    end
+    `endif
+
     // =========================================================================
     // 数据路径
     // =========================================================================

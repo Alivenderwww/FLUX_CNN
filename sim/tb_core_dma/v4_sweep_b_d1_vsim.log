@@ -1,0 +1,365 @@
+Reading pref.tcl
+
+# 2020.4
+
+# do run.tcl
+# C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/modelsim.ini
+# C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm
+# ** Warning: (vlib-34) Library already exists at "work".
+# Errors: 0, Warnings: 1
+# Model Technology ModelSim SE-64 vmap 2020.4 Lib Mapping Utility 2020.10 Oct 13 2020
+# vmap work work 
+# Modifying modelsim.ini
+# ** Warning: (vlib-34) Library already exists at "xil_defaultlib".
+# Errors: 0, Warnings: 1
+# Model Technology ModelSim SE-64 vmap 2020.4 Lib Mapping Utility 2020.10 Oct 13 2020
+# vmap xil_defaultlib xil_defaultlib 
+# Modifying modelsim.ini
+# Model Technology ModelSim SE-64 vcom 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:07:53 on May 09,2026
+# vcom -work xil_defaultlib -93 C:/_Project/FLUX_CNN/Syn/ip_managed/ip_managed.gen/sources_1/ip/axi_dm/sim/axi_dm.vhd 
+# -- Loading package STANDARD
+# -- Loading package TEXTIO
+# -- Loading package std_logic_1164
+# -- Loading package NUMERIC_STD
+# -- Loading entity axi_datamover_mm2s_omit_wrap
+# -- Loading entity axi_datamover_reset
+# -- Loading package std_logic_arith
+# -- Loading package STD_LOGIC_UNSIGNED
+# -- Loading package lib_pkg
+# -- Loading entity srl_fifo_f
+# -- Loading package VCOMPONENTS
+# -- Loading entity sync_fifo_fg
+# -- Loading entity axi_datamover_sfifo_autord
+# -- Loading package ATTRIBUTES
+# -- Loading package std_logic_misc
+# -- Loading entity async_fifo_fg
+# -- Loading entity axi_datamover_afifo_autord
+# -- Loading entity axi_datamover_fifo
+# -- Loading entity axi_datamover_cmd_status
+# -- Loading entity axi_datamover_strb_gen2
+# -- Loading entity axi_datamover_pcc
+# -- Loading entity axi_datamover_addr_cntl
+# -- Loading entity axi_datamover_rdmux
+# -- Loading entity axi_datamover_rddata_cntl
+# -- Loading entity axi_datamover_rd_status_cntl
+# -- Loading entity axi_datamover_dre_mux8_1_x_n
+# -- Loading entity axi_datamover_dre_mux4_1_x_n
+# -- Loading entity axi_datamover_dre_mux2_1_x_n
+# -- Loading entity axi_datamover_mm2s_dre
+# -- Loading entity axi_datamover_rd_sf
+# -- Loading entity axi_datamover_skid_buf
+# -- Loading entity axi_datamover_mm2s_full_wrap
+# -- Loading entity axi_datamover_scc
+# -- Loading entity axi_datamover_mm2s_basic_wrap
+# -- Loading entity axi_datamover_s2mm_omit_wrap
+# -- Loading entity axi_datamover_ibttcc
+# -- Loading entity axi_datamover_stbs_set
+# -- Loading entity axi_datamover_stbs_set_nodre
+# -- Loading entity axi_datamover_indet_btt
+# -- Loading entity axi_datamover_s2mm_dre
+# -- Loading entity axi_datamover_ms_strb_set
+# -- Loading entity axi_datamover_mssai_skid_buf
+# -- Loading entity axi_datamover_slice
+# -- Loading entity axi_datamover_s2mm_scatter
+# -- Loading entity axi_datamover_s2mm_realign
+# -- Loading entity axi_datamover_wrdata_cntl
+# -- Loading entity axi_datamover_wr_status_cntl
+# -- Loading entity axi_datamover_wr_demux
+# -- Loading entity axi_datamover_skid2mm_buf
+# -- Loading entity axi_datamover_wr_sf
+# -- Loading entity axi_datamover_s2mm_full_wrap
+# -- Loading entity axi_datamover_s2mm_basic_wrap
+# -- Loading entity axi_datamover
+# -- Compiling entity axi_dm
+# -- Compiling architecture axi_dm_arch of axi_dm
+# End time: 15:07:54 on May 09,2026, Elapsed time: 0:00:01
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:07:54 on May 09,2026
+# vlog -work xil_defaultlib C:/_Project/FLUX_CNN/Syn/ip_sim_export/axi_dm/modelsim/glbl.v 
+# -- Compiling module glbl
+# 
+# Top level modules:
+# 	glbl
+# End time: 15:07:54 on May 09,2026, Elapsed time: 0:00:00
+# Errors: 0, Warnings: 0
+# Model Technology ModelSim SE-64 vlog 2020.4 Compiler 2020.10 Oct 13 2020
+# Start time: 15:07:54 on May 09,2026
+# vlog -sv -work work -mfcu -suppress 2902,13314 "+incdir+../../RTL" ../../RTL/std_rf.sv ../../RTL/sdp.sv ../../RTL/sram_model.sv ../../RTL/AXI4/axi_arbiter.sv ../../RTL/AXI4/axi_m_mux.sv ../../RTL/AXI4/axi_lite_csr.sv ../../RTL/AXI4/ifb_axi_slave.sv ../../RTL/DMA/idma_ctrl.sv ../../RTL/DMA/wdma_ctrl.sv ../../RTL/DMA/odma_ctrl.sv ../../RTL/DMA/rdma_ctrl.sv ../../RTL/DMA/mm2s_arb.sv ../../RTL/DMA/dfe.sv ../../RTL/desc_fifo.sv ../../RTL/sequencer.sv ../../RTL/cfg_regs.sv ../../RTL/mac_pe.sv ../../RTL/mac_col.sv ../../RTL/mac_array.sv ../../RTL/parf_col.sv ../../RTL/parf_accum.sv ../../RTL/line_buffer.sv ../../RTL/wgt_buffer.sv ../../RTL/bias_rf.sv ../../RTL/ofb_writer.sv ../../RTL/core_top.sv ../tb_axi_m_mux/axi_slave_mem.sv tb_core_dma.sv 
+# -- Compiling module std_rf
+# -- Compiling module sdp
+# -- Compiling module sram_model
+# -- Compiling module axi_master_arbiter
+# -- Compiling module axi_slave_arbiter
+# -- Compiling module axi_m_mux
+# -- Compiling module axi_lite_csr
+# -- Compiling module ifb_axi_slave
+# -- Compiling module idma_ctrl
+# -- Compiling module wdma_ctrl
+# -- Compiling module odma_ctrl
+# -- Compiling module rdma_ctrl
+# -- Compiling module mm2s_arb
+# -- Compiling module dfe
+# -- Compiling module desc_fifo
+# -- Compiling module sequencer
+# -- Compiling module cfg_regs
+# -- Compiling module mac_pe
+# -- Compiling module mac_col
+# -- Compiling module mac_array
+# ** Warning: ../../RTL/mac_array.sv(124): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# ** Warning: ../../RTL/mac_array.sv(125): (vlog-2583) [SVCHK] - Extra checking for conflicts with always_comb and always_latch variables is done at vopt time.
+# -- Compiling module parf_col
+# -- Compiling module parf_accum
+# -- Compiling module line_buffer
+# -- Compiling module wgt_buffer
+# -- Compiling module bias_rf
+# -- Compiling module ofb_writer
+# -- Compiling module core_top
+# -- Compiling module axi_slave_mem
+# -- Compiling module tb_core_dma
+# ** Warning: tb_core_dma.sv(590): (vlog-2244) Variable 'pass_cnt' is implicitly static. You must either explicitly declare it as static or automatic
+# or remove the initialization in the declaration of variable.
+# ** Warning: tb_core_dma.sv(590): (vlog-2244) Variable 'fail_cnt' is implicitly static. You must either explicitly declare it as static or automatic
+# or remove the initialization in the declaration of variable.
+# 
+# Top level modules:
+# 	axi_slave_arbiter
+# 	tb_core_dma
+# End time: 15:07:55 on May 09,2026, Elapsed time: 0:00:01
+# Errors: 0, Warnings: 4, Suppressed Warnings: 18
+# vsim -c -voptargs=""+acc"" -sva -f sim_params.f -L work -L xil_defaultlib -L axi_datamover_v5_1_30 -L fifo_generator_v13_2_8 -L lib_pkg_v1_0_2 -L lib_cdc_v1_0_2 -L lib_fifo_v1_0_17 -L lib_srl_fifo_v1_0_2 -L blk_mem_gen_v8_4_6 -L unisims_ver work.tb_core_dma xil_defaultlib.glbl 
+# Start time: 15:07:55 on May 09,2026
+# ** Note: (vsim-8009) Loading existing optimized design _opt2
+# //  ModelSim SE-64 2020.4 Oct 13 2020
+# //
+# //  Copyright 1991-2020 Mentor Graphics Corporation
+# //  All Rights Reserved.
+# //
+# //  ModelSim SE-64 and its associated documentation contain trade
+# //  secrets and commercial or financial information that are the property of
+# //  Mentor Graphics Corporation and are privileged, confidential,
+# //  and exempt from disclosure under the Freedom of Information Act,
+# //  5 U.S.C. Section 552. Furthermore, this information
+# //  is prohibited from disclosure under the Trade Secrets Act,
+# //  18 U.S.C. Section 1905.
+# //
+# Loading sv_std.std
+# Loading work.tb_core_dma(fast)
+# Loading work.core_top(fast)
+# Loading work.axi_lite_csr(fast)
+# Loading work.cfg_regs(fast)
+# Loading work.desc_fifo(fast)
+# Loading work.sequencer(fast)
+# Loading work.sram_model(fast)
+# Loading work.sram_model(fast__1)
+# Loading work.sram_model(fast__2)
+# Loading work.line_buffer(fast)
+# Loading work.wgt_buffer(fast)
+# Loading work.mac_array(fast)
+# Loading work.mac_col(fast)
+# Loading work.mac_pe(fast)
+# Loading work.std_rf(fast)
+# Loading work.parf_accum(fast)
+# Loading work.parf_col(fast)
+# Loading work.ofb_writer(fast)
+# Loading work.sdp(fast)
+# Loading work.bias_rf(fast)
+# Loading work.dfe(fast)
+# Loading work.idma_ctrl(fast)
+# Loading work.wdma_ctrl(fast)
+# Loading work.rdma_ctrl(fast)
+# Loading work.mm2s_arb(fast)
+# Loading work.odma_ctrl(fast)
+# Loading work.axi_m_mux(fast)
+# Loading work.axi_master_arbiter(fast)
+# Loading work.ifb_axi_slave(fast)
+# Loading work.axi_slave_mem(fast)
+# Loading xil_defaultlib.glbl(fast)
+# Loading std.standard
+# Loading std.textio(body)
+# Loading ieee.std_logic_1164(body)
+# Loading ieee.numeric_std(body)
+# Loading ieee.std_logic_arith(body)
+# Loading ieee.std_logic_unsigned(body)
+# Loading lib_pkg_v1_0_2.lib_pkg(body)
+# Loading xpm.vcomponents
+# Loading synopsys.attributes
+# Loading ieee.std_logic_misc(body)
+# Loading xil_defaultlib.axi_dm(axi_dm_arch)#1
+# Loading axi_datamover_v5_1_30.axi_datamover(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_mm2s_full_wrap(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_reset(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_cmd_status(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#1
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#1
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#3
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#3
+# Loading axi_datamover_v5_1_30.axi_datamover_rd_status_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_pcc(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_addr_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#4
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#4
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#4
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#3
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#4
+# Loading axi_datamover_v5_1_30.axi_datamover_rddata_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_rdmux(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#5
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#5
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#5
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#5
+# Loading axi_datamover_v5_1_30.axi_datamover_mm2s_dre(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_dre_mux2_1_x_n(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_skid_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_full_wrap(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_wr_status_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#2
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.cntr_incr_decr_addn_f(imp)#2
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#6
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#6
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#6
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#6
+# Loading axi_datamover_v5_1_30.axi_datamover_pcc(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_realign(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#7
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#7
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#7
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#7
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_dre(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_s2mm_scatter(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_mssai_skid_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_ms_strb_set(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_strb_gen2(implementation)#3
+# Loading axi_datamover_v5_1_30.axi_datamover_slice(working)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#10
+# Loading axi_datamover_v5_1_30.axi_datamover_sfifo_autord(imp)#1
+# Loading verilog.vl_types(body)
+# Loading lib_fifo_v1_0_17.sync_fifo_fg(implementation)#1
+# Loading xpm.xpm_fifo_sync(fast)
+# Loading xpm.xpm_fifo_base(fast)
+# Loading xpm.xpm_fifo_rst(fast)
+# Loading xpm.xpm_fifo_reg_bit(fast)
+# Loading xpm.xpm_counter_updn(fast)
+# Loading xpm.xpm_counter_updn(fast__1)
+# Loading xpm.xpm_counter_updn(fast__2)
+# Loading xpm.xpm_counter_updn(fast__3)
+# Loading xpm.xpm_memory_base(fast)
+# Loading xpm.xpm_counter_updn(fast__4)
+# Loading axi_datamover_v5_1_30.axi_datamover_addr_cntl(implementation)#2
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#8
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#8
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#8
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#8
+# Loading axi_datamover_v5_1_30.axi_datamover_wrdata_cntl(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_fifo(imp)#9
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_f(imp)#9
+# Loading lib_srl_fifo_v1_0_2.srl_fifo_rbu_f(imp)#9
+# Loading lib_srl_fifo_v1_0_2.dynshreg_f(behavioral)#9
+# Loading axi_datamover_v5_1_30.axi_datamover_skid2mm_buf(implementation)#1
+# Loading axi_datamover_v5_1_30.axi_datamover_wr_demux(implementation)#1
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 0  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 0  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/I_DRE_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/GEN_OMIT_INDET_BTT/I_DATA_CNTL_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_WR_STATUS_CNTLR/I_WRESP_STATUS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 0  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_RD_DATA_CNTL/GEN_DATA_CNTL_FIFO/I_DATA_CNTL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_ADDR_CNTL/GEN_ADDR_FIFO/I_ADDR_QUAL_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/GEN_INCLUDE_STATUS_FIFO/I_STS_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# ** Warning: NUMERIC_STD.TO_INTEGER: metavalue detected, returning 0
+#    Time: 0 ps  Iteration: 0  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/I_CMD_STATUS/I_CMD_FIFO/USE_SRL_FIFO/I_SYNC_FIFO/I_SRL_FIFO_RBU_F/DYNSHREG_F_I/INFERRED_GEN
+# [TB] watchdog timeout = 460000000 ns (46000000 cycles @10ns)
+# ** Warning: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, the result will be 'X'(es).
+#    Time: 0 ps  Iteration: 1  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: CONV_INTEGER: There is an 'U'|'X'|'W'|'Z'|'-' in an arithmetic operand, and it has been converted to 0.
+#    Time: 0 ps  Iteration: 1  Instance: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_SCATTER/I_S2MM_SCATTER/I_TSTRB_FIFO/USE_SYNC_FIFO/I_SYNC_FIFO
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 1  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_S2MM_FULL/I_S2MM_FULL_WRAPPER/GEN_INCLUDE_REALIGNER/I_S2MM_REALIGNER/GEN_INCLUDE_DRE/I_S2MM_DRE_BLOCK/GEN_MUXFARM_128
+# ** Warning: NUMERIC_STD.TO_UNSIGNED: vector truncated
+#    Time: 0 ps  Iteration: 2  Region: /tb_core_dma/u_core/u_axi_dm/U0/GEN_MM2S_FULL/I_MM2S_FULL_WRAPPER/GEN_INCLUDE_MM2S_DRE/I_DRE_16_to_64/GEN_MUXFARM_128
+# ** Info: [XPM_MEMORY 20-1] MEMORY_PRIMITIVE (0) instructs Vivado Synthesis to choose the memory primitive type. Depending on their values, other XPM_MEMORY parameters may preclude the choice of certain memory primitive types. Review XPM_MEMORY documentation and parameter values to understand any limitations, or set MEMORY_PRIMITIVE to a different value. tb_core_dma.u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc
+#    Time: 1 ps  Scope: tb_core_dma.u_core.u_axi_dm.U0.GEN_S2MM_FULL.I_S2MM_FULL_WRAPPER.GEN_INCLUDE_REALIGNER.I_S2MM_REALIGNER.GEN_INCLUDE_SCATTER.I_S2MM_SCATTER.I_TSTRB_FIFO.USE_SYNC_FIFO.I_SYNC_FIFO.NON_BLK_MEM.I_SYNC_FIFOGEN_FIFO.xpm_fifo_instance.xpm_fifo_sync_inst.xpm_fifo_base_inst.gen_sdpram.xpm_memory_base_inst.config_drc File: D:/Vivado/Vivado/2023.1/data/ip/xpm/xpm_memory/hdl/xpm_memory.sv Line: 508
+# == tb_core_dma multi-case run: N_CASES=8 ==
+# === CASE 0: B.k1s1|conv === t=115000
+# CASE_RESULT 0 PASS  cycles=5148  mac_fire=4096  mac_util=79.56%  arf_w=4096  arf_r=4096  parf_f=4096  parf_d=4096  ifb_r=4096  wb_r=128  ofb_w=4096  wall_ns=52765  name=B.k1s1|conv
+# CASE_PROFILE 0 cycles=5148 act_fire=4096 act_stall=64 act_idle=641 wgt_fire=4096 wgt_stall=641 wgt_idle=64 psum_fire=4096 psum_stall=0 psum_idle=1180 acc_fire=4096 acc_stall=0 acc_idle=800 name=B.k1s1|conv
+# === CASE 1: B.k1s2|conv === t=52885000
+# CASE_RESULT 1 PASS  cycles=4945  mac_fire=1024  mac_util=20.71%  arf_w=1024  arf_r=1024  parf_f=1024  parf_d=1024  ifb_r=1024  wb_r=32  ofb_w=1024  wall_ns=50740  name=B.k1s2|conv
+# CASE_PROFILE 1 cycles=4945 act_fire=1024 act_stall=0 act_idle=3701 wgt_fire=1024 wgt_stall=3701 wgt_idle=0 psum_fire=1024 psum_stall=0 psum_idle=4050 acc_fire=1024 acc_stall=0 acc_idle=3764 name=B.k1s2|conv
+# === CASE 2: B.k3s1|conv === t=103625000
+# CASE_RESULT 2 PASS  cycles=38484  mac_fire=36864  mac_util=95.79%  arf_w=13440  arf_r=36864  parf_f=36864  parf_d=4096  ifb_r=12920  wb_r=1728  ofb_w=4096  wall_ns=386130  name=B.k3s1|conv
+# CASE_PROFILE 2 cycles=38484 act_fire=36864 act_stall=0 act_idle=1291 wgt_fire=36864 wgt_stall=1291 wgt_idle=0 psum_fire=36864 psum_stall=0 psum_idle=1749 acc_fire=4096 acc_stall=0 acc_idle=34071 name=B.k3s1|conv
+# === CASE 3: B.k3s2|conv === t=489755000
+# CASE_RESULT 3 PASS  cycles=9682  mac_fire=9216  mac_util=95.19%  arf_w=9216  arf_r=9216  parf_f=9216  parf_d=1024  ifb_r=9025  wb_r=288  ofb_w=1024  wall_ns=98110  name=B.k3s2|conv
+# CASE_PROFILE 3 cycles=9682 act_fire=9216 act_stall=0 act_idle=141 wgt_fire=9216 wgt_stall=141 wgt_idle=0 psum_fire=9216 psum_stall=0 psum_idle=595 acc_fire=1024 acc_stall=0 acc_idle=8373 name=B.k3s2|conv
+# === CASE 4: D.n1_w016|conv === t=587865000
+# CASE_RESULT 4 PASS  cycles=2736  mac_fire=2304  mac_util=84.21%  arf_w=864  arf_r=2304  parf_f=2304  parf_d=256  ifb_r=736  wb_r=144  ofb_w=256  wall_ns=28650  name=D.n1_w016|conv
+# CASE_PROFILE 4 cycles=2736 act_fire=2304 act_stall=0 act_idle=139 wgt_fire=2304 wgt_stall=139 wgt_idle=0 psum_fire=2304 psum_stall=0 psum_idle=561 acc_fire=256 acc_stall=0 acc_idle=2211 name=D.n1_w016|conv
+# === CASE 5: D.n1_w032|conv === t=616515000
+# CASE_RESULT 5 PASS  cycles=10131  mac_fire=9216  mac_util=90.97%  arf_w=3456  arf_r=9216  parf_f=9216  parf_d=1024  ifb_r=3196  wb_r=576  ofb_w=1024  wall_ns=102600  name=D.n1_w032|conv
+# CASE_PROFILE 5 cycles=10131 act_fire=9216 act_stall=155 act_idle=428 wgt_fire=9216 wgt_stall=614 wgt_idle=0 psum_fire=9216 psum_stall=192 psum_idle=852 acc_fire=1024 acc_stall=0 acc_idle=8822 name=D.n1_w032|conv
+# === CASE 6: D.n1_w064|conv === t=719115000
+# CASE_RESULT 6 PASS  cycles=38484  mac_fire=36864  mac_util=95.79%  arf_w=13440  arf_r=36864  parf_f=36864  parf_d=4096  ifb_r=12920  wb_r=1728  ofb_w=4096  wall_ns=386130  name=D.n1_w064|conv
+# CASE_PROFILE 6 cycles=38484 act_fire=36864 act_stall=0 act_idle=1291 wgt_fire=36864 wgt_stall=1291 wgt_idle=0 psum_fire=36864 psum_stall=0 psum_idle=1749 acc_fire=4096 acc_stall=0 acc_idle=34071 name=D.n1_w064|conv
+# === CASE 7: D.n1_w128|conv === t=1105245000
+# CASE_RESULT 7 PASS  cycles=151960  mac_fire=147456  mac_util=97.04%  arf_w=52992  arf_r=147456  parf_f=147456  parf_d=16384  ifb_r=51952  wb_r=5760  ofb_w=16384  wall_ns=1520890  name=D.n1_w128|conv
+# CASE_PROFILE 7 cycles=151960 act_fire=147456 act_stall=0 act_idle=4107 wgt_fire=147456 wgt_stall=4107 wgt_idle=0 psum_fire=147456 psum_stall=0 psum_idle=4633 acc_fire=16384 acc_stall=0 acc_idle=135195 name=D.n1_w128|conv
+# == ALL 8 CASES DONE ==
+# ** Note: $stop    : tb_core_dma.sv(607)
+#    Time: 2626045 ns  Iteration: 1  Instance: /tb_core_dma
+# Break in Module tb_core_dma at tb_core_dma.sv line 607
+# Stopped at tb_core_dma.sv line 607
+# End time: 15:08:36 on May 09,2026, Elapsed time: 0:00:41
+# Errors: 0, Warnings: 30

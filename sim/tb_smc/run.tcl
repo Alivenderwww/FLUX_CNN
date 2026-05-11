@@ -60,7 +60,7 @@ if {[info exists ::env(FLUX_MAC_SIMD)] && $::env(FLUX_MAC_SIMD) == "1"} {
     set EXTRA_DEFS "+define+FLUX_MAC_SIMD"
     puts "\[INFO\] FLUX_MAC_SIMD enabled"
 }
-vlog -sv -work work -mfcu -suppress 2902,13314 \
+vlog -sv -work work -mfcu -suppress 2902,13314 +define+SIM_DEBUG_WDMA \
     {*}$EXTRA_DEFS \
     +incdir+../../RTL \
     ../../RTL/AXI4/axi_crossbar_4to4_sim.sv \

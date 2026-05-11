@@ -231,6 +231,7 @@ module idma_sg_dispatcher #(
         else        st <= st_next;
     end
 
+
     // =========================================================================
     // cmd 解码: S_FETCH_CMD_DAT 收 1 beat (DATA_W=128 = 16 byte) latch word 0..3
     //   beat[31:0]   = word 0 = src_addr

@@ -31,7 +31,8 @@ import sys
 import time
 
 MAGIC = 0x46584E4E   # 'FXNN'
-CMD_INFER = 1
+CMD_INFER  = 1   # 上传 IFM + 跑推理 + 回 OFM
+CMD_REPEAT = 2   # 不上传 IFM, 复用上次 server DDR 里的 IFM, 跑推理 + 回 OFM
 
 # ResNet11 layer 0 输入: 960x540x4 (跟 run_regression.py CASES 一致)
 IFM_H, IFM_W, IFM_CIN = 960, 540, 4
@@ -65,32 +66,56 @@ def load_image_to_int8(image_path):
 
 
 def send_inference_request(sock, ifm_bytes):
-    """打包 + 发 INFER 请求, 收 response, 返回 (status, cy, ofm_bytes)."""
+    """打包 + 发 INFER 请求 (含 IFM 上传), 收 response, 返回 (status, cy, ofm_bytes, t_breakdown).
+    t_breakdown = (upload_s, recv_resp_s)"""
     assert len(ifm_bytes) == IFM_LEN, f"ifm len {len(ifm_bytes)} != {IFM_LEN}"
     req_hdr = struct.pack('<III', MAGIC, CMD_INFER, IFM_LEN)
+    t_send = time.time()
     sock.sendall(req_hdr + ifm_bytes)
+    t_upload_done = time.time()
+    upload_s = t_upload_done - t_send
 
-    # 收 16 byte response header
+    return _recv_resp(sock, upload_s)
+
+
+def send_repeat_request(sock):
+    """打包 + 发 REPEAT 请求 (不带 IFM, 复用 server 上次 DDR 里的 IFM), 收 response."""
+    req_hdr = struct.pack('<III', MAGIC, CMD_REPEAT, 0)
+    t_send = time.time()
+    sock.sendall(req_hdr)
+    upload_s = time.time() - t_send   # 12 byte 的发送时间, 几乎 0
+    return _recv_resp(sock, upload_s)
+
+
+def _recv_resp(sock, upload_s):
+    """收 16 byte resp header + OFM bytes. 返回 (status, cy, ofm, t_break)."""
+    t_resp_start = time.time()
     resp_hdr = b''
     while len(resp_hdr) < 16:
         chunk = sock.recv(16 - len(resp_hdr))
         if not chunk:
             sys.exit("ERROR: VD100 提前断开 (header)")
         resp_hdr += chunk
+    t_hdr_done = time.time()
     magic, status, cy, ofm_len = struct.unpack('<IIII', resp_hdr)
     if magic != MAGIC:
         sys.exit(f"ERROR: bad magic 0x{magic:08x}")
     if status != 0:
         sys.exit(f"ERROR: VD100 status = {status}")
 
-    # 收 OFM
     ofm = b''
     while len(ofm) < ofm_len:
         chunk = sock.recv(min(4096, ofm_len - len(ofm)))
         if not chunk:
             sys.exit("ERROR: VD100 提前断开 (ofm)")
         ofm += chunk
-    return status, cy, ofm
+    t_recv_done = time.time()
+
+    return status, cy, ofm, {
+        "upload_s": upload_s,
+        "wait_resp_s": t_hdr_done - t_resp_start,  # 收完 hdr (含 server HW 时间)
+        "ofm_recv_s": t_recv_done - t_hdr_done,    # OFM 下载
+    }
 
 
 def parse_logit_top5(ofm_bytes):
@@ -104,9 +129,10 @@ def parse_logit_top5(ofm_bytes):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--image', required=True, help='PNG/JPG 图片路径')
-    p.add_argument('--vd100-ip', default='192.168.1.100', help='VD100 板 IP')
+    p.add_argument('--vd100-ip', default='169.254.111.10', help='VD100 板 IP')
     p.add_argument('--port', type=int, default=5000)
-    p.add_argument('--repeat', type=int, default=1, help='重复推理次数测吞吐')
+    p.add_argument('--repeat', type=int, default=10,
+                   help='重复推理次数测吞吐. IFM 只上传 1 次, 后续 N-1 次走 CMD_REPEAT 复用')
     args = p.parse_args()
 
     print(f"[1/3] 加载图片: {args.image}")
@@ -123,31 +149,58 @@ def main():
         sys.exit(f"ERROR: 连不上 VD100 ({e})")
     print(f"  连接成功")
 
-    print(f"[3/3] 推理 × {args.repeat}")
+    print(f"[3/3] 推理 × {args.repeat}  (IFM 上传 1 次, 后续 {args.repeat-1} 次走 REPEAT)")
     cy_list = []
     rtt_list = []
+    breakdown_list = []   # list of dict
+    cmd_kind = []         # "INFER" or "REPEAT" 标记
     for i in range(args.repeat):
         t0 = time.time()
-        status, cy, ofm = send_inference_request(sock, ifm)
+        if i == 0:
+            status, cy, ofm, tb = send_inference_request(sock, ifm)
+            cmd_kind.append("INFER")
+        else:
+            status, cy, ofm, tb = send_repeat_request(sock)
+            cmd_kind.append("REPEAT")
         rtt = time.time() - t0
         cy_list.append(cy)
         rtt_list.append(rtt)
+        breakdown_list.append(tb)
         if i == 0:
             top5 = parse_logit_top5(ofm)
-            print(f"  Top-5 logit (random weights, 仅 demo):")
+            print(f"  Top-5 logit (random weights, 仅演示数据通路):")
             for rank, (idx, val) in enumerate(top5, 1):
                 print(f"    #{rank}  class[{idx:3d}] = {val:+d}")
 
     sock.close()
 
+    # 详细 timing 拆分
+    print(f"\n=== Per-iteration breakdown ===")
+    print(f"  {'#':>3}  {'cmd':<6}  {'upload':>10}  {'wait+HW':>10}  {'ofm dl':>10}  "
+          f"{'RTT':>10}  {'cy':>10}")
+    for i, (kind, tb, rtt, cy) in enumerate(zip(cmd_kind, breakdown_list, rtt_list, cy_list)):
+        print(f"  {i:>3}  {kind:<6}  {tb['upload_s']*1000:>8.1f}ms  "
+              f"{tb['wait_resp_s']*1000:>8.1f}ms  {tb['ofm_recv_s']*1000:>8.1f}ms  "
+              f"{rtt*1000:>8.1f}ms  {cy:>10}")
+
+    # 统计 (分 INFER vs REPEAT)
+    infer_idxs  = [i for i,k in enumerate(cmd_kind) if k == "INFER"]
+    repeat_idxs = [i for i,k in enumerate(cmd_kind) if k == "REPEAT"]
     avg_cy = sum(cy_list) / len(cy_list)
-    avg_rtt = sum(rtt_list) / len(rtt_list) * 1000
+
     print(f"\n=== 性能 ===")
-    print(f"  HW cycles 平均: {avg_cy:.0f} cy")
-    print(f"  端到端 RTT 平均: {avg_rtt:.1f} ms")
-    print(f"  吞吐: {1000/avg_rtt:.1f} FPS (含网络往返)")
+    if infer_idxs:
+        rtt_infer  = [rtt_list[i] for i in infer_idxs]
+        print(f"  CMD_INFER  (含上传) RTT = {sum(rtt_infer)/len(rtt_infer)*1000:.1f} ms")
+    if repeat_idxs:
+        rtt_repeat = [rtt_list[i] for i in repeat_idxs]
+        print(f"  CMD_REPEAT (无上传) RTT = {sum(rtt_repeat)/len(rtt_repeat)*1000:.1f} ms"
+              f"  → 吞吐 {1.0/(sum(rtt_repeat)/len(rtt_repeat)):.1f} FPS")
+    avg_rtt = sum(rtt_list) / len(rtt_list)
+    print(f"  整体平均 RTT = {avg_rtt*1000:.1f} ms ({1.0/avg_rtt:.1f} FPS)")
+    print(f"  HW cycles 平均: {avg_cy:.0f} cy ({avg_cy/100000:.2f} ms @ 100MHz)")
     if avg_cy > 0:
-        print(f"  HW @ 100MHz : {avg_cy/100000:.2f} ms / {100000000/avg_cy:.0f} FPS (纯计算)")
+        print(f"  纯计算吞吐: {100000000/avg_cy:.0f} FPS @ 100MHz")
 
 
 if __name__ == '__main__':

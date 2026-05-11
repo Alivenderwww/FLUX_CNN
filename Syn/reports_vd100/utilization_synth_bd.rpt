@@ -1,7 +1,7 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
 ---------------------------------------------------------------------------------------------------------------------------------------------
-| Tool Version : Vivado v.2023.2 (win64) Build 4029153 Fri Oct 13 20:14:34 MDT 2023
-| Date         : Sat May  9 11:00:41 2026
+| Tool Version : Vivado v.2023.2.1 (win64) Build 4081461 Thu Dec 14 12:24:51 MST 2023
+| Date         : Sun May 10 22:57:20 2026
 | Host         : DESKTOP-73784OM running 64-bit major release  (build 9200)
 | Command      : report_utilization -file C:/_Project/FLUX_CNN/Syn/reports_vd100/utilization_synth_bd.rpt
 | Design       : design_1_wrapper
@@ -32,17 +32,17 @@ Table of Contents
 +----------------------------+--------+-------+------------+-----------+-------+
 |          Site Type         |  Used  | Fixed | Prohibited | Available | Util% |
 +----------------------------+--------+-------+------------+-----------+-------+
-| Registers                  |  42650 |     0 |          0 |    300544 | 14.19 |
-|   Register as Flip Flop    |  42650 |     0 |          0 |    300544 | 14.19 |
+| Registers                  |  52918 |     0 |          0 |    300544 | 17.61 |
+|   Register as Flip Flop    |  52918 |     0 |          0 |    300544 | 17.61 |
 |   Register as Latch        |      0 |     0 |          0 |    300544 |  0.00 |
-| CLB LUTs*                  | 126453 |     0 |          0 |    150272 | 84.15 |
-|   LUT as Logic             | 115819 |     0 |          0 |    150272 | 77.07 |
-|   LUT as Memory            |  10634 |     0 |          0 |     75136 | 14.15 |
-|     LUT as Distributed RAM |   9516 |     0 |            |           |       |
-|     LUT as Shift Register  |   1118 |     0 |            |           |       |
-|       Variable Length      |      2 |     0 |            |           |       |
-|       Fixed Length         |   1116 |     0 |            |           |       |
-| LOOKAHEAD8                 |   4836 |     0 |          0 |     18784 | 25.75 |
+| CLB LUTs*                  | 135181 |     0 |          0 |    150272 | 89.96 |
+|   LUT as Logic             | 122458 |     0 |          0 |    150272 | 81.49 |
+|   LUT as Memory            |  12723 |     0 |          0 |     75136 | 16.93 |
+|     LUT as Distributed RAM |  10380 |     0 |            |           |       |
+|     LUT as Shift Register  |   2343 |     0 |            |           |       |
+|       Variable Length      |     42 |     0 |            |           |       |
+|       Fixed Length         |   2301 |     0 |            |           |       |
+| LOOKAHEAD8                 |   4883 |     0 |          0 |     18784 | 26.00 |
 +----------------------------+--------+-------+------------+-----------+-------+
 * Warning! The Final LUT count, after physical optimizations and full implementation, is typically lower. Run opt_design after synthesis, if not already completed, for a more realistic count.
 Warning! LUT value is adjusted to account for LUT combining.
@@ -54,8 +54,8 @@ Warning! LUT value is adjusted to account for LUT combining.
 +--------------------------+------+-------+------------+-----------+--------+
 |         Site Type        | Used | Fixed | Prohibited | Available |  Util% |
 +--------------------------+------+-------+------------+-----------+--------+
-| Block RAM Tile           |   81 |     0 |          0 |       155 |  52.26 |
-|   RAMB36E5               |   81 |     0 |          0 |       155 |  52.26 |
+| Block RAM Tile           |   97 |     0 |          0 |       155 |  62.58 |
+|   RAMB36E5               |   97 |     0 |          0 |       155 |  62.58 |
 |   RAMB18E5*              |    0 |     0 |          0 |       310 |   0.00 |
 | Block RAM Imux registers |    0 |     0 |            |           |        |
 |   Pipelining             |    0 |       |            |           |        |
@@ -89,7 +89,11 @@ Warning! LUT value is adjusted to account for LUT combining.
 +------------------------------+------+-------+------------+-----------+-------+
 |           Site Type          | Used | Fixed | Prohibited | Available | Util% |
 +------------------------------+------+-------+------------+-----------+-------+
-| Bonded IOB                   |   29 |     0 |          0 |       238 | 12.18 |
+| Bonded IOB                   |  117 |   117 |          0 |       238 | 49.16 |
+|   XPIO IOB                   |  117 |   117 |          0 |       216 | 54.17 |
+|     INPUT                    |    2 |       |            |           |       |
+|     OUTPUT                   |   27 |       |            |           |       |
+|     BIDIR                    |   88 |       |            |           |       |
 | IDELAY                       |    0 |     0 |            |           |       |
 | ODELAY                       |    0 |     0 |            |           |       |
 | Input Registers              |    0 |     0 |            |           |       |
@@ -132,7 +136,7 @@ Warning! LUT value is adjusted to account for LUT combining.
 +---------------------------+------+-------+------------+-----------+-------+
 | NOC Master 512 bit        |    3 |     0 |          0 |         5 | 60.00 |
 | NOC Slave 512 bit         |    0 |     0 |          0 |         5 |  0.00 |
-| PS NOC Master Unit        |    0 |     0 |          0 |        10 |  0.00 |
+| PS NOC Master Unit        |    6 |     0 |          0 |        10 | 60.00 |
 | PS NOC Slave Unit         |    0 |     0 |          0 |         6 |  0.00 |
 | AI Engine NOC Master Unit |    0 |     0 |          0 |         6 |  0.00 |
 | AI Engine NOC Slave Unit  |    0 |     0 |          0 |         6 |  0.00 |
@@ -181,29 +185,31 @@ Warning! LUT value is adjusted to account for LUT combining.
 +--------------+-------+---------------------+
 |   Ref Name   |  Used | Functional Category |
 +--------------+-------+---------------------+
-| LUT6         | 47822 |                 CLB |
-| FDRE         | 41855 |            Register |
-| LUTCY2       | 35100 |                 CLB |
-| LUTCY1       | 35100 |                 CLB |
-| LUT3         | 15160 |                 CLB |
-| LUT5         | 14518 |                 CLB |
-| RAMD32       | 14322 |                 CLB |
-| LUT4         | 10823 |                 CLB |
-| LOOKAHEAD8   |  4836 |                 CLB |
-| LUT2         |  4713 |                 CLB |
-| RAMS32       |  1602 |                 CLB |
-| SRL16E       |  1118 |                 CLB |
-| FDCE         |   513 |            Register |
-| LUT1         |   334 |                 CLB |
-| FDSE         |   276 |            Register |
+| FDRE         | 51723 |            Register |
+| LUT6         | 49390 |                 CLB |
+| LUTCY2       | 35450 |                 CLB |
+| LUTCY1       | 35450 |                 CLB |
+| LUT3         | 17833 |                 CLB |
+| LUT5         | 16237 |                 CLB |
+| RAMD32       | 15834 |                 CLB |
+| LUT4         | 12049 |                 CLB |
+| LUT2         |  5557 |                 CLB |
+| LOOKAHEAD8   |  4883 |                 CLB |
+| RAMS32       |  1818 |                 CLB |
+| SRL16E       |  1473 |                 CLB |
+| SRLC32E      |   953 |                 CLB |
+| LUT1         |   682 |                 CLB |
+| FDCE         |   641 |            Register |
+| FDSE         |   548 |            Register |
 | DSP58        |   144 |          Arithmetic |
-| RAMB36E5_INT |    81 |            BLOCKRAM |
+| RAMB36E5_INT |    97 |            BLOCKRAM |
 | IOBUF        |    72 |                 I/O |
 | URAM288E5    |    64 |            BLOCKRAM |
 | OBUF         |    25 |                 I/O |
 | XPHY         |    21 |                 I/O |
 | XPIO_VREF    |    16 |                 I/O |
 | IOBUFDS      |     8 |                 I/O |
+| NOC_NMU128   |     6 |            Advanced |
 | FDPE         |     6 |            Register |
 | BUFG_PS      |     5 |               Clock |
 | XPLL         |     3 |               Clock |
@@ -222,24 +228,32 @@ Warning! LUT value is adjusted to account for LUT combining.
 10. Black Boxes
 ---------------
 
-+----------+------+
-| Ref Name | Used |
-+----------+------+
++-------------------+------+
+|      Ref Name     | Used |
++-------------------+------+
+| proc_sys_reset_CV |    1 |
+| axi_noc_CV        |    1 |
+| axi_dbg_hub_CV    |    1 |
++-------------------+------+
 
 
 11. Instantiated Netlists
 -------------------------
 
-+-----------------------------+------+
-|           Ref Name          | Used |
-+-----------------------------+------+
-| axi_dm                      |    3 |
-| design_1_util_ds_buf_0_1    |    1 |
-| design_1_u_mc_vd100_1       |    1 |
-| design_1_smartconnect_0_1   |    1 |
-| design_1_proc_sys_reset_0_1 |    1 |
-| design_1_clk_wizard_0_1     |    1 |
-| design_1_axi_noc_0_1        |    1 |
-+-----------------------------+------+
++------------------------------+------+
+|           Ref Name           | Used |
++------------------------------+------+
+| axi_dm                       |    3 |
+| design_1_util_ds_buf_0_0     |    1 |
+| design_1_u_mc_vd100_0        |    1 |
+| design_1_smartconnect_pl_2_0 |    1 |
+| design_1_smartconnect_pl_1_0 |    1 |
+| design_1_smartconnect_pl_0_0 |    1 |
+| design_1_smartconnect_0_0    |    1 |
+| design_1_proc_sys_reset_0_0  |    1 |
+| design_1_ila_dbg_0           |    1 |
+| design_1_clk_wizard_0_0      |    1 |
+| design_1_axi_noc_0_0         |    1 |
++------------------------------+------+
 
 

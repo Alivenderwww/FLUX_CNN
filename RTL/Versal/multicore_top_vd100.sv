@@ -23,8 +23,9 @@
 // =============================================================================
 
 module multicore_top_vd100 #(
-    parameter int NUM_CORES   = 3,
-    parameter int CORE_ID_W   = $clog2(NUM_CORES),    // = 2
+    parameter int NUM_CORES   = 3,                    // 实际实例化 ConvCore 数 (调试可改 1)
+    parameter int MAX_CORES   = 3,                    // 端口宽度按此 (BD wrapper 端口固定 3 套)
+    parameter int CORE_ID_W   = $clog2(MAX_CORES),    // = 2 (按 MAX_CORES 算)
     parameter int BUS_ADDR_W  = `FLUX_BUS_ADDR_W,     // = 32
     parameter int BUS_DATA_W  = `FLUX_BUS_DATA_W,     // = 128
     parameter int CSR_DATA_W  = 32,
@@ -61,48 +62,48 @@ module multicore_top_vd100 #(
     //   每个 master 是完整 AXI4-MM, 128-bit data (BUS_DATA_W)
     //   ID 宽度: CORE_BUS_ID (内部) + CORE_ID_W (core 区分) = 添加 core id 标记
     // ======================================================================
-    output logic [NUM_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_awid,
-    output logic [NUM_CORES*BUS_ADDR_W-1:0]              m_axi_awaddr,
-    output logic [NUM_CORES*8-1:0]                       m_axi_awlen,
-    output logic [NUM_CORES*3-1:0]                       m_axi_awsize,
-    output logic [NUM_CORES*2-1:0]                       m_axi_awburst,
-    output logic [NUM_CORES-1:0]                         m_axi_awlock,
-    output logic [NUM_CORES*4-1:0]                       m_axi_awcache,
-    output logic [NUM_CORES*3-1:0]                       m_axi_awprot,
-    output logic [NUM_CORES*4-1:0]                       m_axi_awqos,
-    output logic [NUM_CORES-1:0]                         m_axi_awvalid,
-    input  logic [NUM_CORES-1:0]                         m_axi_awready,
-    output logic [NUM_CORES*BUS_DATA_W-1:0]              m_axi_wdata,
-    output logic [NUM_CORES*(BUS_DATA_W/8)-1:0]          m_axi_wstrb,
-    output logic [NUM_CORES-1:0]                         m_axi_wlast,
-    output logic [NUM_CORES-1:0]                         m_axi_wvalid,
-    input  logic [NUM_CORES-1:0]                         m_axi_wready,
-    input  logic [NUM_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_bid,
-    input  logic [NUM_CORES*2-1:0]                       m_axi_bresp,
-    input  logic [NUM_CORES-1:0]                         m_axi_bvalid,
-    output logic [NUM_CORES-1:0]                         m_axi_bready,
-    output logic [NUM_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_arid,
-    output logic [NUM_CORES*BUS_ADDR_W-1:0]              m_axi_araddr,
-    output logic [NUM_CORES*8-1:0]                       m_axi_arlen,
-    output logic [NUM_CORES*3-1:0]                       m_axi_arsize,
-    output logic [NUM_CORES*2-1:0]                       m_axi_arburst,
-    output logic [NUM_CORES-1:0]                         m_axi_arlock,
-    output logic [NUM_CORES*4-1:0]                       m_axi_arcache,
-    output logic [NUM_CORES*3-1:0]                       m_axi_arprot,
-    output logic [NUM_CORES*4-1:0]                       m_axi_arqos,
-    output logic [NUM_CORES-1:0]                         m_axi_arvalid,
-    input  logic [NUM_CORES-1:0]                         m_axi_arready,
-    input  logic [NUM_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_rid,
-    input  logic [NUM_CORES*BUS_DATA_W-1:0]              m_axi_rdata,
-    input  logic [NUM_CORES*2-1:0]                       m_axi_rresp,
-    input  logic [NUM_CORES-1:0]                         m_axi_rlast,
-    input  logic [NUM_CORES-1:0]                         m_axi_rvalid,
-    output logic [NUM_CORES-1:0]                         m_axi_rready,
+    output logic [MAX_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_awid,
+    output logic [MAX_CORES*BUS_ADDR_W-1:0]              m_axi_awaddr,
+    output logic [MAX_CORES*8-1:0]                       m_axi_awlen,
+    output logic [MAX_CORES*3-1:0]                       m_axi_awsize,
+    output logic [MAX_CORES*2-1:0]                       m_axi_awburst,
+    output logic [MAX_CORES-1:0]                         m_axi_awlock,
+    output logic [MAX_CORES*4-1:0]                       m_axi_awcache,
+    output logic [MAX_CORES*3-1:0]                       m_axi_awprot,
+    output logic [MAX_CORES*4-1:0]                       m_axi_awqos,
+    output logic [MAX_CORES-1:0]                         m_axi_awvalid,
+    input  logic [MAX_CORES-1:0]                         m_axi_awready,
+    output logic [MAX_CORES*BUS_DATA_W-1:0]              m_axi_wdata,
+    output logic [MAX_CORES*(BUS_DATA_W/8)-1:0]          m_axi_wstrb,
+    output logic [MAX_CORES-1:0]                         m_axi_wlast,
+    output logic [MAX_CORES-1:0]                         m_axi_wvalid,
+    input  logic [MAX_CORES-1:0]                         m_axi_wready,
+    input  logic [MAX_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_bid,
+    input  logic [MAX_CORES*2-1:0]                       m_axi_bresp,
+    input  logic [MAX_CORES-1:0]                         m_axi_bvalid,
+    output logic [MAX_CORES-1:0]                         m_axi_bready,
+    output logic [MAX_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_arid,
+    output logic [MAX_CORES*BUS_ADDR_W-1:0]              m_axi_araddr,
+    output logic [MAX_CORES*8-1:0]                       m_axi_arlen,
+    output logic [MAX_CORES*3-1:0]                       m_axi_arsize,
+    output logic [MAX_CORES*2-1:0]                       m_axi_arburst,
+    output logic [MAX_CORES-1:0]                         m_axi_arlock,
+    output logic [MAX_CORES*4-1:0]                       m_axi_arcache,
+    output logic [MAX_CORES*3-1:0]                       m_axi_arprot,
+    output logic [MAX_CORES*4-1:0]                       m_axi_arqos,
+    output logic [MAX_CORES-1:0]                         m_axi_arvalid,
+    input  logic [MAX_CORES-1:0]                         m_axi_arready,
+    input  logic [MAX_CORES*(CORE_BUS_ID+CORE_ID_W)-1:0] m_axi_rid,
+    input  logic [MAX_CORES*BUS_DATA_W-1:0]              m_axi_rdata,
+    input  logic [MAX_CORES*2-1:0]                       m_axi_rresp,
+    input  logic [MAX_CORES-1:0]                         m_axi_rlast,
+    input  logic [MAX_CORES-1:0]                         m_axi_rvalid,
+    output logic [MAX_CORES-1:0]                         m_axi_rready,
 
     // ======================================================================
     // IRQ outputs (per-core done) → PS A72 GIC
     // ======================================================================
-    output logic [NUM_CORES-1:0]        irq_done
+    output logic [MAX_CORES-1:0]        irq_done
 );
 
     // =========================================================================
@@ -162,7 +163,11 @@ module multicore_top_vd100 #(
     logic                     c_bus_rready  [NUM_CORES];
 
     logic [NUM_CORES-1:0]     done_per_core;
-    assign irq_done = done_per_core;
+    // irq_done 端口宽度 MAX_CORES, 高位 tie 0 (NUM_CORES < MAX_CORES 时)
+    always_comb begin
+        irq_done = '0;
+        for (int i = 0; i < NUM_CORES; i++) irq_done[i] = done_per_core[i];
+    end
 
     // =========================================================================
     // 2. AXI-Lite 1to3 demux (替代 axi_lite_1to4 IP, 简化版)
@@ -339,6 +344,35 @@ module multicore_top_vd100 #(
             assign c_bus_rlast  [gi]                                                     = m_axi_rlast  [gi];
             assign c_bus_rvalid [gi]                                                     = m_axi_rvalid [gi];
             assign m_axi_rready [gi]                                                     = c_bus_rready [gi];
+        end
+        // 高位 (NUM_CORES..MAX_CORES-1) tie 0, 让端口出去 awvalid=0 永远 idle
+        for (gi = NUM_CORES; gi < MAX_CORES; gi++) begin : gen_pack_tie0
+            assign m_axi_awid   [gi*(CORE_BUS_ID+CORE_ID_W) +: (CORE_BUS_ID+CORE_ID_W)] = '0;
+            assign m_axi_awaddr [gi*BUS_ADDR_W +: BUS_ADDR_W]                            = '0;
+            assign m_axi_awlen  [gi*8 +: 8]                                              = '0;
+            assign m_axi_awsize [gi*3 +: 3]                                              = '0;
+            assign m_axi_awburst[gi*2 +: 2]                                              = '0;
+            assign m_axi_awlock [gi]                                                     = 1'b0;
+            assign m_axi_awcache[gi*4 +: 4]                                              = '0;
+            assign m_axi_awprot [gi*3 +: 3]                                              = '0;
+            assign m_axi_awqos  [gi*4 +: 4]                                              = '0;
+            assign m_axi_awvalid[gi]                                                     = 1'b0;
+            assign m_axi_wdata  [gi*BUS_DATA_W +: BUS_DATA_W]                            = '0;
+            assign m_axi_wstrb  [gi*(BUS_DATA_W/8) +: (BUS_DATA_W/8)]                    = '0;
+            assign m_axi_wlast  [gi]                                                     = 1'b0;
+            assign m_axi_wvalid [gi]                                                     = 1'b0;
+            assign m_axi_bready [gi]                                                     = 1'b0;
+            assign m_axi_arid   [gi*(CORE_BUS_ID+CORE_ID_W) +: (CORE_BUS_ID+CORE_ID_W)] = '0;
+            assign m_axi_araddr [gi*BUS_ADDR_W +: BUS_ADDR_W]                            = '0;
+            assign m_axi_arlen  [gi*8 +: 8]                                              = '0;
+            assign m_axi_arsize [gi*3 +: 3]                                              = '0;
+            assign m_axi_arburst[gi*2 +: 2]                                              = '0;
+            assign m_axi_arlock [gi]                                                     = 1'b0;
+            assign m_axi_arcache[gi*4 +: 4]                                              = '0;
+            assign m_axi_arprot [gi*3 +: 3]                                              = '0;
+            assign m_axi_arqos  [gi*4 +: 4]                                              = '0;
+            assign m_axi_arvalid[gi]                                                     = 1'b0;
+            assign m_axi_rready [gi]                                                     = 1'b0;
         end
     endgenerate
 

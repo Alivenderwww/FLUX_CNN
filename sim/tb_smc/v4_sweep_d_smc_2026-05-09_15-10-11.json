@@ -1,0 +1,262 @@
+[
+  {
+    "w": 16,
+    "n_cores": 4,
+    "log": "C:\\_Project\\FLUX_CNN\\sim\\tb_smc\\v4d_w016_vsim.log",
+    "pass": true,
+    "wall_cy": 2278,
+    "per_core": [
+      {
+        "core": 0,
+        "layer": 0,
+        "cy": 2059,
+        "fire": 576,
+        "util": 28.0,
+        "act_st": 0,
+        "act_id": 670,
+        "wgt_st": 670,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1464,
+        "acc_id": 1194
+      },
+      {
+        "core": 1,
+        "layer": 0,
+        "cy": 2059,
+        "fire": 576,
+        "util": 28.0,
+        "act_st": 0,
+        "act_id": 1174,
+        "wgt_st": 1174,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1464,
+        "acc_id": 1698
+      },
+      {
+        "core": 2,
+        "layer": 0,
+        "cy": 2059,
+        "fire": 576,
+        "util": 28.0,
+        "act_st": 0,
+        "act_id": 1174,
+        "wgt_st": 1174,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1464,
+        "acc_id": 1698
+      },
+      {
+        "core": 3,
+        "layer": 0,
+        "cy": 2059,
+        "fire": 576,
+        "util": 28.0,
+        "act_st": 0,
+        "act_id": 649,
+        "wgt_st": 649,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1464,
+        "acc_id": 1173
+      }
+    ]
+  },
+  {
+    "w": 32,
+    "n_cores": 4,
+    "log": "C:\\_Project\\FLUX_CNN\\sim\\tb_smc\\v4d_w032_vsim.log",
+    "pass": true,
+    "wall_cy": 4161,
+    "per_core": [
+      {
+        "core": 0,
+        "layer": 0,
+        "cy": 3942,
+        "fire": 2304,
+        "util": 58.4,
+        "act_st": 0,
+        "act_id": 323,
+        "wgt_st": 323,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1619,
+        "acc_id": 2387
+      },
+      {
+        "core": 1,
+        "layer": 0,
+        "cy": 3942,
+        "fire": 2304,
+        "util": 58.4,
+        "act_st": 0,
+        "act_id": 1314,
+        "wgt_st": 1314,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1619,
+        "acc_id": 3378
+      },
+      {
+        "core": 2,
+        "layer": 0,
+        "cy": 3942,
+        "fire": 2304,
+        "util": 58.4,
+        "act_st": 0,
+        "act_id": 1321,
+        "wgt_st": 1321,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1619,
+        "acc_id": 3385
+      },
+      {
+        "core": 3,
+        "layer": 0,
+        "cy": 3942,
+        "fire": 2304,
+        "util": 58.4,
+        "act_st": 0,
+        "act_id": 352,
+        "wgt_st": 352,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 1619,
+        "acc_id": 2416
+      }
+    ]
+  },
+  {
+    "w": 64,
+    "n_cores": 4,
+    "log": "C:\\_Project\\FLUX_CNN\\sim\\tb_smc\\v4d_w064_vsim.log",
+    "pass": true,
+    "wall_cy": 10369,
+    "per_core": [
+      {
+        "core": 0,
+        "layer": 0,
+        "cy": 10150,
+        "fire": 9216,
+        "util": 90.8,
+        "act_st": 0,
+        "act_id": 541,
+        "wgt_st": 541,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 915,
+        "acc_id": 8757
+      },
+      {
+        "core": 1,
+        "layer": 0,
+        "cy": 10150,
+        "fire": 9216,
+        "util": 90.8,
+        "act_st": 0,
+        "act_id": 597,
+        "wgt_st": 597,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 915,
+        "acc_id": 8813
+      },
+      {
+        "core": 2,
+        "layer": 0,
+        "cy": 10150,
+        "fire": 9216,
+        "util": 90.8,
+        "act_st": 0,
+        "act_id": 601,
+        "wgt_st": 601,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 915,
+        "acc_id": 8817
+      },
+      {
+        "core": 3,
+        "layer": 0,
+        "cy": 10150,
+        "fire": 9216,
+        "util": 90.8,
+        "act_st": 0,
+        "act_id": 542,
+        "wgt_st": 542,
+        "wgt_id": 0,
+        "psm_st": 0,
+        "psm_id": 915,
+        "acc_id": 8758
+      }
+    ]
+  },
+  {
+    "w": 128,
+    "n_cores": 4,
+    "log": "C:\\_Project\\FLUX_CNN\\sim\\tb_smc\\v4d_w128_vsim.log",
+    "pass": true,
+    "wall_cy": 39860,
+    "per_core": [
+      {
+        "core": 0,
+        "layer": 0,
+        "cy": 39641,
+        "fire": 36864,
+        "util": 93.0,
+        "act_st": 635,
+        "act_id": 1598,
+        "wgt_st": 2360,
+        "wgt_id": 0,
+        "psm_st": 768,
+        "psm_id": 1990,
+        "acc_id": 35144
+      },
+      {
+        "core": 1,
+        "layer": 0,
+        "cy": 39641,
+        "fire": 36864,
+        "util": 93.0,
+        "act_st": 635,
+        "act_id": 1654,
+        "wgt_st": 2416,
+        "wgt_id": 0,
+        "psm_st": 768,
+        "psm_id": 1990,
+        "acc_id": 35200
+      },
+      {
+        "core": 2,
+        "layer": 0,
+        "cy": 39641,
+        "fire": 36864,
+        "util": 93.0,
+        "act_st": 635,
+        "act_id": 1674,
+        "wgt_st": 2436,
+        "wgt_id": 0,
+        "psm_st": 768,
+        "psm_id": 1990,
+        "acc_id": 35220
+      },
+      {
+        "core": 3,
+        "layer": 0,
+        "cy": 39641,
+        "fire": 36864,
+        "util": 93.0,
+        "act_st": 635,
+        "act_id": 1599,
+        "wgt_st": 2361,
+        "wgt_id": 0,
+        "psm_st": 768,
+        "psm_id": 1990,
+        "acc_id": 35145
+      }
+    ]
+  }
+]

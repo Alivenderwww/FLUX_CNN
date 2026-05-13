@@ -100,3 +100,16 @@ host/vd100_pc/*.pyc
 # 临时 license 备份 (用户敏感, 不进 git)
 *.lic.bak
 *.lic.backup
+
+# Vivado runtime artifacts (per-run, not source)
+Syn/vd100_bd/*.jou
+Syn/vd100_bd/*.dmp
+Syn/vd100_bd/hs_err_pid*.log
+Syn/vd100_bd/*_*.backup.log
+
+# Bootgen output (regenerated from PDI + ELF, not source)
+host/vd100_ps_baremetal/vd100_with_elf.pdi
+
+# vsim crash artifacts
+sim/*/vsim_stacktrace.vstf
+sim/*/vsim*.log

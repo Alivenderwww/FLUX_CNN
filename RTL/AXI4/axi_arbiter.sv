@@ -1,3 +1,4 @@
+(* keep_hierarchy = "yes" *)
 module axi_master_arbiter #(
     parameter M_ID = 2,
     parameter M_WIDTH = 2
@@ -102,14 +103,19 @@ end
 // VD100 fix 2026-05-11: R 通道 lock + valid-driven cu_sel update (不依赖 fire).
 // dfe.M_ARVALID=1 时立即 latch cu_sel=3 (高优先级 dfe), 不等 BUS_RD_ADDR_READY 握手.
 // 防综合 timing 让 fire 信号瞬态丢失, cu_sel 没正确 latch.
-reg                     rd_data_chan_lock;
-logic [M_WIDTH-1:0]     cu_rd_data_master_sel;
+// VD100 fix 2026-05-14: dont_touch 防 Vivado opt 加 ILA build 时 trim 触发 LUT3 input
+// unconnect (Opt 31-67). 跟简化 latch condition 一起避绕 opt bug.
+(* dont_touch = "true" *) reg                     rd_data_chan_lock;
+(* dont_touch = "true" *) logic [M_WIDTH-1:0]     cu_rd_data_master_sel;
 always @(posedge clk or negedge rstn) begin
     if (~rstn) begin
         rd_data_chan_lock      <= 0;
         cu_rd_data_master_sel  <= 2'd3;  // default dfe priority
     end else begin
-        if (rd_addr_master_sel != cu_rd_data_master_sel && |MASTER_RD_ADDR_VALID && !rd_data_chan_lock) begin
+        // VD100 fix 2026-05-13: 简化 latch 条件 (去掉 != 比较), 避 Vivado opt LUT3 input
+        // trim bug 在 加 ILA build 时报 LUT3 missing I0. 行为等价 (rd_data_chan_lock 期间
+        // hold sel 无变化, 即使 always update 也跟原版一致).
+        if (|MASTER_RD_ADDR_VALID && !rd_data_chan_lock) begin
             // 任何 master 出 ARVALID 时 latch sel (不等 fire), 但 R outstanding 期间 hold
             cu_rd_data_master_sel <= rd_addr_master_sel;
         end

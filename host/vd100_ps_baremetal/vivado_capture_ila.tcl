@@ -38,9 +38,9 @@ foreach p [get_hw_probes -of_objects $ila] { puts "  $p" }
 
 # 用 trigger_now 抓 ConvCore stuck 当前一拍 (ConvCore 已经 dfe_busy=1 stuck)
 puts "=== Run ILA with trigger_now (capture current stuck state) ==="
-set_property CONTROL.TRIGGER_POSITION 2048 $ila
+set_property CONTROL.TRIGGER_POSITION 512 $ila
 set_property CONTROL.WINDOW_COUNT 1 $ila
-set_property CONTROL.DATA_DEPTH 4096 $ila
+set_property CONTROL.DATA_DEPTH 1024 $ila
 run_hw_ila -trigger_now $ila
 if {[catch {wait_on_hw_ila -timeout 10 $ila} werr]} { puts "  wait err: $werr" }
 

@@ -9,7 +9,7 @@
 # =============================================================================
 
 set PDI "C:/_Project/FLUX_CNN/Syn/vd100_bd/output/vd100_resnet11.runs/impl_1/design_1_wrapper.pdi"
-set ELF "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace/resnet11_app/Debug/resnet11_app.elf"
+set ELF "C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace2/resnet11_app/Debug/resnet11_app.elf"
 
 puts "INFO targets:"
 targets

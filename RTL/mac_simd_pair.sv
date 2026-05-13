@@ -94,9 +94,17 @@ module mac_simd_pair #(
     //    P = A × B, registered (1 拍 mul + 1 拍 P reg)
     // -------------------------------------------------------------------------
     (* use_dsp = "yes" *) logic signed [42:0] dsp_p;
+`ifdef FLUX_MAC_BYPASS
+    // VD100 isolate sim: bypass DSP 乘法, 省 384 DSP + 加速 P&R. dsp_p = dsp_b (passthrough)
+    always_ff @(posedge clk) begin
+        if (compute_en) dsp_p <= {{25{dsp_b[17]}}, dsp_b};   // 18-bit signed → 43-bit
+    end
+    wire _unused_a = |dsp_a;
+`else
     always_ff @(posedge clk) begin
         if (compute_en) dsp_p <= dsp_a * dsp_b;
     end
+`endif
 
     // -------------------------------------------------------------------------
     // 4. Sign correction (组合逻辑输出, 不加 reg)

@@ -43,12 +43,23 @@ module mac_pe #(
         active_weight = signed'(active_weight_us);
     end
 
-    // 乘法打一拍，减轻组合逻辑关键路径。
-    // compute_en 相当于 pipeline advance 闸门：stall 时保持 prod_out，让已计算
-    // 的乘积顺着 pipe 继续流。
+    // VD100 isolate sim 2026-05-14: 乘法换成 act_in passthrough (省 DSP + 加速综合)
+    // 目的: bypass mac_array DSP 让 P&R 快得多, 隔离测试 axi 流水线 stuck. 实际 layer 0
+    // 卡在 ODMA S_TX 等 axi_dm s2mm, 跟 mac_array 计算结果无关. OFM 数据是 garbage
+    // 但 cmd 序列 + AW address pattern 跟原 design 一致.
+    // 之前: if (compute_en) prod_out <= act_in * active_weight;
+`ifdef FLUX_MAC_BYPASS
+    always_ff @(posedge clk) begin
+        if (compute_en) prod_out <= {{DATA_WIDTH{1'b0}}, act_in};   // sign-extended passthrough
+        else            prod_out <= prod_out;
+    end
+    // 避免 unused warning
+    wire _unused_weight = |active_weight;
+`else
     always_ff @(posedge clk) begin
         if (compute_en) prod_out <= act_in * active_weight;
         else            prod_out <= prod_out;
     end
+`endif
 
 endmodule

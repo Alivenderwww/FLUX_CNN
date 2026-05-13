@@ -20,14 +20,16 @@ set_property top_lib xil_defaultlib [get_filesets sim_1]
 set_property -name {xsim.simulate.runtime} -value {10ms} -objects [get_filesets sim_1]
 set_property -name {xsim.simulate.log_all_signals} -value {false} -objects [get_filesets sim_1]
 
-puts "=== launch_simulation (xsim, behavioral) ==="
-launch_simulation -simset sim_1 -mode behavioral -batch
+puts "=== launch_simulation (xsim, behavioral, 非 batch 试避 broken pipe) ==="
+# 跳过 launch_simulation 内部 compile/elab — 直接调 xsim flow scripts
+# 让 Vivado 仅 generate scripts, 我们手动 run
 
-# 在 sim 内手动 run
-puts "=== run 1ms ==="
-run 1ms
+# 先 generate sim scripts
+update_compile_order -fileset sim_1
+puts "=== sim_1 fileset top = [get_property top [get_filesets sim_1]] ==="
 
-puts "=== 关 sim ==="
-close_sim
+# 生成 .prj + scripts 不真 launch
+launch_simulation -scripts_only -simset sim_1 -mode behavioral
+puts "=== scripts generated. run manually via xsim_run.bat ==="
 
 exit 0

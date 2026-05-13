@@ -52,13 +52,19 @@ ModelSim 跑 BD sim 时:
 - `-suppress xxx`: 不知 finish 是 warning 还是 error
 - `disable` hier-ref: 加密路径 disable 不 work
 
-## Vivado xsim 路径也失败
+## Vivado xsim 路径也失败 (但走更远)
 
-`Syn/vd100_bd/xsim_launch.tcl` 试 `launch_simulation -batch` 调 Vivado 自家 xsim:
-- xsim compile.bat 生成 OK (设 PATH 含 Vivado bin 后)
-- xvlog/xvhdl analyze 步骤 INFO 行很多但 log 文件空 (0 byte)
-- Vivado batch launch_simulation 报 `ERROR: [Common 17-180] Spawn failed: Broken pipe`
-- 推测是 license / batch mode 进程 spawn 限制
+`Syn/vd100_bd/xsim_launch.tcl` 用 `launch_simulation -scripts_only` 绕过 batch broken pipe:
+- xsim compile.bat (xvlog/xvhdl): **exit 0 PASS**
+- xsim elaborate.bat: **exit 0 PASS** (936+ 行 log, 编 cips_vip_v1_0_8 内部 thousands of BD-specific modules)
+- xsim simulate.bat: **exit 0 但 sim 在 19761 ps NoC NMU $finish 提前停**
+- `ADEC checks passing` + 16 `Axi4 End Of Simulation checks`, 跟 ModelSim 行为完全一致
+
+最终诊断: Vivado xsim batch CLI 跟 ModelSim 都不能 auto-boot cips_vip — Vivado IDE GUI 模式
+内 cips_vip 通过私有 init protocol 触发, batch 模式 cips_vip module 自检失败 → PL_CLK0 不出 →
+NoC NMU $finish.
+
+cips_vip 公开 init/write_data API 都加密 (versal_cips_ps_vip_v1_0_8), 无法手动调用.
 
 ## 真根因 hypothesis
 

@@ -423,7 +423,8 @@ def compare_ofm(got: bytes, expected: bytes, label: str = "OFM", limit: int = 10
 
 # -------------------- 主流程 --------------------
 def deploy_and_run(rpc: Vd100Rpc, case_dir: str, override_ifm: bytes = None,
-                   verify_layer: int = -1, skip_verify: bool = False) -> dict:
+                   verify_layer: int = -1, skip_verify: bool = False,
+                   skip_run: bool = False) -> dict:
     """部署 case 到板 + 跑推理 + 读 OFM 校验. 返回 stats dict.
 
     verify_layer: 比对哪一层 OFM (-1 = 最后一层). 中间层校验需要 read_ofm_smc 改造支持
@@ -463,6 +464,10 @@ def deploy_and_run(rpc: Vd100Rpc, case_dir: str, override_ifm: bytes = None,
         load_sg_cmd_smc(rpc, case_dir, meta, l)
     t_preload = time.time() - t0
     print(f"  preload total {t_preload:.1f}s")
+
+    if skip_run:
+        print("[2/3] RUN_LAYERS SKIPPED (--skip-run)")
+        return {'preload_s': t_preload, 'cycles': 0}
 
     # ---- 2. 跑 N 层推理 ----
     print("[2/3] RUN_LAYERS ...")
@@ -540,6 +545,7 @@ def main():
     p.add_argument('--vd100-ip', default='169.254.111.10')
     p.add_argument('--port', type=int, default=5000)
     p.add_argument('--repeat', type=int, default=1, help='重复推理 N 次 (复用已 LOAD 数据测吞吐)')
+    p.add_argument('--skip-run', action='store_true', help='只 preload 数据, 不 RUN_LAYERS (调试用)')
     args = p.parse_args()
 
     if not os.path.isdir(args.case_dir):
@@ -547,7 +553,7 @@ def main():
 
     print(f"Connecting VD100 @ {args.vd100_ip}:{args.port}")
     with Vd100Rpc(args.vd100_ip, args.port) as rpc:
-        stats = deploy_and_run(rpc, args.case_dir)
+        stats = deploy_and_run(rpc, args.case_dir, skip_run=args.skip_run)
         if args.repeat > 1 and stats['mm'] == 0:
             print(f"\n=== Repeat × {args.repeat - 1} (复用已 LOAD 数据, 只跑 RUN_LAYERS) ===")
             meta = parse_meta(args.case_dir)

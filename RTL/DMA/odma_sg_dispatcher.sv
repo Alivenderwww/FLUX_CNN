@@ -436,11 +436,21 @@ module odma_sg_dispatcher #(
 
     // =========================================================================
     // r_done sticky / r_err sticky
+    //
+    // VD100 fix 2026-05-14: r_done set 时机改为 "进入 S_DONE 即 set"
+    //   原写法只 cover streaming_all_done (= S_TX tlast 且 last_cmd) 路径,
+    //   但 cmd_count=1 测试 patch 时, state 可能走 S_WAIT → S_DONE 直接 jump
+    //   (all_cmds_issued=true 优先级高于 has_writer_data_ready), 绕开 S_TX,
+    //   streaming_all_done 永远 0, r_done 永远 0, sequencer 永远 stuck.
+    //   改为在 state_next==S_DONE 时 set, 覆盖所有进入 S_DONE 的路径.
     // =========================================================================
+    logic enter_done_pulse;
+    assign enter_done_pulse = (state != S_DONE) && (state_next == S_DONE);
+
     always_ff @(posedge clk) begin
-        if      (!rst_n)              r_done <= 1'b0;
-        else if (start)               r_done <= 1'b0;
-        else if (streaming_all_done)  r_done <= 1'b1;
+        if      (!rst_n)                                  r_done <= 1'b0;
+        else if (start)                                   r_done <= 1'b0;
+        else if (streaming_all_done || enter_done_pulse)  r_done <= 1'b1;
     end
 
     always_ff @(posedge clk) begin

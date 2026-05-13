@@ -41,6 +41,9 @@ module multicore_top_vd100_bd_v (
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 csr_axil RREADY" *)  input         csr_axil_rready,
 
     // M00_AXI master (Core 0)
+    // VD100 fix 2026-05-13: 声明 m0X_axi master capability 让 axi_noc S0X_AXI 正确 infer.
+    // axi_dm IP 单 thread 同 ID 多 cmd, axi_noc 默认 multi-thread 假设可能让 R/B 路由错位.
+    (* X_INTERFACE_PARAMETER = "MODE Master, PROTOCOL AXI4, ADDR_WIDTH 32, DATA_WIDTH 128, ID_WIDTH 5, FREQ_HZ 100000000, NUM_WRITE_OUTSTANDING 1, NUM_WRITE_THREADS 1, NUM_READ_OUTSTANDING 1, NUM_READ_THREADS 1, READ_WRITE_MODE READ_WRITE, HAS_BURST 1, HAS_LOCK 1, HAS_PROT 1, HAS_CACHE 1, HAS_QOS 1, HAS_REGION 0, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1, SUPPORTS_NARROW_BURST 1, MAX_BURST_LENGTH 256, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0" *)
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m00_axi AWID" *)    output [4:0]   m00_axi_awid,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m00_axi AWADDR" *)  output [31:0]  m00_axi_awaddr,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m00_axi AWLEN" *)   output [7:0]   m00_axi_awlen,
@@ -80,6 +83,7 @@ module multicore_top_vd100_bd_v (
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m00_axi RREADY" *)  output         m00_axi_rready,
 
     // M01_AXI master (Core 1)
+    (* X_INTERFACE_PARAMETER = "MODE Master, PROTOCOL AXI4, ADDR_WIDTH 32, DATA_WIDTH 128, ID_WIDTH 5, FREQ_HZ 100000000, NUM_WRITE_OUTSTANDING 1, NUM_WRITE_THREADS 1, NUM_READ_OUTSTANDING 1, NUM_READ_THREADS 1, READ_WRITE_MODE READ_WRITE, HAS_BURST 1, HAS_LOCK 1, HAS_PROT 1, HAS_CACHE 1, HAS_QOS 1, HAS_REGION 0, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1, SUPPORTS_NARROW_BURST 1, MAX_BURST_LENGTH 256, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0" *)
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m01_axi AWID" *)    output [4:0]   m01_axi_awid,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m01_axi AWADDR" *)  output [31:0]  m01_axi_awaddr,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m01_axi AWLEN" *)   output [7:0]   m01_axi_awlen,
@@ -119,6 +123,7 @@ module multicore_top_vd100_bd_v (
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m01_axi RREADY" *)  output         m01_axi_rready,
 
     // M02_AXI master (Core 2)
+    (* X_INTERFACE_PARAMETER = "MODE Master, PROTOCOL AXI4, ADDR_WIDTH 32, DATA_WIDTH 128, ID_WIDTH 5, FREQ_HZ 100000000, NUM_WRITE_OUTSTANDING 1, NUM_WRITE_THREADS 1, NUM_READ_OUTSTANDING 1, NUM_READ_THREADS 1, READ_WRITE_MODE READ_WRITE, HAS_BURST 1, HAS_LOCK 1, HAS_PROT 1, HAS_CACHE 1, HAS_QOS 1, HAS_REGION 0, HAS_WSTRB 1, HAS_BRESP 1, HAS_RRESP 1, SUPPORTS_NARROW_BURST 1, MAX_BURST_LENGTH 256, AWUSER_WIDTH 0, ARUSER_WIDTH 0, WUSER_WIDTH 0, RUSER_WIDTH 0, BUSER_WIDTH 0" *)
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m02_axi AWID" *)    output [4:0]   m02_axi_awid,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m02_axi AWADDR" *)  output [31:0]  m02_axi_awaddr,
     (* X_INTERFACE_INFO = "xilinx.com:interface:aximm:1.0 m02_axi AWLEN" *)   output [7:0]   m02_axi_awlen,

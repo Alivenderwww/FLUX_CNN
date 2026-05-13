@@ -309,6 +309,10 @@ module core_top #(
     // desc FIFO
     logic [255:0]      desc_fifo_wdata, desc_fifo_rdata;
     logic              desc_fifo_we, desc_fifo_re;
+    logic [7:0]        desc_fifo_count;
+    logic [3:0]        seq_state_dbg;
+    logic [3:0]        idma_sg_state_dbg;
+    logic [3:0]        odma_sg_state_dbg;
     logic              desc_fifo_full, desc_fifo_empty;
 
     // Sequencer CFG_WRITE → cfg_regs seq_w_* (descriptor-driven layer cfg writes)
@@ -332,6 +336,13 @@ module core_top #(
         .idma_done(idma_done), .wdma_done(wdma_done), .odma_done(odma_done),
         .dfe_busy(dfe_busy), .dfe_done(dfe_done),
         .layer_busy(layer_busy), .layer_done(layer_done),
+        // VD100 dbg: ADDR_SEQ_DBG (0x008) RO
+        // master_arvalid 字段 = odma_sg_dispatcher.state (v31 加)
+        // master_rvalid  字段 = idma_sg_dispatcher.state
+        .seq_state      (seq_state_dbg),
+        .fifo_count     (desc_fifo_count),
+        .master_arvalid (odma_sg_state_dbg),
+        .master_rvalid  (idma_sg_state_dbg),
         .start_dfe_pulse(cfg_start_dfe_pulse),
         .start_layer_pulse(cfg_start_layer_pulse),
         .core_done_sticky(cfg_core_done_sticky),
@@ -397,7 +408,7 @@ module core_top #(
         .rd_en  (desc_fifo_re),
         .rd_data(desc_fifo_rdata),
         .empty  (desc_fifo_empty),
-        .count  ()
+        .count  (desc_fifo_count)
     );
 
     sequencer u_sequencer (
@@ -433,7 +444,9 @@ module core_top #(
         // CFG_WRITE → cfg_regs.seq_w_*
         .cfg_w_en              (seq_cfg_w_en),
         .cfg_w_addr            (seq_cfg_w_addr),
-        .cfg_w_data            (seq_cfg_w_data)
+        .cfg_w_data            (seq_cfg_w_data),
+        // VD100 dbg: state expose 给 cfg_regs ADDR_SEQ_DBG
+        .state_out             (seq_state_dbg)
     );
 
     // =========================================================================
@@ -1104,7 +1117,8 @@ module core_top #(
             .mm2s_data_tvalid(idma_data_tvalid), .mm2s_data_tready(idma_data_tready),
             .mm2s_data_tdata (idma_data_tdata),  .mm2s_data_tkeep (idma_data_tkeep),  .mm2s_data_tlast (idma_data_tlast),
             .mm2s_sts_tvalid (idma_sts_tvalid),  .mm2s_sts_tready (idma_sts_tready),  .mm2s_sts_tdata  (idma_sts_tdata),
-            .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata)
+            .ifb_we(idma_ifb_we), .ifb_waddr(idma_ifb_waddr), .ifb_wdata(idma_ifb_wdata),
+            .state_out(idma_sg_state_dbg)
         );
         // 防 unused warning: SG_MODE 下 idma_src_base/byte_len 不使用
         wire _unused_eff_idma = |eff_idma_src_base | |eff_idma_byte_len;
@@ -1233,7 +1247,8 @@ module core_top #(
             .s2mm_data_tvalid(odma_s2mm_data_tvalid), .s2mm_data_tready(odma_s2mm_data_tready),
             .s2mm_data_tdata (odma_s2mm_data_tdata),  .s2mm_data_tkeep (odma_s2mm_data_tkeep),  .s2mm_data_tlast (odma_s2mm_data_tlast),
             .s2mm_sts_tvalid (odma_s2mm_sts_tvalid),  .s2mm_sts_tready (odma_s2mm_sts_tready),  .s2mm_sts_tdata  (odma_s2mm_sts_tdata),
-            .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata)
+            .ofb_re(odma_ofb_re), .ofb_raddr(odma_ofb_raddr), .ofb_rdata(odma_ofb_rdata),
+            .state_out(odma_sg_state_dbg)
         );
         // 防 unused warning
         wire _unused_eff_odma = |eff_odma_dst_base | |eff_odma_byte_len

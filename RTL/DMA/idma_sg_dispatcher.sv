@@ -100,7 +100,10 @@ module idma_sg_dispatcher #(
     // ---- IFB SRAM write port ----
     output logic                    ifb_we,
     output logic [SRAM_ADDR_W-1:0]  ifb_waddr,
-    output logic [DATA_W-1:0]       ifb_wdata
+    output logic [DATA_W-1:0]       ifb_wdata,
+
+    // VD100 dbg: dispatcher.st expose 给 cfg_regs ADDR_SEQ_DBG
+    output logic [3:0]              state_out
 );
 
     // unused tkeep 防 lint
@@ -126,6 +129,7 @@ module idma_sg_dispatcher #(
     logic [ADDR_W-1:0]      r_src_addr;
     logic [LEN_W-1:0]       r_btt;
     logic                   r_last_cmd;
+    logic                   sts_drained;   // VD100 fix forward decl
     logic [SRAM_ADDR_W-1:0] r_sram_offset;
     logic [SRAM_ADDR_W-1:0] r_sram_wptr;
 
@@ -140,11 +144,23 @@ module idma_sg_dispatcher #(
     assign busy = (st != S_IDLE) && (st != S_DONE);
     assign done = r_done && !start;
     assign err  = r_err;
+    assign state_out = st;          // VD100 dbg
     assign rows_available = r_rows_pushed;
 
     // =========================================================================
     // mm2s_cmd_tdata: 两阶段共享 (FETCH_CMD_ISS 时拉 cmd_list[idx], ISSUE 时拉 user data)
     // =========================================================================
+    // VD100 fix 2026-05-12: 4KB-boundary split — axi_dm IP (board axi_noc & sim axi_smc)
+    // 在跨 4KB 边界 burst 时不出 m_axis_mm2s_tlast 卡死. dispatcher 内部按 4KB 拆 cmd.
+    // cap_btt = min(r_btt, 4KB - src[11:0]). S_ISSUE 发 cap_btt 大小 cmd;
+    // S_DATA tlast 后若 remaining > 0 再回 S_ISSUE 发 sub-cmd; remaining=0 才 cmd_idx++.
+    logic [22:0] cap_btt;
+    logic [22:0] room_to_4k;
+    assign room_to_4k = 23'h800000 - {11'd0, r_src_addr[11:0]};  // ↓ 实际只用低位, 加宽免溢出
+    wire   [22:0] room4k = 23'h001000 - {11'd0, r_src_addr[11:0]};
+    assign cap_btt = (r_btt[22:0] > room4k) ? room4k : r_btt[22:0];
+
+
     logic [ADDR_W-1:0]      cmd_saddr;
     logic [22:0]            cmd_btt23;
     always_comb begin
@@ -152,9 +168,9 @@ module idma_sg_dispatcher #(
             // 拉 cmd_list[idx]: 起点 = cfg_cmd_list_ptr + idx * 32 (32 byte / cmd)
             cmd_saddr = cfg_cmd_list_ptr + (ADDR_W'(r_cmd_idx) << 5);
             cmd_btt23 = 23'(CMD_BTT);
-        end else begin   // S_ISSUE
+        end else begin   // S_ISSUE: 用 cap_btt (4KB-clipped)
             cmd_saddr = r_src_addr;
-            cmd_btt23 = r_btt[22:0];
+            cmd_btt23 = cap_btt;
         end
     end
 
@@ -216,12 +232,13 @@ module idma_sg_dispatcher #(
             S_RING_WAIT     : if (ring_has_space)                         st_next = S_ISSUE;
             S_ISSUE         : if (mm2s_cmd_tvalid && mm2s_cmd_tready)    st_next = S_DATA;
             S_DATA          : if (mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast) begin
-                // r_cmd_idx 在 cmd_fire 时 +1, 装第 N 个 cmd 后 r_cmd_idx=N.
-                // 不等 sts (后台 collect), 直接判断是否末 cmd.
-                if (r_last_cmd || (r_cmd_idx >= cfg_cmd_count))           st_next = S_DONE;
+                // VD100 4KB split: 如果还有 remaining (r_btt > cap_btt), 回 S_ISSUE 发 sub-cmd.
+                // remaining=0 表示 logical cmd 完成, cmd_idx++ 在另一处 always_ff.
+                if (r_btt[22:0] != cap_btt)                                st_next = S_ISSUE;
+                else if (r_last_cmd || (r_cmd_idx >= cfg_cmd_count))      st_next = S_DONE;
                 else                                                       st_next = S_FETCH_CMD_ISS;
             end
-            S_DONE          : st_next = S_IDLE;
+            S_DONE          : if (sts_drained)                            st_next = S_IDLE;   // VD100 fix: 等所有 sts 收完再退出, 否则 r_done 不 set
             default         : st_next = S_IDLE;
         endcase
     end
@@ -250,6 +267,10 @@ module idma_sg_dispatcher #(
             r_btt         <= {1'b0, mm2s_data_tdata[32 +: 23]};
             r_last_cmd    <= mm2s_data_tdata[32 + 23];
             r_sram_offset <= mm2s_data_tdata[64 +: SRAM_ADDR_W];
+        end else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast) begin
+            // VD100 4KB split: tlast 后 src += cap_btt, btt -= cap_btt (准备下 sub-cmd or done)
+            r_src_addr <= r_src_addr + {9'd0, cap_btt};
+            r_btt      <= r_btt      - {1'b0, cap_btt};
         end
     end
 
@@ -259,7 +280,9 @@ module idma_sg_dispatcher #(
     // =========================================================================
     always_ff @(posedge clk) begin
         if (!rst_n)                              r_sram_wptr <= '0;
-        else if (st == S_ISSUE)                  r_sram_wptr <= r_sram_offset;
+        // VD100 4KB split: wptr reset 移到 S_RING_WAIT (logical cmd 第 1 sub-cmd 之前),
+        // sub-cmd 走 S_DATA→S_ISSUE 不重置 wptr, 让 sub-cmd 在 logical cmd 内部连续累加.
+        else if (st == S_RING_WAIT)              r_sram_wptr <= r_sram_offset;
         else if (st == S_DATA && ifb_we) begin
             // wrap (cfg_ifb_ring_words = 0 → 不 wrap, 跑 batch mode)
             if ((cfg_ifb_ring_words != '0)
@@ -280,7 +303,9 @@ module idma_sg_dispatcher #(
     always_ff @(posedge clk) begin
         if      (!rst_n) r_cmd_idx <= '0;
         else if (start)  r_cmd_idx <= '0;
-        else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast)
+        // VD100 4KB split: cmd_idx ++ 只在 sub-cmd 全发完 (r_btt == cap_btt 即 last sub) 时
+        else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast
+                 && r_btt[22:0] == cap_btt)
                          r_cmd_idx <= r_cmd_idx + 16'd1;
     end
 
@@ -297,7 +322,9 @@ module idma_sg_dispatcher #(
         end else if (start) begin
             r_cmds_in_row <= '0;
             r_rows_pushed <= '0;
-        end else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast) begin
+        // VD100 4KB split: 仅 sub-cmd 全完成 (r_btt == cap_btt) 时增 row counter
+        end else if (st == S_DATA && mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast
+                     && r_btt[22:0] == cap_btt) begin
             if (cfg_cmds_per_row == 8'd0 || r_cmds_in_row + 8'd1 >= cfg_cmds_per_row) begin
                 r_cmds_in_row <= '0;
                 r_rows_pushed <= r_rows_pushed + 16'd1;
@@ -338,12 +365,13 @@ module idma_sg_dispatcher #(
     //   sts_pending = r_cmd_fires_total - r_sts_collected (in-flight cmd 数)
     //   pending = 0 才允许 r_done = 1
     // =========================================================================
-    logic sts_drained;
-    assign sts_drained = (r_cmd_fires_total == r_sts_collected);
+    // VD100 fix 2026-05-13: r_done 不依赖 sts_collected (axi_dm 板上 sts 偶尔不出卡死).
+    // 用 cmd_idx 达 cmd_count 判, sts FIFO 自然吸收, dispatcher 不等.
+    assign sts_drained = (r_cmd_idx >= cfg_cmd_count);
     always_ff @(posedge clk) begin
         if      (!rst_n)                              r_done <= 1'b0;
         else if (start)                               r_done <= 1'b0;
-        else if (st == S_DONE && sts_drained)         r_done <= 1'b1;
+        else if (st == S_DONE)                        r_done <= 1'b1;
     end
 
     // =========================================================================

@@ -118,6 +118,12 @@ module cfg_regs #(
     input  logic                     layer_busy,
     input  logic                     layer_done,
 
+    // ---- VD100 dbg 输入 (RO 寄存器 0x008 expose) ----
+    input  logic [3:0]               seq_state,
+    input  logic [7:0]               fifo_count,
+    input  logic [3:0]               master_arvalid,
+    input  logic [3:0]               master_rvalid,
+
     // ---- CTRL 输出：host 触发 DFE 拉 descriptor 和 Sequencer 启动 ----
     output logic                     start_dfe_pulse,    // CTRL[4] 写 1
     output logic                     start_layer_pulse,  // CTRL[5] 写 1
@@ -222,6 +228,7 @@ module cfg_regs #(
     // =========================================================================
     localparam [ADDR_W-1:0] ADDR_CTRL             = `FLUX_ADDR_CTRL;
     localparam [ADDR_W-1:0] ADDR_STATUS           = `FLUX_ADDR_STATUS;
+    localparam [ADDR_W-1:0] ADDR_SEQ_DBG          = 12'h008;   // VD100 dbg RO
 
     localparam [ADDR_W-1:0] ADDR_H_OUT            = `FLUX_ADDR_H_OUT;
     localparam [ADDR_W-1:0] ADDR_W_OUT            = `FLUX_ADDR_W_OUT;
@@ -621,6 +628,8 @@ module cfg_regs #(
         case (reg_r_addr)
             ADDR_CTRL            : reg_r_data = '0;
             ADDR_STATUS          : reg_r_data = status_word;
+            // VD100 dbg word: {16'd0, master_rvalid[3:0], master_arvalid[3:0], fifo_count[3:0], seq_state[3:0]}
+            ADDR_SEQ_DBG         : reg_r_data = {16'd0, master_rvalid, master_arvalid, fifo_count[3:0], seq_state};
             ADDR_H_OUT           : reg_r_data = {16'd0, r_h_out};
             ADDR_W_OUT           : reg_r_data = {16'd0, r_w_out};
             ADDR_W_IN            : reg_r_data = {16'd0, r_w_in};

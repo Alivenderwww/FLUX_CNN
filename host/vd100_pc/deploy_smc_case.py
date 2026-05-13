@@ -275,9 +275,9 @@ def load_desc_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int):
             continue
         path = os.path.join(case_dir, f'core{c}', f'layer{layer_idx:02d}_desc_list.hex')
         words = load_hex_file_words(path)
-        # desc is 16 byte / desc, 取 desc_count × 1 word
+        # FIX 2026-05-12: 每 desc 是 32 byte (256 bit) = 2 word (hex 文件每行 128 bit). 老代码 words[:n_descs] 只写一半 desc 数据
         n_descs = meta[key_count]
-        buf = b''.join(words[:n_descs])
+        buf = b''.join(words[: n_descs * 2])
         rpc.load_ddr(meta[key_base], buf)
 
 

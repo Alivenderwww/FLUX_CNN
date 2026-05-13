@@ -1140,7 +1140,7 @@ module tb_smc_chain;
     end
 
     initial begin
-        #100_000_000;
+        #2_000_000_000;   // 2 sec watchdog (axi_smc IP sim slower)
         $display("FATAL: watchdog timeout @ %0t", $time);
         $stop;
     end

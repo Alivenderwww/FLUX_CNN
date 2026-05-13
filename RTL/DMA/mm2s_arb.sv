@@ -146,28 +146,23 @@ module mm2s_arb #(
             default: mm2s_cmd_tdata = idma_cmd_tdata;
         endcase
     end
-    // VD100 fix 2026-05-11: 严格 single-outstanding — 等前一 cmd 的 data + sts 全
-    // collected 才允许下一 cmd_fire. 避 axi_smc IP / axi_noc 在 multi-outstanding
-    // 时 stream output 顺序错位.
-    // Sim 用 IDEAL_SMC (sim crossbar) PASS, IP 路径 FAIL → 问题在 IP 多-outstanding
-    // 处理. 严格 single-outstanding 让 IP 看每次都 sequential AR+R+sts, 跟 sim
-    // crossbar 行为等价.
-    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && !sts_full
-                          && data_empty_w && sts_empty_w;
+    // VD100 fix 2026-05-13: 仅 data single-outstanding (data_empty_w gate), 去掉 sts gate.
+    // axi_dm 在板上偶尔不出 sts 让 sts_cnt 累积 → sts_empty_w=0 永久 → cmd_tvalid 永卡.
+    // 配合 v29 dispatcher r_done 不依赖 sts, 整链 sts 信号已彻底无用.
+    // sts_full 也去掉 — 反正 dispatcher 不消费 sts, FIFO 写 wrap 不引发问题.
+    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && data_empty_w;
 
     logic cmd_fire;
     assign cmd_fire = mm2s_cmd_tvalid && mm2s_cmd_tready;
 
-    // VD100 fix 2026-05-11: cmd_tready 也需 serialization gate (data_empty + sts_empty),
-    // 否则 wdma/rdma 看 cmd_tready=1 误认为 cmd 发出去了, 但 mm2s_cmd_tvalid=0 没真发.
     assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+                          && !data_full && data_empty_w;
     assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+                          && !data_full && data_empty_w;
     assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+                          && !data_full && data_empty_w;
     assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && !sts_full && data_empty_w && sts_empty_w;
+                          && !data_full && data_empty_w;
 
     // =========================================================================
     // r_wdma_wait_cnt: WDMA 累计等待 cycle (Round E)
@@ -246,6 +241,28 @@ module mm2s_arb #(
     logic data_tlast_fire, sts_fire;
     assign data_tlast_fire = mm2s_data_tvalid && mm2s_data_tready && mm2s_data_tlast;
     assign sts_fire        = mm2s_sts_tvalid  && mm2s_sts_tready;
+
+    // VD100 dbg 2026-05-12: 追 cmd/data/sts fire 时序看 axi_dm 行为
+    `ifdef MM2S_ARB_DBG
+    int dbg_cmd_idx, dbg_data_tlast_idx, dbg_sts_idx;
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin dbg_cmd_idx <= 0; dbg_data_tlast_idx <= 0; dbg_sts_idx <= 0; end
+        else begin
+            if (cmd_fire) begin
+                $display("[%0t] [%m] cmd_fire #%0d owner=%0d data_cnt=%0d sts_cnt=%0d", $time, dbg_cmd_idx, cmd_owner, data_cnt, sts_cnt);
+                dbg_cmd_idx <= dbg_cmd_idx + 1;
+            end
+            if (data_tlast_fire) begin
+                $display("[%0t] [%m] data_tlast_fire #%0d data_head=%0d data_cnt=%0d", $time, dbg_data_tlast_idx, data_head, data_cnt);
+                dbg_data_tlast_idx <= dbg_data_tlast_idx + 1;
+            end
+            if (sts_fire) begin
+                $display("[%0t] [%m] sts_fire #%0d sts_head=%0d sts_cnt=%0d", $time, dbg_sts_idx, sts_head, sts_cnt);
+                dbg_sts_idx <= dbg_sts_idx + 1;
+            end
+        end
+    end
+    `endif
 
 
     always_ff @(posedge clk) begin

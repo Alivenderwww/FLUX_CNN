@@ -47,6 +47,7 @@ module sequencer (
     input  logic                start_layer_pulse,
     output logic                layer_busy,
     output logic                layer_done,
+    output logic [3:0]          state_out,           // VD100 dbg: seq.state → cfg_regs RO
 
     // ---- FIFO read port ----
     input  logic [255:0]        fifo_rd_data,
@@ -265,6 +266,7 @@ module sequencer (
     // Strip-level cfg 输出：layer_busy 时用 latch 值；IDLE 时给安全默认
     // =========================================================================
     assign layer_busy = (state != S_IDLE);
+    assign state_out  = state;          // VD100 dbg: 给 cfg_regs ADDR_DBG 用
 
     assign strip_n_yout         = layer_busy ? r_strip_n_yout    : cfg_h_out_total;
     assign strip_pad_top        = layer_busy ? r_pad_top         : 4'd0;

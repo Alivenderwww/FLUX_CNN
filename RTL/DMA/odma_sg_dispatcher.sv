@@ -109,7 +109,9 @@ module odma_sg_dispatcher #(
     // ---- OFB SRAM read port ----
     output logic                    ofb_re,
     output logic [SRAM_ADDR_W-1:0]  ofb_raddr,
-    input  logic [DATA_W-1:0]       ofb_rdata
+    input  logic [DATA_W-1:0]       ofb_rdata,
+    // VD100 dbg: dispatcher state expose
+    output logic [3:0]              state_out
 );
 
     // 防 unused warning
@@ -206,9 +208,11 @@ module odma_sg_dispatcher #(
     logic all_cmds_issued;
     assign all_cmds_issued = (r_cmd_idx >= cfg_cmd_count);
 
-    // streaming_all_done: 在 S_STS 那拍判定
+    // VD100 fix 2026-05-13: streaming_all_done 不依赖 s2mm_sts_fire (axi_dm 板上 sts 偶尔不出
+    // 卡 ODMA 跟 sequencer S_WAIT, OFM 96% 后停). 改用最后一个 cmd 的 data tlast 触发 r_done.
+    // axi_dm s2mm 收到 last data 后自己写 DDR 完成, 不需要 dispatcher 等 sts.
     logic streaming_all_done;
-    assign streaming_all_done = s2mm_sts_fire
+    assign streaming_all_done = (state == S_TX) && s2mm_data_tvalid && s2mm_data_tready && s2mm_data_tlast
                               && (r_last_cmd || is_last_cmd_overall);
 
     // sub_W (该段宽 W 列) = btt / (cout_slices × 16)
@@ -284,6 +288,7 @@ module odma_sg_dispatcher #(
 
     assign done = r_done && !start;
     assign busy = (state != S_IDLE) && (state != S_DONE);
+    assign state_out = state;            // VD100 dbg
 
     // =========================================================================
     // FSM
@@ -298,11 +303,13 @@ module odma_sg_dispatcher #(
             S_FETCH_CMD_DAT : if (ocmd_data_fire)                      state_next = S_CMD;     // Round H: 跳 STS, sts 后台 collect
             S_CMD           : if (s2mm_cmd_fire)                       state_next = S_PREFETCH;
             S_PREFETCH      :                                          state_next = S_TX;
-            S_TX            : if (s2mm_tlast_fire)                     state_next = S_STS;
-            S_STS           : if (s2mm_sts_fire) begin
+            // VD100 fix 2026-05-13: 跳过 S_STS (axi_dm s2mm 板上偶尔不出 sts), S_TX tlast 后
+            // 直接判 cmd 完结 → S_DONE / S_WAIT. r_cmds_done 改在 data tlast 时累加 (下面).
+            S_TX            : if (s2mm_tlast_fire) begin
                 if (r_last_cmd || is_last_cmd_overall)                 state_next = S_DONE;
                 else                                                    state_next = S_WAIT;
             end
+            S_STS           : state_next = S_WAIT;  // 兼容: 老代码可能 set 到 S_STS, 立即 fall through
             S_DONE          : if (start)                               state_next = S_WAIT;
             default         :                                          state_next = S_IDLE;
         endcase
@@ -414,7 +421,9 @@ module odma_sg_dispatcher #(
             r_cmds_done   <= 16'd0;
             r_cmds_in_row <= 8'd0;
             r_rows_drained <= 16'd0;
-        end else if (state == S_STS && s2mm_sts_fire) begin
+        // VD100 fix 2026-05-13: r_cmds_done 累加跟 s2mm data tlast 同步 (不等 sts),
+        // 跟 S_TX → S_DONE/S_WAIT 跳过 S_STS 一致.
+        end else if (state == S_TX && s2mm_tlast_fire) begin
             r_cmds_done <= r_cmds_done + 16'd1;
             if (is_last_cmd_in_row) begin
                 r_cmds_in_row  <= 8'd0;

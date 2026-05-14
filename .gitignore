@@ -119,3 +119,11 @@ Syn/vd100_minimal/output/
 Syn/vd100_minimal/*.log
 Syn/vd100_minimal/*.jou
 Syn/vd100_minimal/.Xil/
+
+# vd100_minimal scratch
+Syn/vd100_minimal/list_*.tcl
+Syn/vd100_minimal/list_pins.*
+Syn/vd100_minimal/create_project.err
+Syn/vd100_minimal/.gen/
+Syn/vd100_minimal/.srcs/
+Syn/vd100_minimal/vd100_minimal_with_elf.pdi

@@ -1,0 +1,27 @@
+// vd100_minimal_with_elf.bif
+//
+// 把 vd100_minimal PDI + vd100_rpc_server ELF (跑 A72) 合成 bootable PDI.
+// ELF 复用 vd100_ps_baremetal 已编译的 (含 lwIP + RPC handler).
+//
+// 命令:
+//   "D:\Xilinx\Vitis\2023.2\bin\bootgen.bat" -arch versal \
+//       -image vd100_minimal_with_elf.bif \
+//       -o vd100_minimal_with_elf.pdi -w on
+
+new_bif:
+{
+    image
+    {
+        { type=bootimage, file=C:/_Project/FLUX_CNN/Syn/vd100_minimal/output/ps_hello.runs/impl_1/design_1_wrapper.pdi }
+    }
+    image
+    {
+        name=user_elfs_subsys, id=0x1c000000
+        partition
+        {
+            id=0x10
+            core=a72-0
+            file=C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace2/resnet11_app/Debug/resnet11_app.elf
+        }
+    }
+}

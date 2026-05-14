@@ -159,13 +159,25 @@ def decode_status(st, sd):
     }
 
 
+def chunked_load_(rpc, addr, data, chunk=1024):
+    for off in range(0, len(data), chunk):
+        rpc.load_ddr(addr + off, data[off:off+chunk])
+
+def chunked_read_(rpc, addr, length, chunk=1024):
+    out = bytearray()
+    for off in range(0, length, chunk):
+        n = min(chunk, length - off)
+        out.extend(rpc.read_ddr(addr + off, n))
+    return bytes(out)
+
+
 def run_one_iteration(rpc, iteration, n_desc, expected_ofm_len, verbose=False):
     info = {'iter': iteration}
 
-    # OFM pre-clear: incrementing pattern
+    # OFM pre-clear: incrementing pattern (chunked, OFM 可能 > 1KB 触发 lwIP bug)
     pre_clear = bytes([(iteration + j * 7 + 1) & 0xFF for j in range(expected_ofm_len)])
-    rpc.load_ddr(BRAM_OFM, pre_clear)
-    ofm_before = rpc.read_ddr(BRAM_OFM, expected_ofm_len)
+    chunked_load_(rpc, BRAM_OFM, pre_clear)
+    ofm_before = chunked_read_(rpc, BRAM_OFM, expected_ofm_len)
     if ofm_before != pre_clear:
         info['err'] = f'pre-clear mismatch'
         return False, 0, info
@@ -209,7 +221,7 @@ def run_one_iteration(rpc, iteration, n_desc, expected_ofm_len, verbose=False):
     info['layer_done_ms'] = layer_ms
 
     # 验证 OFM 真写 (Phase 2 MAC bypass, 期望 ODMA 写 expected_ofm_len byte != pre_clear)
-    ofm_after = rpc.read_ddr(BRAM_OFM, expected_ofm_len)
+    ofm_after = chunked_read_(rpc, BRAM_OFM, expected_ofm_len)
     info['ofm_head'] = ofm_after[:16].hex()
     if ofm_after == ofm_before:
         info['err'] = f'OFM unchanged'

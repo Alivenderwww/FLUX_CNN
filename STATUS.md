@@ -2,13 +2,17 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-14: VD100 board minimal system bring-up 全 PASS** (Stage 0/1a/1b/1c/2),
+> **🎉 2026-05-14: VD100 board Stage 0~3a 全 PASS** (minimal system + 多 cmd + 多轮启停),
 > 完整 IDMA→mac→ODMA 数据通路在 board 上验证. 详见 §3.
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
-> - 测试: `host/vd100_pc/test_stage2_minimal_conv.py` (1x1x1x1 minimal conv layer_done in <100ms)
+> - 测试:
+>   - `test_stage2_minimal_conv.py` (1×1×1×1 minimal conv, layer_done <100ms)
+>   - `test_stage3a_phase1_loop.py` (多轮启停 500/500 PASS)
+>   - `test_stage3a_phase2_larger.py` (K=3 H=W=8 Cin=Cout=16 200/200 PASS, H=W=16 30/30 PASS)
 > - 结论: ConvCore RTL **完全无 bug** (sim IDEAL_SMC + board minimal 双证), v32 board stuck 100%
 >   是 axi_noc 路径的硬件问题 (BD m00_axi user override + multi-cmd 卡 NoC).
+> - 下一步: Stage 4 真 MAC bit-exact 验证 (论文核心里程碑)
 >
 > **历史 sim milestone**:
 > - M1.5 多核 sim 死锁修复, M2 跨核直送, M2.5 多核调度器, P1 Mode C W slice
@@ -1118,14 +1122,51 @@ host 写 IFM/Weight/RDMA/desc/SG cmd 到 BRAM 各 offset
 - **Vivado 2023.2.1 batch mode create_bd_design 撞 roe_framer IP init bug**: 用 GUI
   规避. tcl 内 `set_msg_config -id "Common 17-39" -new_severity WARNING` 等 workaround 无效.
 
+### Stage 3a 进展 (2026-05-14): 多 cmd + 多轮启停稳定性 全 PASS
+
+承接 Stage 2 (1x1x1x1 单次跑通), Stage 3a 验证 sequencer / SG dispatcher
+在更大维度 + 多轮启停下稳定. 推 multi-layer / 多张图片的基础.
+
+**Phase 1**: 1×1×1×1 hand-craft cfg, N=500 轮启停
+- ✅ **500/500 全 PASS**, 平均 0.3 ms/轮
+- sticky done bit `start_layer_pulse` 时正确清, sequencer 每轮干净回 S_IDLE
+- tail vs head -62% 是 RPC TCP socket 暖启动加速 (非 hw slowdown)
+- file: `host/vd100_pc/test_stage3a_phase1_loop.py`
+
+**Phase 2**: hw_files 自动派生 cfg (递进调试)
+- 用 `toolchain.hw_files.derive_layer_cfg + build_layer_desc_segment` 自动生成
+  desc list + cfg dict, host 端手工拼 SG cmd list (每行一条 cmd, H_IN/H_OUT 条)
+- 关键修复: IDMA/ODMA cmd_count = H_IN/H_OUT (不是 1), 每条 cmd cover 一行
+- 递进验证表格:
+
+| case | 验证维度 | N | 结果 |
+|---|---|---|---|
+| K=1 H=W=1 Cin=Cout=1  | hw_files vs Phase 1 hand-craft 等价 | 1 | ✅ PASS |
+| K=1 H=W=1 Cin=Cout=16 | Cin/Cout 满 (16 PE 全工作)         | 1 | ✅ PASS |
+| K=1 H=W=8 Cin=Cout=1  | H/W 多 cmd (8 IDMA + 8 ODMA)        | 1 | ✅ PASS |
+| K=1 H=W=8 Cin=Cout=16 | 上面两个组合                         | 1 | ✅ PASS |
+| **K=3 H=W=8 Cin=Cout=16 pad=1** (目标) | **kk=9 + 多 cmd** | **200** | ✅ **200/200 PASS** |
+| K=3 H=W=16 Cin=Cout=16 pad=1          | 大维度 (16 cmd/dir) | 30 | ✅ 30/30 PASS |
+
+- file: `host/vd100_pc/test_stage3a_phase2_larger.py`
+
+**Phase 2 调试 trap**: sequencer 没软 reset 通路 — 单次 stuck 后所有后续 layer 都失败.
+最初 Phase 2 第一次跑 FAIL 误以为是 cfg bug, 实际是 Phase 1 残留 state. 烧 PDI
+重置后 hw_files 全 case 全 PASS. **教训**: VD100 demo 测试 between case 之间应该
+重烧 PDI 隔离 state, 或者 RTL 加软 reset 通路 (TODO).
+
+**已知 limit**:
+- BRAM 64KB ⇒ 最大 case H=W≤32 (IFM+OFM ≈ 2×16KB), 更大需扩 BRAM 重综合
+- RPC server lwIP 单次 LOAD/READ_DDR > 1KB 触发 ConnReset, 测试脚本 chunked 规避
+
 ### 下一步 (待 next session)
 
-- Stage 3a: 跑稍大 case (例 8x8 conv, 16 cin 16 cout), 验证 BRAM 容量 + 多 cmd 稳定性
-- Stage 3b: 跑 layer 0 完整 240 cmd (BRAM 容量需要 1MB+, 改用 PL DDR via NoC?
-  或扩 BRAM 大小重综合)
-- Stage 4: 真 mac (FLUX_MAC_BYPASS off) 跑 bit-exact, 比对 sim expected_ofm
-- Stage 5: multi-layer chain (ResNet11 11 layer)
+- Stage 4: **真 mac (FLUX_MAC_BYPASS off) 跑 bit-exact, 比对 sim expected_ofm**
+  ← 关键里程碑, 论文 "board-level bit-exact validated" 素材
+- Stage 3b: 扩 BRAM (emb_mem_gen 容量调大重综合) 跑 layer 0 完整 240 cmd
+- Stage 5: multi-layer chain (ResNet11 11 layer 顺序跑)
 - Stage 6: mesh 3 core (回到原 vd100_resnet11 但去掉 axi_noc, 用多 BRAM 或 PL DDR via smartconnect)
+- (TODO) RTL: sequencer 加软 reset 通路 (写 CTRL 某 bit 拉回 S_IDLE), 避免 stuck 后必须重烧 PDI
 
 ## 2.12 Phase 7 阶段 2 — SMC + NUMA RTL 集成 (2026-05-05)
 

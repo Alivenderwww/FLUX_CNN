@@ -113,3 +113,9 @@ host/vd100_ps_baremetal/vd100_with_elf.pdi
 # vsim crash artifacts
 sim/*/vsim_stacktrace.vstf
 sim/*/vsim*.log
+
+# vd100_minimal Vivado output
+Syn/vd100_minimal/output/
+Syn/vd100_minimal/*.log
+Syn/vd100_minimal/*.jou
+Syn/vd100_minimal/.Xil/

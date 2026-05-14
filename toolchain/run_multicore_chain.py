@@ -1144,7 +1144,8 @@ if __name__ == '__main__':
                              '4 等分散布到 4 mem (halo 物理只一份). 生成 IDMA + ODMA SG cmd list '
                              'per-(core, layer), 跨 mem 边界 axi_crossbar IP 自动路由.')
     parser.add_argument('--demo',
-                        choices=['wslice1', 'simple2', 'simple3', 'wslice4', 'wslice5',
+                        choices=['wslice1', 'h33_debug', 'h32_ref',
+                                 'simple2', 'simple3', 'wslice4', 'wslice5',
                                  'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
                                  'wslice_smallw', 'wslice_k7', 'wslice_k1',
                                  'patch1', 'patch_small', 'patch_s2d', 'patch_s2d_resnet',
@@ -1163,6 +1164,16 @@ if __name__ == '__main__':
         # 单层 W slice 验证 (N=2 切 W=32)
         layers = [
             scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=32, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'h33_debug':
+        # H=33 debug case (board fail @ yout 31+, sim 验证用)
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=33, w_in=75, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'h32_ref':
+        # H=32 reference (board PASS)
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=75, stride=1, pad=1, sdp_shift=2),
         ]
     elif args.demo == 'simple2':
         # 2 层 conv chain (P0 minimal), 每核一层

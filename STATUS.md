@@ -1213,18 +1213,31 @@ bit-exact validation 暴露 sim 未覆盖的边界 — 论文 §5.4 板级验证
 | K=5 / K=7 H=W=8 Cin=Cout=16 | 大 K | ✅ 2/2 |
 | K=3 H=W=8 Cin=Cout=16 stride=3 | corner stride | ✅ |
 
-### Streaming strip 模式新发现 bug (留待 Stage 3b)
+### Streaming strip 模式新发现 bug (留待 Stage 3b 深入 debug)
 
-H=W=64 case (K=3 Cin=Cout=16) cfg 派生出 ifb_strip=6 < H_IN=64 → 走 streaming
-strip 模式. board 跑 stuck: STATUS=0x656 (idma_busy=1 odma_busy=1 layer_busy=1),
-SEQ_DBG=0x4714 (seq=4 S_WAIT, idma_sg=4 S_RING_WAIT, odma_sg=7 S_TX).
+精确 fit / streaming 边界 (K=3 Cin=Cout=16 pad=1):
 
-诊断: IDMA 卡 S_RING_WAIT 等 line_buffer 消费 row, ODMA 卡 S_TX 写 BRAM 不 done.
-可能 axi_dm s2mm 写 BRAM 反压链条死锁, 或 line_buffer→mac→parf→ofb_writer 流水
-对 OFB ring 满有 race condition.
+| H_IN | ifb_strip | 模式 | 板上结果 |
+|---|---|---|---|
+| 8 | 8 (=H_IN) | 整图 fit | ✅ PASS |
+| 16 | 16 (=H_IN) | 整图 fit | ✅ PASS |
+| **32** | **32 (=H_IN)** | **整图 fit** | ✅ **PASS (16KB OFM bit-exact)** |
+| **40** | **6 (<H_IN)** | **streaming** | ❌ FAIL stuck |
+| 48 | 6 (<H_IN) | streaming | ❌ FAIL stuck |
+| 56 | 6 | streaming | ❌ FAIL stuck |
+| 64 | 6 | streaming | ❌ FAIL stuck |
 
-**这是 streaming 模式独有 bug, 整图 fit 不暴露**. 同样跟 sim 不一致 (sim ResNet11
-跑 streaming 模式 PASS). 留待 Stage 3b 深入 debug.
+H>32 时 hw_files.derive_layer_cfg 用 streaming row-ring 模式 (ifb_strip ≈ K + slack).
+board stuck: STATUS=0x672 (idma_busy=1 odma_busy=1), SEQ_DBG=0x07xx (idma_sg=0 done?
+odma_sg=7 S_TX).
+
+这跟 sim ResNet11 streaming PASS 不一致, **board-level 暴露 sim 未覆盖的 streaming 模式
+bug**. 类似 ODMA r_yout_base bug 的发现路径, 都是 board 比 sim 严格.
+
+可能 root cause (待 debug):
+1. axi_dm.s2mm 反压链条 (axi_dm → smartconnect_pl → BRAM) 长 burst stall
+2. ofb_writer ↔ ODMA dispatcher 通过 row_done_pulse 跨 strip 同步 race
+3. ifb ring wrap 后 line_buffer 读到 stale data
 
 ### 下一步 (待 next session)
 

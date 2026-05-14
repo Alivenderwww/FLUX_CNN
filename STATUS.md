@@ -1213,7 +1213,44 @@ bit-exact validation 暴露 sim 未覆盖的边界 — 论文 §5.4 板级验证
 | K=5 / K=7 H=W=8 Cin=Cout=16 | 大 K | ✅ 2/2 |
 | K=3 H=W=8 Cin=Cout=16 stride=3 | corner stride | ✅ |
 
-### Streaming strip 模式新发现 bug (留待 Stage 3b 深入 debug)
+### H>32 corner bug 调研 (2026-05-14, 自主推进 session)
+
+**最初猜测**: streaming mode (ifb_strip < H_IN) 是 root cause. **实测排除**.
+
+精确 case 矩阵:
+
+| case | ifb_strip | ofb_strip | mode | board 结果 | sim 结果 |
+|---|---|---|---|---|---|
+| H=32 W=25 K=3 | 32 (整图) | 32 (整图) | fit | ✅ PASS | ✅ PASS |
+| **H=33 W=25 K=3** | **33 (整图)** | **33 (整图)** | **fit** | ❌ **deterministic mismatch 642/13200 byte @ yout 31+** | ✅ **PASS** (h33_debug N=3 W=75 demo) |
+| H=40 W=25 K=3 | 40 (整图) | 40 (整图) | fit | ❌ stuck | ✅ PASS |
+| H=64 W=8 K=3 | 64 (整图) | 64 (整图) | fit | ❌ stuck STATUS=0x656 SEQ=0x4114 | (not tested) |
+| H=64 W=64 K=3 | 6 (streaming) | 8 (streaming) | streaming | ❌ stuck | ✅ PASS |
+
+**确认**:
+- 不是 streaming mode 问题 (整图 fit 也 fail)
+- 是 **H_OUT > 32 或 ODMA_CMD_COUNT > 32** 的 deterministic RTL bug
+- 又一次 **sim PASS / board fail** pattern (跟 ODMA r_yout_base bug 一样)
+- mismatch @ yout 31+ deterministic, byte 数固定 642/643, 不是 race timing
+
+**已排除位宽溢出**:
+- yout_cnt, cfg_h_out, r_yout_base 等都 16-bit OK
+- PARF_DEPTH/WRF_DEPTH/ARF_DEPTH=32 跟 yout 维度无关 (是 tile_w/cin_pe/kx 索引)
+- mm2s_arb OFIFO_DEPTH=8 但每 dispatcher 1 outstanding cmd ≪ 8
+
+**真 root cause 假说**:
+1. axi_dm IP 真硬件 vs sim model timing 差异 (axi_dm s2mm cmd FIFO 在 cmd_count>32 时反压触发某个 vendor IP bug?)
+2. smartconnect_pl 长 burst 跟 sim crossbar 反压策略不同
+3. ofb_writer/ODMA 某 derived counter 在 H>32 时跟 board axi_dm 时钟域上有 race (sim 不出)
+
+**Stage 3b 深入 debug 需要**:
+- sim wave 看 H=33 case yout 31 时 dispatcher/ofb_writer 内部 state
+- 板上 ILA trace axi 信号看反压链条
+
+### Streaming strip 模式 (留待 Stage 3b)
+
+最初以为 streaming 是 root cause, 实测发现 H>32 整图 fit case 也 fail.
+streaming 模式 + 整图 fit H>32 都 fail, 共同 root cause 是 H>32 维度.
 
 精确 fit / streaming 边界 (K=3 Cin=Cout=16 pad=1):
 

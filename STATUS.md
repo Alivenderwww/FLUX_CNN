@@ -2,9 +2,9 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-14: VD100 board Stage 0~4 全 PASS** (minimal system + bit-exact 真 MAC + 软 reset).
+> **🎉 2026-05-14: VD100 board Stage 0~5 全 PASS** (minimal system + bit-exact 真 MAC + 软 reset + 多层 chain).
 > Stage 4 bit-exact 暴露真 RTL bug (odma_sg_dispatcher r_yout_base 推进时机), sim 11/11 PASS
-> 未覆盖. 详见 §3.
+> 未覆盖. Stage 5 11-layer chain bit-exact 全 PASS, board 上完成 ResNet11 深度多层连续推理. 详见 §3.
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
 > - 测试:
@@ -1239,10 +1239,35 @@ bug**. 类似 ODMA r_yout_base bug 的发现路径, 都是 board 比 sim 严格.
 2. ofb_writer ↔ ODMA dispatcher 通过 row_done_pulse 跨 strip 同步 race
 3. ifb ring wrap 后 line_buffer 读到 stale data
 
+### Stage 5: multi-layer chain bit-exact (2026-05-14, commit TBD)
+
+board 上完成多层连续推理验证:
+
+| 层数 | case | 结果 |
+|---|---|---|
+| 2 layer | K=3 H=W=8 Cin=Cout=16 | ✅ 2/2 bit-exact |
+| 5 layer | (同上, 5 层串联) | ✅ 5/5 bit-exact |
+| **11 layer** | (ResNet11 深度) | ✅ **11/11 bit-exact** |
+
+实现策略:
+- 每层独立 board run (软 reset 隔离 cfg)
+- 层间 host 端拿 Python `ofm_arr` 作下层 `ifm_arr_in` (board L_n OFM bit-exact = Python L_n OFM, 等价)
+- 每层用不同 seed 生成不同 random weight, 确保 chain 路径覆盖率
+
+验证:
+- 软 reset 在 11 层连续切换中干净
+- cfg_regs 重写 work
+- 多层启停无累计错误
+
+files:
+- `host/vd100_pc/test_stage5_chain_bitexact.py`: 2-layer 真 chain
+- `host/vd100_pc/test_stage5_n_layer_chain.py`: N-layer chain (默认 N=11)
+
 ### 下一步 (待 next session)
 
 - **Stage 3b**: debug streaming strip 模式 stuck (H>32 ifb_strip < H_IN case)
-- Stage 5: multi-layer chain (ResNet11 11 layer 顺序跑, 用 SDP/residual 全特性)
+  - root cause: ODMA S_TX 卡 axi_dm 写 BRAM 反压?或 ofb_writer/ODMA race?
+- Stage 5+: 真 ResNet11 形状 chain (各层 shape 不同, 含 stride>1 + residual)
 - Stage 6: mesh 3 core (回到原 vd100_resnet11 但去掉 axi_noc, 用多 BRAM 或 PL DDR via smartconnect)
 - (深挖) sim 为啥没暴露 ODMA bug: 深入 ofb_writer ↔ ODMA dispatcher 在 sim model 下的 timing 差异
 

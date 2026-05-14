@@ -88,6 +88,23 @@ else if (state == S_TX && s2mm_tlast_fire && is_last_cmd_in_row)
 - s2mm_sts 准时回 → S_STS 路径 work? (theoretical 不应该, 但 实测 sim PASS)
 - 实际 sim 在 ResNet11 case 下某 race 让数据对得上, board hardware timing 不同
 
+### Bug 3 (待 v4 验证): axi_dm IP 不在软 reset 范围 (commit @ v4 综合)
+
+**症状**: 板 stuck (Run 0 mismatch / Run 1+ stuck) 后, host 写 CTRL.bit7
+软 reset 不能完全清干净, 下一次 Run 直接 stuck。必须重烧 PDI 才能继续。
+
+**root cause**: `core_top.sv` 中 axi_dm IP 的 4 个 reset 端口
+(`m_axi_mm2s_aresetn`, `m_axis_mm2s_cmdsts_aresetn`, `m_axi_s2mm_aresetn`,
+`m_axis_s2mm_cmdsts_aresetn`) 直接接顶层 `rst_n` (CIPS pl0_resetn), **不在
+软 reset 范围** (`core_rst_n = rst_n && cfg_soft_reset_n`)。软 reset 拉低
+core_rst_n 时, axi_dm IP 不响应, 内部 cmd FIFO / outstanding burst state
+保留 → 下一 layer 起 ODMA dispatcher 跟 axi_dm 不同步死锁。
+
+**fix** (commit 待 v4):
+- core_top.sv: axi_dm 4 个 aresetn 端口接 `core_rst_n` (跟其他 sub-module 同步)
+- cfg_regs.sv: 软 reset stretched 16 → 64 拍 (axi_dm IP 内部多 reset domain
+  需更多 sync cycle)
+
 ### Bug 2: H_OUT > 32 corner case (deterministic, sim PASS / board fail)
 
 **症状**:

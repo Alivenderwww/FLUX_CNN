@@ -1269,10 +1269,10 @@ module core_top #(
     axi_dm u_axi_dm (
         // ---- 时钟 / 复位 (mm2s + s2mm + 各自 cmdsts 全部用同一时钟) ----
         .m_axi_mm2s_aclk            (clk),
-        .m_axi_mm2s_aresetn         (rst_n),
+        .m_axi_mm2s_aresetn         (core_rst_n),  // VD100 fix 2026-05-15: 软 reset 也清 axi_dm
         .mm2s_err                   (),
         .m_axis_mm2s_cmdsts_aclk    (clk),
-        .m_axis_mm2s_cmdsts_aresetn (rst_n),
+        .m_axis_mm2s_cmdsts_aresetn (core_rst_n),
         // ---- MM2S cmd / data / sts (来自 mm2s_arb) ----
         .s_axis_mm2s_cmd_tvalid     (arb_mm2s_cmd_tvalid),
         .s_axis_mm2s_cmd_tready     (arb_mm2s_cmd_tready),
@@ -1306,10 +1306,10 @@ module core_top #(
         .m_axis_mm2s_tready         (arb_mm2s_data_tready),
         // ---- S2MM 时钟 / 复位 ----
         .m_axi_s2mm_aclk            (clk),
-        .m_axi_s2mm_aresetn         (rst_n),
+        .m_axi_s2mm_aresetn         (core_rst_n),  // VD100 fix 2026-05-15: 软 reset 也清 axi_dm
         .s2mm_err                   (),
         .m_axis_s2mm_cmdsts_awclk   (clk),
-        .m_axis_s2mm_cmdsts_aresetn (rst_n),
+        .m_axis_s2mm_cmdsts_aresetn (core_rst_n),
         // ---- S2MM cmd / data / sts (来自 odma_ctrl) ----
         .s_axis_s2mm_cmd_tvalid     (odma_s2mm_cmd_tvalid),
         .s_axis_s2mm_cmd_tready     (odma_s2mm_cmd_tready),

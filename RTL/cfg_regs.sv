@@ -310,21 +310,23 @@ module cfg_regs #(
     assign start_layer_pulse = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[5];
 
     // -------------------------------------------------------------------------
-    // soft reset stretcher: host 写 CTRL.bit7 = 1 → r_soft_rst_cnt 装 16 拍 → 持续
-    // 16 拍 soft_reset_n=0 → 所有 sub-module FSM 回 IDLE.
-    // 16 拍足够 covers: SRAM 读延迟 (1-2 拍) + AXI handshake turn-around (~8 拍).
+    // soft reset stretcher: host 写 CTRL.bit7 = 1 → r_soft_rst_cnt 装 64 拍 → 持续
+    // 64 拍 soft_reset_n=0 → 所有 sub-module + axi_dm IP 内部全部 reset 回 IDLE.
+    // VD100 fix 2026-05-15: 拉长 16 → 64 拍, 因为 axi_dm IP 内部有多个 reset domain
+    // (mm2s/s2mm/cmdsts), 16 拍可能不够完全 sync. axi_dm aresetn 之前用 hard rst_n,
+    // 现已改为 core_rst_n 跟其他 sub-module 同步.
     // 仅 csr_w 触发, sequencer 自己写 CFG_WRITE 不会触发 (seq_w_addr 只能写 0x100+).
     // -------------------------------------------------------------------------
-    logic [3:0] r_soft_rst_cnt;
+    logic [5:0] r_soft_rst_cnt;
     logic       soft_reset_trigger;
     assign soft_reset_trigger = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[7];
 
     always_ff @(posedge clk) begin
-        if      (!rst_n)              r_soft_rst_cnt <= 4'd0;
-        else if (soft_reset_trigger)  r_soft_rst_cnt <= 4'd15;
-        else if (r_soft_rst_cnt != 0) r_soft_rst_cnt <= r_soft_rst_cnt - 4'd1;
+        if      (!rst_n)              r_soft_rst_cnt <= 6'd0;
+        else if (soft_reset_trigger)  r_soft_rst_cnt <= 6'd63;
+        else if (r_soft_rst_cnt != 0) r_soft_rst_cnt <= r_soft_rst_cnt - 6'd1;
     end
-    assign soft_reset_n = (r_soft_rst_cnt == 4'd0);
+    assign soft_reset_n = (r_soft_rst_cnt == 6'd0);
 
     // -------------------------------------------------------------------------
     // core_done sticky: layer_done 上升沿 set, start_layer_pulse 清掉

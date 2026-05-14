@@ -54,7 +54,8 @@ def parse_ofm_bytes_to_arr(ofm_bytes, H_OUT, W_OUT, NUM_COUT, HW_COL=16):
     return arr
 
 
-def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad):
+def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad,
+                          residual_en=0, shortcut_mult=0, shortcut_shift=0):
     """读 case_dir 下 ifb.txt/wb.txt/rdma_data.txt/expected_ofm.txt/desc_list.hex,
     构造 board load 需要的 bytes + SG cmd list + cfg."""
     cfg = hw_files.derive_layer_cfg(
@@ -63,14 +64,26 @@ def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad
 
     H_IN_eff, H_OUT = cfg['H_IN'], cfg['H_OUT']
 
+    # 读 case_dir 的 config.txt 拿到 rdma_words_total (residual case 含 shortcut 段)
+    rdma_words_total = cfg['rdma_words']
+    cfg_txt_path = os.path.join(case_dir, 'config.txt')
+    if os.path.exists(cfg_txt_path):
+        with open(cfg_txt_path) as f:
+            for line in f:
+                if line.startswith('_META_RDMA_WORDS'):
+                    rdma_words_total = int(line.split('=')[1].strip())
+                    break
+
     # cfg_dict + desc list (重新构造, 不复用 gen_isa_test 写的 desc_list.hex
     # 因为 SG cmd cfg 我们要 board 路径专用)
+    # residual case: shortcut_mult=1 shortcut_shift=0 默认 (cfg_to_dict default)
     cfg_dict = hw_files.cfg_to_dict(
         cfg, shift_amt=0, sdp_mult=1, sdp_zp_out=0,
         sdp_clip_min=0, sdp_clip_max=255, sdp_round_en=0, sdp_relu_en=1,
         ddr_ifb_base=BRAM_IFM, ddr_wb_base=BRAM_WB,
         ddr_ofb_base=BRAM_OFM, ddr_rdma_base=BRAM_RDMA,
-        rdma_words_total=cfg['rdma_words'],
+        rdma_words_total=rdma_words_total,
+        residual_en=residual_en, shortcut_mult=shortcut_mult, shortcut_shift=shortcut_shift,
         idma_cmd_list_ptr=BRAM_ISG, idma_cmd_count=H_IN_eff, idma_cmds_per_row=1,
         odma_cmd_list_ptr=BRAM_OSG, odma_cmd_count=H_OUT,   odma_cmds_per_row=1,
         skip_idma=0)

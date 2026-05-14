@@ -1197,9 +1197,38 @@ RTL bug 在 sim (IDEAL_SMC + axi_dm IP sim model) 没暴露, 在 board (axi_smc 
 不同代码路径触发, 或 ofb_writer/ODMA 之间某种 race 在 sim 自然对齐. **board-level
 bit-exact validation 暴露 sim 未覆盖的边界 — 论文 §5.4 板级验证一节核心素材**.
 
+### Stage 4 corner case 扩展 (16+ case 全 bit-exact PASS)
+
+整图 fit case (ifb_strip = H_IN, OFB ring 也 fit) 全 bit-exact PASS:
+
+| case | 形状 | 结果 |
+|---|---|---|
+| K=1 H=W=1 / 2 / 4 / 8 Cin=Cout=16 | 递进 | ✅ 4/4 |
+| K=3 H=W=8 / 16 / 32 Cin=Cout=16 pad=1 | 多大小 | ✅ 3/3 |
+| K=3 H=W=16 Cin=Cout=16 stride=2 | stride>1 | ✅ |
+| K=1 H=W=16 Cin=16 Cout=32 | Cout 切片 (cs=2) | ✅ |
+| K=1 H=W=8 Cin=32 Cout=16 | Cin 切片 | ✅ |
+| K=3 H=W=8 Cin=32 Cout=32 | 双向切片 | ✅ |
+| K=1 H=W=8 Cin=32 Cout=64 | Cout cs=4 | ✅ |
+| K=5 / K=7 H=W=8 Cin=Cout=16 | 大 K | ✅ 2/2 |
+| K=3 H=W=8 Cin=Cout=16 stride=3 | corner stride | ✅ |
+
+### Streaming strip 模式新发现 bug (留待 Stage 3b)
+
+H=W=64 case (K=3 Cin=Cout=16) cfg 派生出 ifb_strip=6 < H_IN=64 → 走 streaming
+strip 模式. board 跑 stuck: STATUS=0x656 (idma_busy=1 odma_busy=1 layer_busy=1),
+SEQ_DBG=0x4714 (seq=4 S_WAIT, idma_sg=4 S_RING_WAIT, odma_sg=7 S_TX).
+
+诊断: IDMA 卡 S_RING_WAIT 等 line_buffer 消费 row, ODMA 卡 S_TX 写 BRAM 不 done.
+可能 axi_dm s2mm 写 BRAM 反压链条死锁, 或 line_buffer→mac→parf→ofb_writer 流水
+对 OFB ring 满有 race condition.
+
+**这是 streaming 模式独有 bug, 整图 fit 不暴露**. 同样跟 sim 不一致 (sim ResNet11
+跑 streaming 模式 PASS). 留待 Stage 3b 深入 debug.
+
 ### 下一步 (待 next session)
 
-- Stage 3b: 跑稍大 case (例 K=3 H=W=32 Cin=Cout=16) 验证 256KB BRAM 容量上限
+- **Stage 3b**: debug streaming strip 模式 stuck (H>32 ifb_strip < H_IN case)
 - Stage 5: multi-layer chain (ResNet11 11 layer 顺序跑, 用 SDP/residual 全特性)
 - Stage 6: mesh 3 core (回到原 vd100_resnet11 但去掉 axi_noc, 用多 BRAM 或 PL DDR via smartconnect)
 - (深挖) sim 为啥没暴露 ODMA bug: 深入 ofb_writer ↔ ODMA dispatcher 在 sim model 下的 timing 差异

@@ -25,13 +25,13 @@ puts "============================================================"
 # -----------------------------------------------------------------------------
 open_bd_design [get_files design_1.bd]
 
-# axi_bram_ctrl.MEM_DEPTH 是 read-only (auto-prop from emb_mem_gen). 改 emb_mem_gen.
-# emb_mem_gen WRITE_DEPTH_A = 32768 × 16 byte = 512 KB.
-set_property -dict [list \
-    CONFIG.MEMORY_PRIMITIVE  {bram} \
-    CONFIG.WRITE_DEPTH_A     {32768} \
-] [get_bd_cells emb_mem_gen_0]
-puts "  + emb_mem_gen_0 WRITE_DEPTH_A = 32768 (512KB, auto-prop 给 axi_bram_ctrl)"
+# 实际发现: emb_mem_gen CONFIG.MEMORY_DEPTH 默认就是 32768 (= 32768 × 16 = 512KB).
+# 之前以为 64KB 是因为 BD assign_bd_address range 限到了 64K, 实际 emb_mem_gen 容量
+# 一直是 512KB. 不需改 IP, 只改 address range 就行.
+# 仅打印当前容量做确认.
+set cur_depth [get_property CONFIG.MEMORY_DEPTH [get_bd_cells emb_mem_gen_0]]
+set cur_size  [get_property CONFIG.MEMORY_SIZE  [get_bd_cells emb_mem_gen_0]]
+puts "  emb_mem_gen_0 MEMORY_DEPTH = $cur_depth (MEMORY_SIZE = $cur_size bits = [expr $cur_size/8/1024] KB)"
 
 # 重 assign address: 用 0xA4100000 (在 M_AXI_FPD aperture 0xA4000000 [448M] 内, 0xA4000000 4KB
 # 已给 CSR). 跟之前 GUI 配的一致, host 测试脚本 BRAM_BASE 不用改.

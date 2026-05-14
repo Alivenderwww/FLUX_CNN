@@ -397,9 +397,14 @@ module odma_sg_dispatcher #(
             yout_base_next = yb_plus;
     end
 
+    // VD100 fix 2026-05-14 (Stage 4 bit-exact debug): r_yout_base 推进时机改跟
+    // r_cmds_done / r_rows_drained 一致 (S_TX tlast 时). 原条件 S_STS && s2mm_sts_fire
+    // 永远不成立 (Round H step 2 跳过 S_STS), 导致 yout_base 永远 = 0, 所有 ODMA cmd
+    // 读 OFB[0..ofb_row_words-1], H>1 case 后续 row OFM 全是 row 0 内容. 修复: 在
+    // S_TX tlast 且 is_last_cmd_in_row 时推进 (跟 r_rows_drained 同步).
     always_ff @(posedge clk) begin
         if      (start)                                             r_yout_base <= '0;
-        else if (state == S_STS && s2mm_sts_fire && is_last_cmd_in_row)
+        else if (state == S_TX && s2mm_tlast_fire && is_last_cmd_in_row)
                                                                     r_yout_base <= yout_base_next;
     end
 

@@ -46,17 +46,18 @@ CTRL_SOFT_RESET  = 1 << 7   # v2 new: 写 1 软 reset (16 拍低 → sub-module 
 
 
 def parse_hex_file(path):
-    """每行 32 hex char = 16 byte 128-bit value. 转 byte stream little-endian.
-    hex line 是大端 (MSB nibble 在左), to_bytes('little') 把 LSB byte 放在低地址."""
+    """每行 N hex char = N/2 byte word (ifb=32 char/16 byte, wb=512 char/256 byte).
+    hex line 大端, to_bytes('little') LSB byte 在低地址."""
     out = bytearray()
     with open(path, 'r') as f:
         for line in f:
             line = line.strip().split('//')[0].strip()
             if not line:
                 continue
-            assert len(line) == 32, f"bad line: {line[:50]}..."
+            assert len(line) % 2 == 0, f"bad line len: {len(line)}"
+            n_bytes = len(line) // 2
             val = int(line, 16)
-            out.extend(val.to_bytes(16, 'little'))
+            out.extend(val.to_bytes(n_bytes, 'little'))
     return bytes(out)
 
 
@@ -244,7 +245,7 @@ def main():
     used = max(DESC_OFF + len(desc), ISG_OFF + len(isg), OSG_OFF + len(osg),
                IFM_OFF + len(ifm), WB_OFF + len(wb), RDMA_OFF + len(rdma),
                OFM_OFF + len(expected))
-    cap = 512 * 1024
+    cap = 256 * 1024
     print(f'[Setup] max BRAM offset = 0x{used:05x} / 0x{cap:05x} ({used*100/cap:.1f}%)')
     if used > cap:
         print(f'        [ERR] BRAM overflow!'); return

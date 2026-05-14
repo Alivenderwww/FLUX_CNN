@@ -135,12 +135,17 @@ def build_case(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride, pad, case_dir):
     row_bytes_ifm = cfg['W_IN']  * cs_in  * 16
     row_bytes_ofm = cfg['W_OUT'] * cs_out * 16
 
-    isg_list = []; sram_off = 0
+    # 注意: streaming row-ring 模式 (ifb_strip < H_IN) 下 sram_offset 必须按
+    # ifb_ring_words wrap! 否则后续 cmd 写到 ring 外, line_buffer 读 ring 内
+    # stale data, board IDMA 卡 S_RING_WAIT.
+    ifb_ring = cfg['ifb_ring_words']
+    isg_list = []; sram_off_raw = 0
     for r in range(H_IN_eff):
         last = 1 if r == H_IN_eff - 1 else 0
+        sram_off_eff = sram_off_raw % ifb_ring if ifb_ring > 0 else sram_off_raw
         isg_list.append(make_sg_idma(BRAM_IFM + r*row_bytes_ifm,
-                                      btt=row_bytes_ifm, sram_off=sram_off, last_cmd=last))
-        sram_off += cfg['W_IN'] * cs_in
+                                      btt=row_bytes_ifm, sram_off=sram_off_eff, last_cmd=last))
+        sram_off_raw += cfg['W_IN'] * cs_in
     isg_blob = b''.join(isg_list)
 
     osg_list = []

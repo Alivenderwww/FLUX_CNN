@@ -249,6 +249,11 @@ module core_top #(
 
     // CTRL / STATUS
     logic              cfg_start_dfe_pulse, cfg_start_layer_pulse;
+    logic              cfg_soft_reset_n;    // CTRL.bit7 写 1 → 16 拍低 → 拉所有 sub-module 回 IDLE
+    // 复合 reset: 顶层 hard rst_n + cfg_regs 软 reset, 所有 sub-module 用这个,
+    // 唯独 cfg_regs 本身用顶层 rst_n (cfg 寄存器值在软 reset 后保留, 不重新写).
+    logic              core_rst_n;
+    assign core_rst_n = rst_n && cfg_soft_reset_n;
     logic [31:0]       dma_idma_src_base, dma_wdma_src_base, dma_odma_dst_base;
     logic [23:0]       dma_idma_byte_len, dma_wdma_byte_len, dma_odma_byte_len;
     logic [31:0]       dma_rdma_src_base;
@@ -325,7 +330,7 @@ module core_top #(
         .DATA_W(CSR_DATA_W),
         .CORE_ADDR_W(ADDR_W)
     ) u_cfg (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(rst_n /* cfg_regs 用顶层 hard rst, 软 reset 不清 cfg 值 */),
         // AXI-Lite 写口 (boot regs only): CTRL / DESC_LIST_BASE / DESC_COUNT / DMA_MODE
         .csr_w_en(reg_w_en), .csr_w_addr(reg_w_addr),
         .csr_w_data(reg_w_data), .csr_w_strb(reg_w_strb),
@@ -345,6 +350,7 @@ module core_top #(
         .master_rvalid  (idma_sg_state_dbg),
         .start_dfe_pulse(cfg_start_dfe_pulse),
         .start_layer_pulse(cfg_start_layer_pulse),
+        .soft_reset_n   (cfg_soft_reset_n),
         .core_done_sticky(cfg_core_done_sticky),
         .h_out(cfg_h_out), .w_out(cfg_w_out), .w_in(cfg_w_in),
         .k(cfg_k), .ky(cfg_ky), .stride(cfg_stride), .stride_h(cfg_stride_h),
@@ -401,7 +407,7 @@ module core_top #(
     // =========================================================================
     // DEPTH=128: 一层 ~50 CFG_WRITE + 1 CONV + 1 END < 64; 留 2× 头量给单 burst pre-fetch
     desc_fifo #(.DEPTH(128), .WIDTH(256)) u_desc_fifo (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .wr_en  (desc_fifo_we),
         .wr_data(desc_fifo_wdata),
         .full   (desc_fifo_full),
@@ -412,7 +418,7 @@ module core_top #(
     );
 
     sequencer u_sequencer (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .start_layer_pulse     (cfg_start_layer_pulse),
         .layer_busy            (layer_busy),
         .layer_done            (layer_done),
@@ -575,7 +581,7 @@ module core_top #(
         .ADDR_W    (ADDR_W)
     ) u_line_buffer (
         .clk              (clk),
-        .rst_n            (rst_n),
+        .rst_n            (core_rst_n),
         .start            (seq_start_core_pulse),
         .done             (lb_done),
         .cfg_h_out        (seq_strip_n_yout),
@@ -629,7 +635,7 @@ module core_top #(
         .ADDR_W         (ADDR_W)
     ) u_wgt_buffer (
         .clk              (clk),
-        .rst_n            (rst_n),
+        .rst_n            (core_rst_n),
         .start            (seq_start_wgt_pulse),
         .done             (wb_done),
         .cfg_h_out        (cfg_h_out),
@@ -677,7 +683,7 @@ module core_top #(
     ) u_mac_array (
 `endif
         .clk            (clk),
-        .rst_n          (rst_n),
+        .rst_n          (core_rst_n),
         .wrf_we         (wrf_we),
         .wrf_waddr      (wrf_waddr),
         .wrf_wdata      (wrf_wdata),
@@ -703,7 +709,7 @@ module core_top #(
         .PARF_DEPTH(PARF_DEPTH)
     ) u_parf_accum (
         .clk              (clk),
-        .rst_n            (rst_n),
+        .rst_n            (core_rst_n),
         .cfg_tile_w       (cfg_tile_w),
         .cfg_last_valid_w (cfg_last_valid_w),
         .cfg_num_tiles    (cfg_num_tiles),
@@ -745,7 +751,7 @@ module core_top #(
         .SB_ADDR_W (SB_AW)         // SHB 独立宽
     ) u_ofb_writer (
         .clk              (clk),
-        .rst_n            (rst_n),
+        .rst_n            (core_rst_n),
         .start            (seq_start_core_pulse),
         .done             (ow_done),
         .cfg_h_out        (seq_strip_n_yout),
@@ -831,7 +837,7 @@ module core_top #(
         .SRAM_ADDR_W(SB_AW)        // SHB 地址宽 (独立于 IFB 的 AW)
     ) u_bias_rf (
         .clk           (clk),
-        .rst_n         (rst_n),
+        .rst_n         (core_rst_n),
         .start         (seq_start_core_pulse),
         .cs_cnt        (ow_cs_cnt),
         .cfg_bias_base (cfg_bias_base),
@@ -993,7 +999,7 @@ module core_top #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .M_ID(AXI_M_ID), .FIFO_W(256)
     ) u_dfe (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .start          (cfg_start_dfe_pulse),
         .done           (dfe_done),
         .busy           (dfe_busy),
@@ -1082,7 +1088,7 @@ module core_top #(
             .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
             .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
         ) u_idma (
-            .clk(clk), .rst_n(rst_n),
+            .clk(clk), .rst_n(core_rst_n),
             .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
             .src_base(eff_idma_src_base), .byte_len(eff_idma_byte_len),
             .cfg_h_in_total         (cfg_h_in_total),
@@ -1103,7 +1109,7 @@ module core_top #(
             .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
             .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
         ) u_idma_sg (
-            .clk(clk), .rst_n(rst_n),
+            .clk(clk), .rst_n(core_rst_n),
             .start(seq_start_idma_pulse_g), .done(idma_done), .busy(idma_busy), .err(idma_err_w),
             .cfg_cmd_list_ptr     (cfg_idma_cmd_list_ptr),
             .cfg_cmd_count        (cfg_idma_cmd_count),
@@ -1131,7 +1137,7 @@ module core_top #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W), .WB_DATA_W(WB_WIDTH),
         .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
     ) u_wdma (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .start(seq_start_wdma_pulse), .done(wdma_done), .busy(wdma_busy), .err(wdma_err_w),
         .src_base(dma_wdma_src_base), .byte_len(dma_wdma_byte_len),
         .mm2s_cmd_tvalid (wdma_cmd_tvalid),  .mm2s_cmd_tready (wdma_cmd_tready),  .mm2s_cmd_tdata  (wdma_cmd_tdata),
@@ -1148,7 +1154,7 @@ module core_top #(
         .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
         .SRAM_ADDR_W(SB_AW), .LEN_W(DMA_LEN_W)   // sb_waddr 用 SHB 独立宽
     ) u_rdma (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .start(seq_start_rdma_pulse), .done(rdma_done), .busy(rdma_busy), .err(rdma_err_w),
         .src_base(dma_rdma_src_base), .byte_len(dma_rdma_byte_len),
         .mm2s_cmd_tvalid (rdma_cmd_tvalid),  .mm2s_cmd_tready (rdma_cmd_tready),  .mm2s_cmd_tdata  (rdma_cmd_tdata),
@@ -1164,7 +1170,7 @@ module core_top #(
     // mm2s_arb (idma + wdma + rdma → 单条 axi_dm.MM2S)
     // =========================================================================
     mm2s_arb #(.DATA_W(BUS_DATA_W)) u_mm2s_arb (
-        .clk(clk), .rst_n(rst_n),
+        .clk(clk), .rst_n(core_rst_n),
         .idma_cmd_tvalid (idma_cmd_tvalid),  .idma_cmd_tready (idma_cmd_tready),  .idma_cmd_tdata  (idma_cmd_tdata),
         .idma_data_tvalid(idma_data_tvalid), .idma_data_tready(idma_data_tready),
         .idma_data_tdata (idma_data_tdata),  .idma_data_tkeep (idma_data_tkeep),  .idma_data_tlast (idma_data_tlast),
@@ -1203,7 +1209,7 @@ module core_top #(
             .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
             .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
         ) u_odma (
-            .clk(clk), .rst_n(rst_n),
+            .clk(clk), .rst_n(core_rst_n),
             .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
             .dst_base(eff_odma_dst_base), .byte_len(eff_odma_byte_len),
             .cfg_h_out_total       (cfg_h_out),
@@ -1225,7 +1231,7 @@ module core_top #(
             .ADDR_W(BUS_ADDR_W), .DATA_W(BUS_DATA_W),
             .SRAM_ADDR_W(AW), .LEN_W(DMA_LEN_W)
         ) u_odma_sg (
-            .clk(clk), .rst_n(rst_n),
+            .clk(clk), .rst_n(core_rst_n),
             .start(seq_start_odma_pulse), .done(odma_done), .busy(odma_busy), .err(odma_err_w),
             .cfg_cmd_list_ptr (cfg_odma_cmd_list_ptr),
             .cfg_cmd_count    (cfg_odma_cmd_count),

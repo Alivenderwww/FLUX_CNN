@@ -128,9 +128,16 @@ if {[get_bd_cells -quiet smartconnect_pl] eq ""} {
 
 if {[get_bd_cells -quiet axi_bram_ctrl_0] eq ""} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_0
-    set_property -dict [list CONFIG.DATA_WIDTH {128} CONFIG.SINGLE_PORT_BRAM {1} CONFIG.ECC_TYPE {0}] [get_bd_cells axi_bram_ctrl_0]
     puts "  + axi_bram_ctrl_0"
 }
+# 2026-05-14: BRAM 64KB → 512KB. axi_bram_ctrl 单位 byte, 0x80000 = 512KB.
+# emb_mem_gen 容量自动 propagate. VE2302 BRAM 总 ~1.5MB, 512KB 约 25%, 余量足.
+set_property -dict [list \
+    CONFIG.DATA_WIDTH    {128} \
+    CONFIG.SINGLE_PORT_BRAM {1} \
+    CONFIG.ECC_TYPE      {0} \
+    CONFIG.MEM_DEPTH     {32768} \
+] [get_bd_cells axi_bram_ctrl_0]
 
 if {[get_bd_cells -quiet emb_mem_gen_0] eq ""} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:emb_mem_gen:1.0 emb_mem_gen_0
@@ -200,12 +207,12 @@ puts "\[5/5\] assign addresses ..."
 catch {assign_bd_address -offset 0xA4000000 -range 4K \
     -target_address_space [get_bd_addr_spaces versal_cips_0/M_AXI_FPD] \
     [get_bd_addr_segs u_mc_minimal/csr_axil/Reg] -force}
-catch {assign_bd_address -offset 0xA0000000 -range 1M \
+catch {assign_bd_address -offset 0xA0000000 -range 512K \
     -target_address_space [get_bd_addr_spaces versal_cips_0/M_AXI_FPD] \
     [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force}
 
 # u_mc_minimal.m_axi 视图 (PL 内 ConvCore 看 BRAM):
-catch {assign_bd_address -offset 0xA0000000 -range 1M \
+catch {assign_bd_address -offset 0xA0000000 -range 512K \
     -target_address_space [get_bd_addr_spaces u_mc_minimal/m_axi] \
     [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force}
 

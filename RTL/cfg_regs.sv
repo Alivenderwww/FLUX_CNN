@@ -127,6 +127,10 @@ module cfg_regs #(
     // ---- CTRL 输出：host 触发 DFE 拉 descriptor 和 Sequencer 启动 ----
     output logic                     start_dfe_pulse,    // CTRL[4] 写 1
     output logic                     start_layer_pulse,  // CTRL[5] 写 1
+    // CTRL[7] 写 1 → stretched 软 reset (持续 16 拍低) 给所有 sub-module
+    // 用途: 任何 dispatcher / sequencer stuck 时, host 写 CTRL=0x80 拉回 IDLE.
+    // cfg_regs 自身不响应这个 reset, cfg 寄存器值在软 reset 后保留.
+    output logic                     soft_reset_n,       // stretched, low-active
 
     // ---- 整层完成 sticky 标志 (用于顶层 done 端口 / GIC IRQ / STATUS[0]) ----
     //   layer_done 一上升 → set, start_layer_pulse 自清.
@@ -304,6 +308,23 @@ module cfg_regs #(
     // =========================================================================
     assign start_dfe_pulse   = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[4];
     assign start_layer_pulse = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[5];
+
+    // -------------------------------------------------------------------------
+    // soft reset stretcher: host 写 CTRL.bit7 = 1 → r_soft_rst_cnt 装 16 拍 → 持续
+    // 16 拍 soft_reset_n=0 → 所有 sub-module FSM 回 IDLE.
+    // 16 拍足够 covers: SRAM 读延迟 (1-2 拍) + AXI handshake turn-around (~8 拍).
+    // 仅 csr_w 触发, sequencer 自己写 CFG_WRITE 不会触发 (seq_w_addr 只能写 0x100+).
+    // -------------------------------------------------------------------------
+    logic [3:0] r_soft_rst_cnt;
+    logic       soft_reset_trigger;
+    assign soft_reset_trigger = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[7];
+
+    always_ff @(posedge clk) begin
+        if      (!rst_n)              r_soft_rst_cnt <= 4'd0;
+        else if (soft_reset_trigger)  r_soft_rst_cnt <= 4'd15;
+        else if (r_soft_rst_cnt != 0) r_soft_rst_cnt <= r_soft_rst_cnt - 4'd1;
+    end
+    assign soft_reset_n = (r_soft_rst_cnt == 4'd0);
 
     // -------------------------------------------------------------------------
     // core_done sticky: layer_done 上升沿 set, start_layer_pulse 清掉

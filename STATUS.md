@@ -2,8 +2,9 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-14: VD100 board Stage 0~3a 全 PASS** (minimal system + 多 cmd + 多轮启停),
-> 完整 IDMA→mac→ODMA 数据通路在 board 上验证. 详见 §3.
+> **🎉 2026-05-14: VD100 board Stage 0~4 全 PASS** (minimal system + bit-exact 真 MAC + 软 reset).
+> Stage 4 bit-exact 暴露真 RTL bug (odma_sg_dispatcher r_yout_base 推进时机), sim 11/11 PASS
+> 未覆盖. 详见 §3.
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
 > - 测试:
@@ -1159,14 +1160,49 @@ host 写 IFM/Weight/RDMA/desc/SG cmd 到 BRAM 各 offset
 - BRAM 64KB ⇒ 最大 case H=W≤32 (IFM+OFM ≈ 2×16KB), 更大需扩 BRAM 重综合
 - RPC server lwIP 单次 LOAD/READ_DDR > 1KB 触发 ConnReset, 测试脚本 chunked 规避
 
+### v3 PDI 全面验证 (2026-05-14, commit f947cc9 + 后续)
+
+v3 PDI 相对 v1 (Stage 0~3a 用的) 的三大改动:
+1. **RTL 软 reset**: cfg_regs 加 CTRL.bit7 stretched 16 拍 soft reset, core_top 16 个
+   sub-module rst_n → core_rst_n (复合 hard+soft), cfg_regs 自身保留 hard rst.
+   stuck → host POKE CTRL=0x80 → FSM 全回 IDLE, 不用重烧 PDI.
+2. **odma_sg_dispatcher.sv r_yout_base bug fix**: Round H step 2 改 FSM 跳过 S_STS,
+   但漏改了 r_yout_base 推进条件 (还在等 `S_STS && s2mm_sts_fire`). 永远不成立 →
+   r_yout_base 永远 = 0 → 所有 ODMA cmd 读 OFB[0..ofb_row_words-1] → H>1 case 的
+   OFM row 1+ 全是 row 0 内容复制. Stage 4 board bit-exact 暴露. 修复: yout_base
+   推进改 `S_TX tlast && is_last_cmd_in_row` (跟 r_rows_drained 同步).
+3. **BRAM 容量 64KB → 256KB**: emb_mem_gen MEMORY_DEPTH 4096 → 16384, addr range
+   64K → 256K. (默认 32768 = 512KB 超 RAMB36, fit 不下 VE2302 155 RAMB36, 折中 16384.)
+
+### v3 Stage 0~4 验证结果 (board: vd100_minimal_with_elf.pdi v3)
+
+| Phase | 测试 | 结果 |
+|---|---|---|
+| A1: Stage 3a Phase 1 regression | 1×1×1×1 N=200 | ✅ **200/200 PASS** |
+| A2: Stage 3a Phase 2 regression | K=3 H=W=8 N=100 | ✅ **100/100 PASS** |
+| B1: Stage 4 bit-exact | K=1 H=W=1 Cin=Cout=16 | ✅ PASS |
+| B2: Stage 4 bit-exact | K=1 H=W=2 Cin=Cout=16 | ✅ PASS |
+| B3: Stage 4 bit-exact | K=1 H=W=4 Cin=Cout=16 | ✅ PASS |
+| B4: Stage 4 bit-exact | K=1 H=W=8 Cin=Cout=16 | ✅ PASS |
+| **B5: Stage 4 bit-exact** | **K=3 H=W=8 Cin=Cout=16 pad=1** | ✅ **PASS (1024 byte 全 bit-exact)** |
+| B6: Stage 4 bit-exact | K=3 H=W=16 Cin=Cout=16 pad=1 | ✅ PASS |
+| C: 软 reset 通路 | baseline → trigger → soft reset → post-reset | ✅ **PASS (4/4 步)** |
+| D: bit-exact 持续 | K=3 H=W=8 N=50 | ✅ **50/50 PASS** |
+
+### sim 调研 (论文素材)
+
+revert ODMA fix 后 sim ResNet11 N=3 仍然 11 layer 全 PASS, 0 mismatch. 即 **同一个
+RTL bug 在 sim (IDEAL_SMC + axi_dm IP sim model) 没暴露, 在 board (axi_smc IP +
+真 axi_dm + smartconnect_pl) 暴露**. 可能 sim model 的 axi_dm s2mm sts 准时回让
+不同代码路径触发, 或 ofb_writer/ODMA 之间某种 race 在 sim 自然对齐. **board-level
+bit-exact validation 暴露 sim 未覆盖的边界 — 论文 §5.4 板级验证一节核心素材**.
+
 ### 下一步 (待 next session)
 
-- Stage 4: **真 mac (FLUX_MAC_BYPASS off) 跑 bit-exact, 比对 sim expected_ofm**
-  ← 关键里程碑, 论文 "board-level bit-exact validated" 素材
-- Stage 3b: 扩 BRAM (emb_mem_gen 容量调大重综合) 跑 layer 0 完整 240 cmd
-- Stage 5: multi-layer chain (ResNet11 11 layer 顺序跑)
+- Stage 3b: 跑稍大 case (例 K=3 H=W=32 Cin=Cout=16) 验证 256KB BRAM 容量上限
+- Stage 5: multi-layer chain (ResNet11 11 layer 顺序跑, 用 SDP/residual 全特性)
 - Stage 6: mesh 3 core (回到原 vd100_resnet11 但去掉 axi_noc, 用多 BRAM 或 PL DDR via smartconnect)
-- (TODO) RTL: sequencer 加软 reset 通路 (写 CTRL 某 bit 拉回 S_IDLE), 避免 stuck 后必须重烧 PDI
+- (深挖) sim 为啥没暴露 ODMA bug: 深入 ofb_writer ↔ ODMA dispatcher 在 sim model 下的 timing 差异
 
 ## 2.12 Phase 7 阶段 2 — SMC + NUMA RTL 集成 (2026-05-05)
 

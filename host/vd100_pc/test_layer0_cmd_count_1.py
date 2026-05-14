@@ -85,6 +85,16 @@ def main():
             rpc.load_ddr(base + 4, struct.pack('<I', new_word1))
             print(f"  c{c} {tag} cmd[0] word1: 0x{word1:08x} → 0x{new_word1:08x}")
 
+    # ★ deploy_smc_case --skip-run 跳 RUN_LAYERS, DESC_LIST_BASE/COUNT 没设
+    # 必须 explicit set 让 dfe 知道 desc list 位置 + 长度. 否则 dfe 拉 0 desc,
+    # sequencer 拿不到 CFG_WRITE, cfg_regs 永 0, IDMA/ODMA 卡死.
+    print("[2c/6] explicit set DESC_LIST_BASE + DESC_COUNT (deploy --skip-run 漏了)")
+    for c, base in enumerate(core_bases):
+        rpc.poke_csr(c, 0x180, base)
+        rpc.poke_csr(c, 0x184, n_descs)
+        b = rpc.peek_csr(c, 0x180); n = rpc.peek_csr(c, 0x184)
+        print(f"  c{c} DESC_LIST_BASE=0x{b:08x} DESC_COUNT={n}")
+
     print("[3/6] start_dfe 3 cores")
     for c in range(3):
         rpc.poke_csr(c, ADDR_CTRL, 1 << 4)

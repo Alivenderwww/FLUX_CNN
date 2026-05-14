@@ -172,10 +172,21 @@ module axi_m_mux #(
     assign B_AWQOS   =                       M_AWQOS  [wr_addr_master_sel];
     assign B_AWVALID =                       M_AWVALID[wr_addr_master_sel];
 
-    always_comb begin
-        M_AWREADY                     = '0;
-        M_AWREADY[wr_addr_master_sel] = B_AWREADY;
-    end
+    // VD100 v36 fix 2026-05-14: 把 1-hot demux 改成显式 generate-for assign,
+    //   避免 Vivado opt 推断 LUT3 后 cascade trim 输入 (Opt 31-67
+    //   m_arready_inferred_i_1 missing I0).
+    //   原 always_comb 写法语义没问题, 但综合器倾向把 4-way demux 压成
+    //   `if (sel==i) bus else 0` LUT3, opt 会把 B_*READY 路径 trim 后只剩
+    //   sel 一根输入, LUT3 pin 失配报错. 显式 per-bit assign 让每个 bit
+    //   独立, 不会被 cascade trim.
+    genvar gi;
+    generate
+        for (gi = 0; gi < (2**M_WIDTH); gi++) begin : g_arready_demux
+            assign M_AWREADY[gi] = (wr_addr_master_sel == gi[M_WIDTH-1:0]) ? B_AWREADY : 1'b0;
+            assign M_WREADY [gi] = (wr_data_master_sel == gi[M_WIDTH-1:0]) ? B_WREADY  : 1'b0;
+            assign M_ARREADY[gi] = (rd_addr_master_sel == gi[M_WIDTH-1:0]) ? B_ARREADY : 1'b0;
+        end
+    endgenerate
 
     // =========================================================================
     // W 通道：M[sel] → B（burst 期间 lock 保证 sel 稳定）
@@ -184,11 +195,6 @@ module axi_m_mux #(
     assign B_WSTRB  = M_WSTRB [wr_data_master_sel];
     assign B_WLAST  = M_WLAST [wr_data_master_sel];
     assign B_WVALID = M_WVALID[wr_data_master_sel];
-
-    always_comb begin
-        M_WREADY                     = '0;
-        M_WREADY[wr_data_master_sel] = B_WREADY;
-    end
 
     // =========================================================================
     // B 通道：B → M[wr_resp_master_sel]，ID 剥掉高位的 master_idx
@@ -218,10 +224,7 @@ module axi_m_mux #(
     assign B_ARQOS   =                       M_ARQOS  [rd_addr_master_sel];
     assign B_ARVALID =                       M_ARVALID[rd_addr_master_sel];
 
-    always_comb begin
-        M_ARREADY                     = '0;
-        M_ARREADY[rd_addr_master_sel] = B_ARREADY;
-    end
+    // M_ARREADY 已在上方 g_arready_demux generate block 里 assign
 
     // =========================================================================
     // R 通道：B → M[rd_data_master_sel]

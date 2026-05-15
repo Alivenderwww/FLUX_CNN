@@ -17,8 +17,8 @@ from vd100_rpc import Vd100Rpc
 import hw_files
 import gen_isa_test
 from test_stage4_bitexact import (
-    BRAM_BASE, DESC_OFF, ISG_OFF, OSG_OFF,
-    BRAM_IFM, BRAM_WB, BRAM_RDMA, BRAM_OFM, BRAM_ISG, BRAM_OSG,
+    BRAM_BASE, DESC_OFF, ISG_OFF, OSG_OFF, BRAM_ISG, BRAM_OSG,
+    compute_layout,
     CTRL_START_DFE, CTRL_START_LAYER, CTRL_SOFT_RESET,
     parse_hex_file, beat_pair_to_bytes, make_sg_idma, make_sg_odma,
     chunked_load, chunked_read
@@ -76,6 +76,20 @@ def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad
                     rdma_words_total = int(line.split('=')[1].strip())
                     break
 
+    # 读 case_dir 数据先 (要算 region size)
+    ifm = parse_hex_file(os.path.join(case_dir, 'ifb.txt'))
+    wb_bytes = parse_hex_file(os.path.join(case_dir, 'wb.txt'))
+    rdma = parse_hex_file(os.path.join(case_dir, 'rdma_data.txt'))
+    expected = parse_hex_file(os.path.join(case_dir, 'expected_ofm.txt'))
+
+    # v9 fix: 动态 BRAM layout 避免 region overlap (大 case IFM>44KB 被 WB 覆盖 bug)
+    ifm_off, wb_off, rdma_off, ofm_off = compute_layout(
+        len(ifm), len(wb_bytes), len(rdma), len(expected))
+    BRAM_IFM  = BRAM_BASE + ifm_off
+    BRAM_WB   = BRAM_BASE + wb_off
+    BRAM_RDMA = BRAM_BASE + rdma_off
+    BRAM_OFM  = BRAM_BASE + ofm_off
+
     # cfg_dict + desc list (重新构造, 不复用 gen_isa_test 写的 desc_list.hex
     # 因为 SG cmd cfg 我们要 board 路径专用)
     # residual case: shortcut_mult=1 shortcut_shift=0 默认 (cfg_to_dict default)
@@ -100,13 +114,7 @@ def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad
     seg.append(hw_files._pack_desc(hw_files.TYPE_END, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
     desc_bytes = b''.join(beat_pair_to_bytes(b0, b1) for (b0, b1) in seg)
 
-    # 读 case_dir 数据
-    ifm = parse_hex_file(os.path.join(case_dir, 'ifb.txt'))
-    wb = parse_hex_file(os.path.join(case_dir, 'wb.txt'))
-    rdma = parse_hex_file(os.path.join(case_dir, 'rdma_data.txt'))
-    expected = parse_hex_file(os.path.join(case_dir, 'expected_ofm.txt'))
-
-    # SG cmd
+    # SG cmd (用 dynamic BRAM_IFM/OFM 算 src/dst addr)
     cs_in = cfg['cin_slices']; cs_out = cfg['cout_slices']
     row_bytes_ifm = cfg['W_IN'] * cs_in * 16
     row_bytes_ofm = cfg['W_OUT'] * cs_out * 16
@@ -125,7 +133,9 @@ def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad
         osg_list.append(make_sg_odma(BRAM_OFM + r*row_bytes_ofm,
                                       btt=row_bytes_ofm, ofb_w_start=0, last_cmd=last))
     osg_blob = b''.join(osg_list)
-    return desc_bytes, len(seg), cfg, ifm, wb, rdma, expected, isg_blob, osg_blob
+    # v9: 返回额外 layout offsets 给调用方 load BRAM 用
+    return desc_bytes, len(seg), cfg, ifm, wb_bytes, rdma, expected, isg_blob, osg_blob, \
+           (BRAM_IFM, BRAM_WB, BRAM_RDMA, BRAM_OFM)
 
 
 def run_board_layer(rpc, desc, n_desc, ifm, wb, rdma, expected, isg, osg):

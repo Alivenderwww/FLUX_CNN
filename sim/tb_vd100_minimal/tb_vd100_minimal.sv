@@ -21,7 +21,8 @@
 module tb_vd100_minimal;
     localparam logic [31:0] BRAM_BASE_ADDR = 32'hA4100000;
     localparam logic [31:0] DESC_BASE      = BRAM_BASE_ADDR + 32'h00000;
-    localparam logic [31:0] OFM_BASE_ADDR  = BRAM_BASE_ADDR + 32'h30000;
+    // v9 fix: OFM_BASE_ADDR 从 macro 来 (= dynamic 算的 OFM offset), 不再 hardcode 0x30000
+    localparam logic [31:0] OFM_BASE_ADDR  = `OFM_BASE;
     localparam BRAM_DEPTH     = 16384;  // 256 KB / 16 byte
 
     logic clk;
@@ -165,6 +166,56 @@ module tb_vd100_minimal;
     logic [127:0] expected_ofm [(`OFM_WORDS)-1:0];
     logic [31:0]  status_reg, seq_dbg;
     integer i, timeout_us;
+
+    // Trace r_yout_base 切换 + state in row 174..177 expand
+    logic [12:0] last_yout_base;
+    initial last_yout_base = '0;
+    logic [3:0] last_state;
+    initial last_state = 4'd0;
+    always @(posedge clk) begin
+        if (rst_n
+            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 12)
+        begin
+            if (u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base != last_yout_base) begin
+                $display("[YOUT-B t=%0t] yout_base %0d -> %0d  (cmd_idx=%0d, state=%0d)",
+                    $time, last_yout_base,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state);
+                last_yout_base = u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base;
+            end
+            if (u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state != last_state) begin
+                $display("[STATE t=%0t] %0d->%0d (cmd_idx=%0d yout_base=%0d sts_fire=%b)",
+                    $time, last_state,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.s2mm_sts_fire);
+                last_state = u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state;
+            end
+        end
+    end
+
+    // Trace OFB SRAM read/write 在 row 175 ± 时刻 看是否 read-write race
+    // ofb_writer 写 ofb_we/waddr/wdata, ODMA 读 ofb_re/raddr 都在 u_ofb_writer 信号
+    // 监控 ofb_writer 写 row 174..186 时 + ODMA 读 row 174..186 cmd 时
+    integer ofb_w_cnt, ofb_r_cnt;
+    always @(posedge clk) begin
+        // (line_buffer act trace 暂禁 — 信号名不一致)
+        // ODMA 读 OFB — cmd_idx 在 cmd_fire 时 +1, 实际处理 cmd N-1. 看 cmd 175 burst 用 cmd_idx=176.
+        if (rst_n
+            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_re
+            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx >= 176
+            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 187)
+        begin
+            $display("[OFB-R t=%0t] ofb_re raddr=%0d  cmd_idx=%0d  yout_base=%0d  rdata[31:0]=0x%h",
+                $time,
+                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_raddr,
+                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_rdata[31:0]);
+        end
+    end
 
     initial begin
         // init signals
@@ -316,8 +367,26 @@ module tb_vd100_minimal;
 
         if (mismatches == 0)
             $display("\n=== PASS  All %0d words bit-exact ===\n", `OFM_WORDS);
-        else
-            $display("\n=== FAIL  Mismatches=%0d / %0d words ===\n", mismatches, `OFM_WORDS);
+        else begin
+            // Hypothesis test: row 175 got 是不是 某 row N expected 的 copy?
+            $display("\n=== FAIL  Mismatches=%0d ===", mismatches);
+            $display("[DUMP] row 175 col 0..3 got vs row 0..199 exp:");
+            for (i = 0; i < 4; i++) begin
+                logic [127:0] got_175, exp_175;
+                got_175 = u_bram.mem[((OFM_BASE_ADDR - BRAM_BASE_ADDR) >> 4) + 175*16 + i];
+                exp_175 = expected_ofm[175*16 + i];
+                $display("  row 175 col %0d: got=0x%h  exp(175)=0x%h", i, got_175, exp_175);
+                // 找 row N exp == row 175 got 的 row N
+                for (int n = 0; n < 200; n++) begin
+                    if (expected_ofm[n*16 + i] === got_175 && n != 175)
+                        $display("    → matches row %0d expected (this col)", n);
+                end
+            end
+            $display("[DUMP] row 175..185 全错; row 186..199 都对? check row 186:");
+            $display("  row 186 col 0: got=0x%h  exp=0x%h",
+                u_bram.mem[((OFM_BASE_ADDR - BRAM_BASE_ADDR) >> 4) + 186*16],
+                expected_ofm[186*16]);
+        end
 
         $finish;
     end

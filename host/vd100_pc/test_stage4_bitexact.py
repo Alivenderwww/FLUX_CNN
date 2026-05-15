@@ -22,20 +22,50 @@ sys.path.insert(0, r'C:/_Project/FLUX_CNN/toolchain')
 from vd100_rpc import Vd100Rpc
 import hw_files
 
-# ====== BRAM layout (v8 fix: ISG/OSG 各 8KB 装 256 cmd) ======
+# ====== BRAM layout (v9 fix: 动态 layout, 避免 region overlap) ======
 # 历史 fix 演进:
 #   v1: ISG/OSG 各 1KB = 32 cmd, H>32 越界 IFM 区 → mismatch 643 byte @ row 31
 #   v6: ISG/OSG 各 4KB = 128 cmd, H>128 越界 → ODMA dispatcher 拉 cmd 取到 X data 死锁
-#   v8: ISG/OSG 各 8KB = 256 cmd, 够 H≤256 (cover ResNet11 layer 0 H_OUT=240, ImageNet 224)
-# 真因: ODMA SG cmd 32 byte/cmd, cmd_count = H_OUT (每行一条), 区容量必须 ≥ H_OUT × 32.
-BRAM_BASE = 0xA4100000
-DESC_OFF  = 0x00000   # 4 KB
-ISG_OFF   = 0x01000   # 8 KB (256 cmd 容量, 够 H≤256)
-OSG_OFF   = 0x03000   # 8 KB
-IFM_OFF   = 0x05000   # 起点延后
-WB_OFF    = 0x10000
-RDMA_OFF  = 0x20000
-OFM_OFF   = 0x30000
+#   v8: ISG/OSG 各 8KB = 256 cmd, 够 H≤256
+#   v9: 静态 IFM_OFF=0x05000 WB_OFF=0x10000 只留 44 KB 给 IFM, H=200 W=16 IFM=50KB
+#       溢出被 WB 覆盖 → mac 用错的 IFM row 176..184 → ofm row 175..185 (11 行) mismatch
+#   FIX: 动态 layout — 后区起点 = 前区 end (page-align), 不再 hardcode.
+#
+# Fixed-base regions (DESC + SG cmd lists): static, 因为 cfg 字段写死了 list_ptr 地址
+# Variable-base regions (IFM/WB/RDMA/OFM): 动态从 layout_offset(IFM_OFF, ifm_size) 算
+BRAM_BASE   = 0xA4100000
+BRAM_SIZE   = 256 * 1024
+DESC_OFF    = 0x00000   # 4 KB  (max 128 desc)
+ISG_OFF     = 0x01000   # 8 KB  (max 256 IDMA cmd)
+OSG_OFF     = 0x03000   # 8 KB  (max 256 ODMA cmd)
+IFM_BASE_OFF = 0x05000  # IFM 起点 (固定), 后续区根据 ifm/wb/rdma 大小动态 align
+
+def _align(n, pgsize=0x100):
+    """page align (256 byte default)"""
+    return (n + pgsize - 1) & ~(pgsize - 1)
+
+def compute_layout(ifm_size, wb_size, rdma_size, ofm_size):
+    """动态算 BRAM 各区起点, 避免 region overlap.
+
+    Returns: (ifm_off, wb_off, rdma_off, ofm_off) byte offsets within BRAM.
+    Raises ValueError if total > BRAM_SIZE.
+    """
+    ifm_off  = IFM_BASE_OFF
+    wb_off   = _align(ifm_off  + ifm_size)
+    rdma_off = _align(wb_off   + wb_size)
+    ofm_off  = _align(rdma_off + rdma_size)
+    total_end = ofm_off + ofm_size
+    if total_end > BRAM_SIZE:
+        raise ValueError(
+            f"BRAM overflow: ifm={ifm_size} wb={wb_size} rdma={rdma_size} ofm={ofm_size}, "
+            f"ofm_end={total_end:#x} > BRAM_SIZE={BRAM_SIZE:#x}")
+    return ifm_off, wb_off, rdma_off, ofm_off
+
+# 默认 fallback layout (1×1×1×1 minimal case 用), 大 case 用 compute_layout
+IFM_OFF  = IFM_BASE_OFF
+WB_OFF   = 0x10000
+RDMA_OFF = 0x20000
+OFM_OFF  = 0x30000
 
 BRAM_IFM  = BRAM_BASE + IFM_OFF
 BRAM_WB   = BRAM_BASE + WB_OFF
@@ -106,9 +136,18 @@ def build_case(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride, pad, case_dir):
     rdma = parse_rdma_data(os.path.join(case_dir, 'rdma_data.txt'))
     expected_ofm = parse_hex_file(os.path.join(case_dir, 'expected_ofm.txt'))
 
-    # cfg dict 再生成一次. 历史 host force-streaming workaround 已删除:
-    # 真因是 ofb_strip_rows 6-bit 截断溢出 (commit 13a0797 fix 6→8 bit).
-    # 整图 fit case (ofb_strip=H_OUT 最大 255) 现在 work.
+    # v9 fix: 动态 BRAM layout, 避免 IFM 区不够 (H=200 W=16 = 50KB > 静态 44KB)
+    # 大 IFM 区溢出被 WB 覆盖 → mac 拉到错 IFM data → row 175..185 mismatch.
+    global IFM_OFF, WB_OFF, RDMA_OFF, OFM_OFF, BRAM_IFM, BRAM_WB, BRAM_RDMA, BRAM_OFM
+    IFM_OFF, WB_OFF, RDMA_OFF, OFM_OFF = compute_layout(len(ifm), len(wb), len(rdma), len(expected_ofm))
+    BRAM_IFM  = BRAM_BASE + IFM_OFF
+    BRAM_WB   = BRAM_BASE + WB_OFF
+    BRAM_RDMA = BRAM_BASE + RDMA_OFF
+    BRAM_OFM  = BRAM_BASE + OFM_OFF
+    print(f'[Setup-layout] IFM=0x{IFM_OFF:05x}({len(ifm):>6}B)  WB=0x{WB_OFF:05x}({len(wb):>5}B)  '
+          f'RDMA=0x{RDMA_OFF:05x}({len(rdma):>4}B)  OFM=0x{OFM_OFF:05x}({len(expected_ofm):>6}B)')
+
+    # cfg dict 再生成一次. 历史 host force-streaming workaround 已删除.
     cfg = hw_files.derive_layer_cfg(
         H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
         stride=stride, pad_top=pad, pad_left=pad, TILE_W=32)

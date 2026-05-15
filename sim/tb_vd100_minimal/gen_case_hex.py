@@ -37,11 +37,20 @@ gen_isa_test.generate_random(out_dir=case_dir, seed=42, shift_amt=0, streaming=F
     TILE_W=32, stride=args.stride, pad_top=args.pad, pad_left=args.pad)
 
 # 2. 跑 host setup_case_for_board 生成 desc + SG cmd 跟 board 完全一致
-desc, n_desc, cfg, ifm, wb, rdma, expected, isg, osg = setup_case_for_board(
+# v9: setup_case_for_board 返回 dynamic layout (BRAM_IFM/WB/RDMA/OFM addresses).
+desc, n_desc, cfg, ifm, wb, rdma, expected, isg, osg, layout = setup_case_for_board(
     case_dir, K=args.k, H_IN=args.h, W_IN=args.w, NUM_CIN=args.cin, NUM_COUT=args.cout,
     stride=args.stride, pad=args.pad)
+BRAM_IFM, BRAM_WB, BRAM_RDMA, BRAM_OFM = layout
+# 算 byte offset (within BRAM)
+IFM_OFF  = BRAM_IFM  - BRAM_BASE
+WB_OFF   = BRAM_WB   - BRAM_BASE
+RDMA_OFF = BRAM_RDMA - BRAM_BASE
+OFM_OFF  = BRAM_OFM  - BRAM_BASE
+print(f'[GEN-layout] IFM=0x{IFM_OFF:05x}({len(ifm):>6}B)  WB=0x{WB_OFF:05x}({len(wb):>5}B)  '
+      f'RDMA=0x{RDMA_OFF:05x}({len(rdma):>4}B)  OFM=0x{OFM_OFF:05x}({len(expected):>6}B)')
 
-# 3. 拼 256KB BRAM byte stream (跟 board BRAM layout 一致)
+# 3. 拼 256KB BRAM byte stream (动态 layout, 跟 board 一致)
 BRAM_SIZE = 256 * 1024
 mem = bytearray([0] * BRAM_SIZE)
 mem[DESC_OFF: DESC_OFF + len(desc)]  = desc

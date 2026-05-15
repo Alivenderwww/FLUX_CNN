@@ -107,7 +107,14 @@ def build_case(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride, pad, case_dir):
     expected_ofm = parse_hex_file(os.path.join(case_dir, 'expected_ofm.txt'))
 
     # cfg dict 再生成一次 (因 gen_isa_test 不能直接返 cfg dict)
+    # VD100 fix 2026-05-15: 强制 OFB_SRAM_WORDS small 让 hw_files 走 streaming
+    # (避免整图 fit ofb_strip=H_OUT 时 ring_full chicken-egg deadlock).
+    h_out_est = (H_IN + 2*pad - K) // stride + 1
+    w_out_est = (W_IN + 2*pad - K) // stride + 1
+    cs_out_est = (NUM_COUT + 15) // 16
+    OFB_FORCE = 9 * w_out_est * cs_out_est  # 8 strip + 1 slack
     cfg = hw_files.derive_layer_cfg(
+        OFB_SRAM_WORDS=OFB_FORCE,
         H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
         stride=stride, pad_top=pad, pad_left=pad, TILE_W=32)
 

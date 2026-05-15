@@ -208,11 +208,9 @@ module odma_sg_dispatcher #(
     logic all_cmds_issued;
     assign all_cmds_issued = (r_cmd_idx >= cfg_cmd_count);
 
-    // VD100 fix 2026-05-13: streaming_all_done 不依赖 s2mm_sts_fire (axi_dm 板上 sts 偶尔不出
-    // 卡 ODMA 跟 sequencer S_WAIT, OFM 96% 后停). 改用最后一个 cmd 的 data tlast 触发 r_done.
-    // axi_dm s2mm 收到 last data 后自己写 DDR 完成, 不需要 dispatcher 等 sts.
+    // EXPERIMENT 2026-05-15: 恢复用 s2mm_sts_fire (revert 6490d27).
     logic streaming_all_done;
-    assign streaming_all_done = (state == S_TX) && s2mm_data_tvalid && s2mm_data_tready && s2mm_data_tlast
+    assign streaming_all_done = s2mm_sts_fire
                               && (r_last_cmd || is_last_cmd_overall);
 
     // sub_W (该段宽 W 列) = btt / (cout_slices × 16)
@@ -303,13 +301,15 @@ module odma_sg_dispatcher #(
             S_FETCH_CMD_DAT : if (ocmd_data_fire)                      state_next = S_CMD;     // Round H: 跳 STS, sts 后台 collect
             S_CMD           : if (s2mm_cmd_fire)                       state_next = S_PREFETCH;
             S_PREFETCH      :                                          state_next = S_TX;
-            // VD100 fix 2026-05-13: 跳过 S_STS (axi_dm s2mm 板上偶尔不出 sts), S_TX tlast 后
-            // 直接判 cmd 完结 → S_DONE / S_WAIT. r_cmds_done 改在 data tlast 时累加 (下面).
-            S_TX            : if (s2mm_tlast_fire) begin
+            // EXPERIMENT 2026-05-15: 恢复 S_TX → S_STS → S_DONE/S_WAIT (revert 6490d27 ODMA 跳 S_STS).
+            // 6490d27 跳 S_STS 是基于 "axi_dm 板上偶丢 sts" 假设, 但实测 axi_dm s2mm 是 Xilinx IP,
+            // sts 正常出. 跳 S_STS 引入 secondary bug: r_yout_base 推进条件 S_STS && sts_fire 永不
+            // 触发, 整图 fit case 错位 (f947cc9 修的就是这个). 两者 cancel = 等价 baseline 行为.
+            S_TX            : if (s2mm_tlast_fire)                     state_next = S_STS;
+            S_STS           : if (s2mm_sts_fire) begin
                 if (r_last_cmd || is_last_cmd_overall)                 state_next = S_DONE;
                 else                                                    state_next = S_WAIT;
             end
-            S_STS           : state_next = S_WAIT;  // 兼容: 老代码可能 set 到 S_STS, 立即 fall through
             S_DONE          : if (start)                               state_next = S_WAIT;
             default         :                                          state_next = S_IDLE;
         endcase
@@ -397,14 +397,12 @@ module odma_sg_dispatcher #(
             yout_base_next = yb_plus;
     end
 
-    // VD100 fix 2026-05-14 (Stage 4 bit-exact debug): r_yout_base 推进时机改跟
-    // r_cmds_done / r_rows_drained 一致 (S_TX tlast 时). 原条件 S_STS && s2mm_sts_fire
-    // 永远不成立 (Round H step 2 跳过 S_STS), 导致 yout_base 永远 = 0, 所有 ODMA cmd
-    // 读 OFB[0..ofb_row_words-1], H>1 case 后续 row OFM 全是 row 0 内容. 修复: 在
-    // S_TX tlast 且 is_last_cmd_in_row 时推进 (跟 r_rows_drained 同步).
+    // EXPERIMENT 2026-05-15: 恢复 S_STS && s2mm_sts_fire 推进 (revert f947cc9).
+    // 配合 ODMA S_TX → S_STS → S_DONE/S_WAIT 路径恢复, r_yout_base 在 S_STS sts_fire
+    // 时正确推进 (baseline 行为). 两个 cancel 改动让 RTL 回到 5fe16b2 + Round H 之前.
     always_ff @(posedge clk) begin
         if      (start)                                             r_yout_base <= '0;
-        else if (state == S_TX && s2mm_tlast_fire && is_last_cmd_in_row)
+        else if (state == S_STS && s2mm_sts_fire && is_last_cmd_in_row)
                                                                     r_yout_base <= yout_base_next;
     end
 
@@ -426,9 +424,8 @@ module odma_sg_dispatcher #(
             r_cmds_done   <= 16'd0;
             r_cmds_in_row <= 8'd0;
             r_rows_drained <= 16'd0;
-        // VD100 fix 2026-05-13: r_cmds_done 累加跟 s2mm data tlast 同步 (不等 sts),
-        // 跟 S_TX → S_DONE/S_WAIT 跳过 S_STS 一致.
-        end else if (state == S_TX && s2mm_tlast_fire) begin
+        // EXPERIMENT 2026-05-15: 恢复 S_STS sts_fire 累加 (revert 6490d27).
+        end else if (state == S_STS && s2mm_sts_fire) begin
             r_cmds_done <= r_cmds_done + 16'd1;
             if (is_last_cmd_in_row) begin
                 r_cmds_in_row  <= 8'd0;

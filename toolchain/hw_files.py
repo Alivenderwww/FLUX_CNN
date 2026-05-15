@@ -789,20 +789,8 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     # J-5 timing fix: ring_full 寄存器化引入 1-cycle latency, 多写 ≤1 cell.
     # 让 ring 物理 wrap 多 1 行, ring_full 阈值不变, 防止多写 wrap 覆盖 row 0.
     RING_FULL_SLACK = 1
-    # VD100 fix 2026-05-15: 原 H_OUT <= ofb_strip_rows_max 时整图 fit + 无 slack,
-    # board 上触发 chicken-egg deadlock: ofb_writer 写到 H_OUT 行 ring_full=true 反压,
-    # 但 dispatcher 在 S_WAIT 等 row_done_pulse, ofb_writer 反压不再产生 pulse → 死锁.
-    # streaming case 有 +1 slack 不死锁, dispatcher 拉 1 row unblock.
-    # 修复: 整图 fit case 也强制 +1 slack (ring_words = (H_OUT+1) * row_words),
-    # 物理 ring 比 strip 大 1 行. 跟 streaming case 行为一致, 板上不死锁.
-    # 影响: OFB SRAM 多用 1 行 slack (~16 word @ W_OUT=16). 性能无影响.
-    if H_OUT + RING_FULL_SLACK <= ofb_strip_rows_max:
-        # 整图 fit + slack (推荐): ring 物理多 1 row 防 chicken-egg
-        ofb_strip = H_OUT
-        ofb_ring_words = (ofb_strip + RING_FULL_SLACK) * W_OUT * cout_slices
-    elif H_OUT <= ofb_strip_rows_max:
-        # 整图刚好 fit 但 SRAM 不够 slack: 退化到原行为 (board 可能死锁但已 raise warning)
-        ofb_strip = H_OUT
+    if H_OUT <= ofb_strip_rows_max:
+        ofb_strip = H_OUT      # 整图装下, 无 ring wrap, 不需 slack
         ofb_ring_words = ofb_strip * W_OUT * cout_slices
     else:
         # strip mode: 留 1 行 slack 给 ring_full 寄存延迟

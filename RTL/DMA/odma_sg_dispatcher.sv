@@ -135,16 +135,9 @@ module odma_sg_dispatcher #(
         S_PREFETCH      = 4'd6,
         S_TX            = 4'd7,
         S_STS           = 4'd8,
-        S_DONE          = 4'd9,
-        S_FLUSH         = 4'd10  // VD100 fix 2026-05-15: last cmd S_TX tlast 后等 axi_dm
-                                  // s2mm 内部 cmd FIFO + addr pipe flush 完才 done.
-                                  // 板上 axi_dm cmd_count > 32 时, last cmd data 还在
-                                  // axi_dm 内部 buffer 没写 BRAM 就 dispatcher done, 导致
-                                  // host 读 BRAM stale 0xAA. sim 0-latency model 无此问题.
+        S_DONE          = 4'd9
     } state_t;
     state_t state, state_next;
-    // S_FLUSH counter: 等 64 拍 axi_dm flush
-    logic [6:0] r_flush_cnt;
 
     // =========================================================================
     // 寄存器
@@ -312,12 +305,10 @@ module odma_sg_dispatcher #(
             S_PREFETCH      :                                          state_next = S_TX;
             // VD100 fix 2026-05-13: 跳过 S_STS (axi_dm s2mm 板上偶尔不出 sts), S_TX tlast 后
             // 直接判 cmd 完结 → S_DONE / S_WAIT. r_cmds_done 改在 data tlast 时累加 (下面).
-            // VD100 fix 2026-05-15: last cmd tlast → S_FLUSH (等 axi_dm 内部 flush) → S_DONE
             S_TX            : if (s2mm_tlast_fire) begin
-                if (r_last_cmd || is_last_cmd_overall)                 state_next = S_FLUSH;
+                if (r_last_cmd || is_last_cmd_overall)                 state_next = S_DONE;
                 else                                                    state_next = S_WAIT;
             end
-            S_FLUSH         : if (r_flush_cnt == 7'd0)                 state_next = S_DONE;
             S_STS           : state_next = S_WAIT;  // 兼容: 老代码可能 set 到 S_STS, 立即 fall through
             S_DONE          : if (start)                               state_next = S_WAIT;
             default         :                                          state_next = S_IDLE;
@@ -327,17 +318,6 @@ module odma_sg_dispatcher #(
     always_ff @(posedge clk) begin
         if (!rst_n) state <= S_IDLE;
         else        state <= state_next;
-    end
-
-    // r_flush_cnt: S_TX → S_FLUSH 时装 100 拍, S_FLUSH 内每拍 -1, 到 0 进 S_DONE
-    // 100 拍 @ 100 MHz = 1 μs, 给 axi_dm s2mm 内部 cmd FIFO + addr pipe (depth 4)
-    // 完全 flush 数据到 BRAM. 实测板上 c_s2mm_addr_pipe_depth=4 + smartconnect_pl
-    // 反压链条加起来 latency 估 < 50 拍, 100 拍余量足.
-    always_ff @(posedge clk) begin
-        if (!rst_n)                                                              r_flush_cnt <= 7'd0;
-        else if (state == S_TX && s2mm_tlast_fire && (r_last_cmd || is_last_cmd_overall))
-                                                                                  r_flush_cnt <= 7'd100;
-        else if (state == S_FLUSH && r_flush_cnt != 0)                           r_flush_cnt <= r_flush_cnt - 7'd1;
     end
 
     // =========================================================================
@@ -472,14 +452,10 @@ module odma_sg_dispatcher #(
     logic enter_done_pulse;
     assign enter_done_pulse = (state != S_DONE) && (state_next == S_DONE);
 
-    // VD100 fix 2026-05-15: 删 streaming_all_done 触发, 只用 enter_done_pulse.
-    // 原 streaming_all_done 在 S_TX tlast 那拍触发 r_done, 让 sequencer 提前 done.
-    // 现在 S_TX tlast → S_FLUSH (100 拍) → S_DONE → enter_done_pulse → r_done.
-    // 给 axi_dm 时间真正把 cmd 数据 flush 到 BRAM 才告诉 sequencer layer done.
     always_ff @(posedge clk) begin
         if      (!rst_n)                                  r_done <= 1'b0;
         else if (start)                                   r_done <= 1'b0;
-        else if (enter_done_pulse)                        r_done <= 1'b1;
+        else if (streaming_all_done || enter_done_pulse)  r_done <= 1'b1;
     end
 
     always_ff @(posedge clk) begin

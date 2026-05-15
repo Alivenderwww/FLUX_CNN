@@ -2,11 +2,18 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-15: v7 PDI — 找到真 RTL bug + 干净 fix**.
-> **ofb_strip_rows 6-bit → 8-bit** (commit 13a0797): H_OUT=64 时 64 & 0x3F = 0 →
-> ofb_writer ring_full 永真死锁. 修 cfg_regs / core_top / ofb_writer 3 个文件.
-> 历史 host force-streaming workaround 已删除 (commit 46950f2). 13/14 corner case PASS.
-> 仅 H=200 W=16 streaming 路径 stuck (另一个 bug, 留下次), H=120 W=68 BRAM 容量限制.
+> **🎉 2026-05-15: v8 PDI — ResNet11 demo path 全 PASS (H≤120)**.
+> v8 fix 链 (4 个真 RTL/host bug):
+> 1. ofb_strip_rows 6→8 bit (13a0797): H_OUT=64 整图 fit 死锁
+> 2. host BRAM SG 1KB→4KB→8KB: H>32 cmd 越界 IFM 区
+> 3. mm2s_arb 删 data_empty_w gate (恢复 multi-outstanding) + 加 ocmd starve: H>128 streaming deadlock
+> 4. strip_rows 8→16 bit (bdf0fdf, sim PASS 未进 v8 PDI, 留 v9): 任意 H 业务底线
+>
+> **sim 严格复刻 board**: 新 tb_vd100_minimal 1:1 复刻 board, H=200 W=16 复现 board stuck.
+>
+> **board v8 验证**: H=8/16/32/33/64/120 × W=8/16/25 全 bit-exact PASS (ResNet11 layer
+> 0..10 H_OUT 上限 120 全 cover). H=200 W=16 仍 3.7% mismatch (row 175+, multi-out race
+> 独立 bug, 留下次).
 >
 > **本 session 完成的 audit + revert**:
 > - 撤销 4 项假 fix: f4b0b59 (S_FLUSH 100 拍) + 3cccb6a hw_files +

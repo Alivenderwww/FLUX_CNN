@@ -26,16 +26,16 @@ sys.path.insert(0, r'C:/_Project/FLUX_CNN/toolchain')
 from vd100_rpc import Vd100Rpc
 import hw_files
 
-# ====== BRAM layout ======
-# 给 SG cmd 区各 1KB (= 32 cmd 余量), Phase 2 case 8 cmd 用得起
+# ====== BRAM layout (v6 fix: ISG/OSG 各 4KB = 128 cmd 容量) ======
+# 原 1KB = 32 cmd, H_OUT > 32 时 cmd 越界写到 IFM, dispatcher 拉错 cmd_data.
 BRAM_BASE = 0xA4100000
 DESC_OFF  = 0x00000
-ISG_OFF   = 0x01800   # 1 KB 区
-OSG_OFF   = 0x01C00   # 1 KB 区
-IFM_OFF   = 0x02000
-WB_OFF    = 0x04000
-RDMA_OFF  = 0x07000
-OFM_OFF   = 0x08000
+ISG_OFF   = 0x01000   # 4 KB 区
+OSG_OFF   = 0x02000   # 4 KB 区
+IFM_OFF   = 0x03000
+WB_OFF    = 0x10000
+RDMA_OFF  = 0x20000
+OFM_OFF   = 0x30000
 
 BRAM_IFM  = BRAM_BASE + IFM_OFF
 BRAM_WB   = BRAM_BASE + WB_OFF

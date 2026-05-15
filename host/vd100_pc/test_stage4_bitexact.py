@@ -22,13 +22,18 @@ sys.path.insert(0, r'C:/_Project/FLUX_CNN/toolchain')
 from vd100_rpc import Vd100Rpc
 import hw_files
 
-# ====== BRAM layout (跟 Stage 3a Phase 2 一致, BRAM 现 512KB) ======
+# ====== BRAM layout (v6 fix: ISG/OSG 各 4KB 装 128 cmd) ======
+# 关键修复 2026-05-15: 原 ISG/OSG 各 1KB = 32 cmd 容量, H_OUT > 32 时 ODMA cmd_count
+# 越出 OSG 区写到 BRAM_IFM, ODMA dispatcher 拉 cmd 32 时拿到 IFM data 当 cmd → r_dst_addr
+# 是 random IFM byte (不是合法地址) → axi_dm 写到错位置, row 31 被污染 + row 32 没写.
+# 这是 H>32 deterministic mismatch 643 byte @ row 31 的真因 (不是 RTL bug).
+# Fix: ISG/OSG 各 4KB (128 cmd 容量), DESC 4KB.
 BRAM_BASE = 0xA4100000
-DESC_OFF  = 0x00000
-ISG_OFF   = 0x01800
-OSG_OFF   = 0x01C00
-IFM_OFF   = 0x02000
-WB_OFF    = 0x10000   # WB 前段大点 (大 case wb_words 可能 ~100+)
+DESC_OFF  = 0x00000   # 4 KB
+ISG_OFF   = 0x01000   # 4 KB (128 cmd 容量, 够 H≤128)
+OSG_OFF   = 0x02000   # 4 KB
+IFM_OFF   = 0x03000   # 起点延后 0x1000
+WB_OFF    = 0x10000
 RDMA_OFF  = 0x20000
 OFM_OFF   = 0x30000
 
@@ -178,6 +183,10 @@ def soft_reset(rpc):
 
 def run_one(rpc, n_desc, expected_ofm, args):
     """跑一轮 + bit-exact 比对. return (ok, layer_ms, err_msg, mismatch_bytes)."""
+    # 每 run 前软 reset, 清 sub-module FSM + axi_dm (v4 fix 后 axi_dm 也在 soft reset 范围)
+    rpc.poke_csr(0, 0x000, CTRL_SOFT_RESET)
+    time.sleep(0.001)
+
     expected_len = len(expected_ofm)
     # OFM 预清成跟 expected 不同的 pattern (检测 ODMA 真有写)
     pre_clear = bytes((j ^ 0xAA) & 0xFF for j in range(expected_len))

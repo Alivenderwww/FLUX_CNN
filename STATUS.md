@@ -2,9 +2,11 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-14: VD100 board Stage 0~5 全 PASS** (minimal system + bit-exact 真 MAC + 软 reset + 多层 chain).
-> Stage 4 bit-exact 暴露真 RTL bug (odma_sg_dispatcher r_yout_base 推进时机), sim 11/11 PASS
-> 未覆盖. Stage 5 11-layer chain bit-exact 全 PASS, board 上完成 ResNet11 深度多层连续推理. 详见 §3.
+> **🎉 2026-05-15: VD100 board Stage 0~5 全 PASS, H>32 corner bug 真 ROOT CAUSE 找到 + 修复!**
+> 之前以为是 RTL race timing,实际是 **host script BRAM layout bug** — ISG/OSG 区只
+> 1 KB = 32 cmd 容量,H_OUT>32 时 cmd 越界写到 BRAM_IFM,ODMA dispatcher 拉错 cmd_data.
+> Fix: ISG/OSG 各扩 4 KB (128 cmd 容量). 验证 H=33/40/48/56/64/120 W=25 全 bit-exact PASS.
+> H=120 即 ResNet11 layer 0 size. 详见 §3.
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
 > - 测试:

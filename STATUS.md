@@ -2,6 +2,16 @@
 
 > 本文件是 **任务交接文档**.
 >
+> **🎉 2026-05-15 (晚): H=200 W=16 row 175 mismatch 真因找到 + 修复**.
+> sim/tb_vd100_minimal 1:1 复刻 board, sim 严格复现 board 错位. 4 轮实验定位:
+> 不是 RTL race / ring wrap / SRAM 读写冲突,是 **host BRAM 静态 layout overlap**:
+> IFM_OFF=0x05000 WB_OFF=0x10000 给 IFM 留 44KB, H=200 W=16 IFM=50KB 溢出被 WB 覆盖
+> row 176..184, mac 拉错的 IFM → ofm row 175..185 (11 行) mismatch.
+>
+> **Fix**: 动态 BRAM layout (compute_layout, region 起点 = 前 region end + page align).
+> 全 case PASS: H=8/33/64/120/200 × W=8/16/25, 包括 H=200 W=8/16/25 任意组合.
+> 仅 H=120 W=68 BRAM 物理容量 256KB 不够 (IFM+OFM 各 127KB = 254KB+overhead).
+>
 > **🎉 2026-05-15: v8 PDI — ResNet11 demo path 全 PASS (H≤120)**.
 > v8 fix 链 (4 个真 RTL/host bug):
 > 1. ofb_strip_rows 6→8 bit (13a0797): H_OUT=64 整图 fit 死锁

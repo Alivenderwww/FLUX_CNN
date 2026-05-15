@@ -58,7 +58,7 @@ module idma_ctrl #(
 
     // ---- Streaming 配置 (与原 idma 二进制兼容) ----
     input  logic [15:0]             cfg_h_in_total,
-    input  logic [7:0]              cfg_ifb_strip_rows,
+    input  logic [15:0]             cfg_ifb_strip_rows,  // 8→16 bit (任意 H fit)
     input  logic [19:0]             cfg_ifb_ky_step,    // 每行 beats 数 (NHWC: W_IN × cin_slices)
     input  logic [19:0]             cfg_ifb_ring_words, // ring wrap 模数
     // Mode C W slice: 每行 DDR stride 跟 cmd_btt 解耦.
@@ -139,7 +139,7 @@ module idma_ctrl #(
     assign streaming_all_done = data_last_fire && (rows_written == cfg_h_in_total - 16'd1);
 
     logic ring_full;
-    assign ring_full = ((rows_written - rows_consumed) >= {8'd0, cfg_ifb_strip_rows});
+    assign ring_full = ((rows_written - rows_consumed) >= cfg_ifb_strip_rows);  // 16-bit 直接比较
 
     // BTT (字节) = ky_step beats × 16 B/beat
     logic [22:0] cmd_btt;

@@ -85,7 +85,7 @@ module ifb_axi_slave #(
     input  logic                evt_start_layer,    // sequencer 启 layer 脉冲, 清 rows_pushed + wptr
     input  logic                cfg_skip_idma,       // 1=consumer 模式, 接收 push; 0=producer/普通核, 拒绝 push
     input  logic [15:0]         rows_consumed,       // 来自 line_buffer
-    input  logic [7:0]          cfg_ifb_strip_rows,  // ring 容量 (行)
+    input  logic [15:0]         cfg_ifb_strip_rows,  // ring 容量 (行) — 8→16 bit (任意 H fit)
     input  logic [SRAM_AW-1:0]  cfg_ifb_ring_words,  // ring 容量 (word)
 
     // ---- 输出到 IFB SRAM 写口 ----
@@ -124,7 +124,7 @@ module ifb_axi_slave #(
 
     // 反压: ring 满 → awready=0
     logic ring_full;
-    assign ring_full = (rows_pushed - rows_consumed) >= {8'd0, cfg_ifb_strip_rows};
+    assign ring_full = (rows_pushed - rows_consumed) >= cfg_ifb_strip_rows;  // 16-bit 直接比较
 
     // cfg_skip_idma=0 (producer/独立核): 永远拒绝 push, ifb_we 也保持 0, 不污染 IFB
     assign AWREADY = (wst == WS_IDLE) && !ring_full && cfg_skip_idma;

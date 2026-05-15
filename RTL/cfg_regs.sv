@@ -165,8 +165,8 @@ module cfg_regs #(
 
     // ---- Streaming / ring 配置输出 ----
     output logic [15:0]              h_in_total,
-    output logic [7:0]               ifb_strip_rows,
-    output logic [7:0]               ofb_strip_rows,  // VD100 fix 2026-05-15: 6→8 bit (H_OUT=64 时 6-bit 截断 → 0 死锁)
+    output logic [15:0]              ifb_strip_rows,  // VD100 fix 2026-05-15: 8→16 bit, 任意 H 都 fit
+    output logic [15:0]              ofb_strip_rows,  // VD100 fix 2026-05-15: 6→8→16 bit, 跟 h_in_total 对齐
     output logic [CORE_ADDR_W-1:0]   ddr_ifm_row_stride,
     output logic [CORE_ADDR_W-1:0]   ddr_ofm_row_stride,
     // J-2: idma_streaming / odma_streaming outputs removed (hardware 恒 streaming).
@@ -386,7 +386,7 @@ module cfg_regs #(
     //   csr_w 优先级高于 seq_w (本核既被 host 配过又恰好有 desc 时取 host 值).
     //   start_layer_pulse 时清 vld: 多层 chain 时每层 desc 重新接管 (W slice 多核不同
     //   sub_W → 不同 ring_words, host 写一次不能共享).
-    logic [7:0]              r_ifb_strip_rows_host;
+    logic [15:0]             r_ifb_strip_rows_host;  // 8→16 bit
     logic [CORE_ADDR_W-1:0]  r_ifb_ring_words_host;
     logic                    r_ifb_strip_rows_host_vld;
     logic                    r_ifb_ring_words_host_vld;
@@ -400,7 +400,7 @@ module cfg_regs #(
                 r_ifb_ring_words_host_vld <= 1'b0;
             end
             if (csr_w_en && csr_w_addr == ADDR_IFB_STRIP_ROWS) begin
-                r_ifb_strip_rows_host     <= csr_w_data[7:0];
+                r_ifb_strip_rows_host     <= csr_w_data[15:0];  // 8→16 bit
                 r_ifb_strip_rows_host_vld <= 1'b1;
             end
             if (csr_w_en && csr_w_addr == ADDR_IFB_RING_WORDS) begin
@@ -461,8 +461,8 @@ module cfg_regs #(
     logic [5:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
     logic [15:0]             r_h_in_total;
-    logic [7:0]              r_ifb_strip_rows;
-    logic [7:0]              r_ofb_strip_rows;  // VD100 fix 2026-05-15: 6→8 bit
+    logic [15:0]             r_ifb_strip_rows;   // 8→16 bit (任意 H)
+    logic [15:0]             r_ofb_strip_rows;   // 6→8→16 bit
     logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
     logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
     logic [31:0]             r_idma_src_base;
@@ -534,8 +534,8 @@ module cfg_regs #(
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= seq_w_data[5:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= seq_w_data[0];
                 ADDR_H_IN_TOTAL      : r_h_in_total      <= seq_w_data[15:0];
-                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[7:0];
-                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[7:0];  // VD100 fix 2026-05-15: 6→8 bit
+                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[15:0];  // 8→16 bit
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[15:0];  // 6→8→16 bit
                 ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= seq_w_data[31:0];
@@ -684,8 +684,8 @@ module cfg_regs #(
             ADDR_SDP_SHIFT       : reg_r_data = {26'd0, r_sdp_shift};
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
             ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
-            ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
-            ADDR_OFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ofb_strip_rows};  // VD100 fix 2026-05-15: 6→8 bit
+            ADDR_IFB_STRIP_ROWS  : reg_r_data = {16'd0, r_ifb_strip_rows};  // 8→16 bit
+            ADDR_OFB_STRIP_ROWS  : reg_r_data = {16'd0, r_ofb_strip_rows};  // 6→8→16 bit
             ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
             ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
             ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};

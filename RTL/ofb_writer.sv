@@ -65,7 +65,7 @@ module ofb_writer #(
     // 整图装得下时 strip=H_OUT ring_words 覆盖整图, wrap 不触发 (退化 batch)。
     input  logic [ADDR_W-1:0]                    cfg_ofb_ring_words,  // 环大小 in words
     input  logic [ADDR_W-1:0]                    cfg_ofb_row_words,   // W_OUT × cout_slices (R.2 shortcut 地址用)
-    input  logic [7:0]                           cfg_ofb_strip_rows,  // VD100 fix 2026-05-15: 6→8 bit (H_OUT=64 时 6-bit 截断 → 0 死锁)
+    input  logic [15:0]                          cfg_ofb_strip_rows,  // 6→8→16 bit (任意 H fit)
     input  logic [15:0]                          rows_drained,       // 来自 ODMA
 
     // ---- R.1: SDP residual / shortcut / bias cfg ----
@@ -132,7 +132,7 @@ module ofb_writer #(
     logic ring_full_d;
     always_ff @(posedge clk) begin
         if (!rst_n) ring_full_d <= 1'b0;
-        else        ring_full_d <= ((rows_written - rows_drained) >= {8'd0, cfg_ofb_strip_rows});  // VD100 fix 2026-05-15: 10'd0→8'd0 padding 配合 cfg_ofb_strip_rows 6→8 bit
+        else        ring_full_d <= ((rows_written - rows_drained) >= cfg_ofb_strip_rows);  // 16-bit 直接比较 (rows_written 16-bit, cfg_ofb_strip_rows 16-bit)
     end
 
     // R.1: bias_rf 在 cs 切换时 4 拍 prefetch, bias_ready=0 期间不放行 acc_fire

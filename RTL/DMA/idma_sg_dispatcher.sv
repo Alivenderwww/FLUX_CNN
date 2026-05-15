@@ -75,7 +75,7 @@ module idma_sg_dispatcher #(
 
     // ---- Streaming 配置 (跟 idma_ctrl 一致, line_buffer ring 反压) ----
     input  logic [15:0]             cfg_h_in_total,
-    input  logic [7:0]              cfg_ifb_strip_rows,
+    input  logic [15:0]             cfg_ifb_strip_rows,  // 8→16 bit (任意 H fit)
     input  logic [19:0]             cfg_ifb_ring_words,
     input  logic [15:0]             rows_consumed,
     output logic [15:0]             rows_available,
@@ -213,7 +213,7 @@ module idma_sg_dispatcher #(
     assign ring_consumer_ahead = (rows_consumed >= r_rows_pushed);    // consumer 跑超 producer
     assign ring_has_space = (cfg_ifb_strip_rows == '0)
                           || ring_consumer_ahead
-                          || (rows_diff < {8'd0, cfg_ifb_strip_rows});
+                          || (rows_diff < cfg_ifb_strip_rows);  // 16-bit 直接比较
 
     // =========================================================================
     // FSM next-state

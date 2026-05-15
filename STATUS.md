@@ -2,9 +2,11 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-15: v6 PDI 验证完成 — RTL 已干净 + Stage 0~5 全 PASS**.
-> 真 root cause 是 **host script BRAM layout** (ISG/OSG 1KB → 4KB), 不是 RTL bug.
-> H>32 在干净 RTL (baseline ODMA S_TX → S_STS → S_DONE) 下也 PASS.
+> **🎉 2026-05-15: v7 PDI — 找到真 RTL bug + 干净 fix**.
+> **ofb_strip_rows 6-bit → 8-bit** (commit 13a0797): H_OUT=64 时 64 & 0x3F = 0 →
+> ofb_writer ring_full 永真死锁. 修 cfg_regs / core_top / ofb_writer 3 个文件.
+> 历史 host force-streaming workaround 已删除 (commit 46950f2). 13/14 corner case PASS.
+> 仅 H=200 W=16 streaming 路径 stuck (另一个 bug, 留下次), H=120 W=68 BRAM 容量限制.
 >
 > **本 session 完成的 audit + revert**:
 > - 撤销 4 项假 fix: f4b0b59 (S_FLUSH 100 拍) + 3cccb6a hw_files +

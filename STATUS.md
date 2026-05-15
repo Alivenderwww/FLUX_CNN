@@ -1176,7 +1176,48 @@ v3 PDI 相对 v1 (Stage 0~3a 用的) 的三大改动:
 3. **BRAM 容量 64KB → 256KB**: emb_mem_gen MEMORY_DEPTH 4096 → 16384, addr range
    64K → 256K. (默认 32768 = 512KB 超 RAMB36, fit 不下 VE2302 155 RAMB36, 折中 16384.)
 
-### v3 Stage 0~4 验证结果 (board: vd100_minimal_with_elf.pdi v3)
+### 🎉 Stage 0~8 完整 board 验证 (2026-05-15 ROOT CAUSE fix 后)
+
+**真 ROOT CAUSE (host BRAM SG layout)**:
+- ISG/OSG 区原 1 KB = 32 cmd 容量 (32 byte/cmd)
+- H_OUT > 32 时 ODMA_CMD_COUNT > 32, SG cmd list 越界写到 BRAM_IFM
+- ODMA dispatcher 拉越界 cmd 时拿到 IFM data 当 cmd → r_dst_addr 错位 → 错误写入
+- 表现: row 31 partial mismatch + row 32 全 0xAA pre-clear (deterministic)
+
+**Fix** (test_stage4_bitexact.py + test_stage3a_phase2_larger.py):
+- BRAM_ISG/OSG 各扩 4 KB (= 128 cmd 容量)
+- run_one 加 case 间软 reset (清 sub-module + axi_dm FSM)
+
+**完整 stage 验证**:
+
+| Stage | 内容 | 结果 |
+|---|---|---|
+| Stage 0~2 | minimal system + 1×1×1×1 conv | ✅ |
+| Stage 3a Phase 1/2 | 多 cmd 多轮启停 N=500/200 | ✅ |
+| Stage 4 (整图 fit H≤32) | 16+ corner case bit-exact (K=1/3/5/7, stride=1/2/3) | ✅ |
+| Stage 4+ (H>32 fix) | H=33/40/48/56/64/120 W=25 bit-exact | ✅ 6/6 |
+| Stage 5 chain bit-exact | 2/5/11 layer 同 shape chain | ✅ 11/11 |
+| Stage 5+ Mini ResNet | 9-layer mixed shape chain | ✅ 9/9 |
+| Stage 6 Residual | 4 case SDP shortcut fusion | ✅ 4/4 |
+| Stage 7 Batch | 5 images × 5 layers | ✅ 25/25 |
+| **Stage 8 ResNet11-like** | **11-layer mixed + 3×stride=2 + 3×residual + FC** | ✅ **11/11** |
+
+**Stage 8 详情** (commit 83286d8):
+```
+L0  K=3 32×32 Cin=3 →Cout=16              (input expansion)
+L1  K=3 32×32 Cin=Cout=16 stride=2        (ds1, 32→16)
+L2  K=3 16×16 Cin=Cout=16                 (resid 1.1)
+L3  K=3 16×16 + shortcut(L1)              (resid 1.2)
+L4  K=3 16×16 Cin=16 Cout=32 stride=2     (ds2, 16→8)
+L5  K=3 8×8 Cin=Cout=32                   (resid 2.1)
+L6  K=3 8×8 + shortcut(L4)                (resid 2.2)
+L7  K=3 8×8 Cin=32 Cout=64 stride=2       (ds3, 8→4)
+L8  K=3 4×4 Cin=Cout=64                   (resid 3.1)
+L9  K=3 4×4 + shortcut(L7)                (resid 3.2)
+L10 K=4 4×4 Cin=64 Cout=10                (FC, 4→1)
+```
+
+### v3~v5 RTL 历史 fix (虽 H>32 root cause 是 host, 这些 fix 仍有价值)
 
 | Phase | 测试 | 结果 |
 |---|---|---|

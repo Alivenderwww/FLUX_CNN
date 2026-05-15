@@ -58,19 +58,11 @@ def setup_case_for_board(case_dir, K, H_IN, W_IN, NUM_CIN, NUM_COUT, stride, pad
                           residual_en=0, shortcut_mult=0, shortcut_shift=0):
     """读 case_dir 下 ifb.txt/wb.txt/rdma_data.txt/expected_ofm.txt/desc_list.hex,
     构造 board load 需要的 bytes + SG cmd list + cfg."""
-    # VD100 fix 2026-05-15: 强制 OFB_SRAM_WORDS = max(2*row_words, ofb_words),
-    # 让 hw_files 走 streaming 模式 (ofb_strip < H_OUT) 避免整图 fit chicken-egg.
-    # 计算 row_words = W_OUT * cs_out (粗估), 实际 hw_files 内部会精确算.
-    h_out_est = (H_IN + 2*pad - K) // stride + 1
-    w_out_est = (W_IN + 2*pad - K) // stride + 1
-    cs_out_est = (NUM_COUT + 15) // 16
-    row_words_est = w_out_est * cs_out_est
-    # 让 ofb_strip 最多 8 行 (强制 streaming): OFB_SRAM = 9 * row_words (8 strip + 1 slack)
-    OFB_FORCE = 9 * row_words_est
+    # 历史 host force-streaming workaround 已删除: 真因是 ofb_strip_rows 6-bit
+    # 截断 (commit 13a0797 fix 6→8 bit). 整图 fit case 现在 work.
     cfg = hw_files.derive_layer_cfg(
         H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
-        stride=stride, pad_top=pad, pad_left=pad, TILE_W=32,
-        OFB_SRAM_WORDS=OFB_FORCE)
+        stride=stride, pad_top=pad, pad_left=pad, TILE_W=32)
 
     H_IN_eff, H_OUT = cfg['H_IN'], cfg['H_OUT']
 

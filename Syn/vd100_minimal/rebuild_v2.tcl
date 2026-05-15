@@ -25,23 +25,24 @@ puts "============================================================"
 # -----------------------------------------------------------------------------
 open_bd_design [get_files design_1.bd]
 
-# 实际发现: emb_mem_gen CONFIG.MEMORY_DEPTH 默认就是 32768 (= 32768 × 16 = 512KB).
-# 之前以为 64KB 是因为 BD assign_bd_address range 限到了 64K, 实际 emb_mem_gen 容量
-# 一直是 512KB. 不需改 IP, 只改 address range 就行.
-# 仅打印当前容量做确认.
+# emb_mem_gen MEMORY_DEPTH 决定容量. 但 VE2302 BRAM 总 155 RAMB36, 实测:
+#   - 默认 32768 (512KB) → emb_mem_gen 占 128 RAMB36 + ConvCore 65 = 193 > 155, fail
+#   - 16384  (256KB) → emb_mem_gen 占 ~64 RAMB36 + ConvCore 65 = 129 < 155 ✓
+# 256KB 余量足 (比 v1 64KB 大 4 倍, 跑 layer 0 IFM+OFM ~100KB 够)
+set_property CONFIG.MEMORY_DEPTH {16384} [get_bd_cells emb_mem_gen_0]
 set cur_depth [get_property CONFIG.MEMORY_DEPTH [get_bd_cells emb_mem_gen_0]]
 set cur_size  [get_property CONFIG.MEMORY_SIZE  [get_bd_cells emb_mem_gen_0]]
-puts "  emb_mem_gen_0 MEMORY_DEPTH = $cur_depth (MEMORY_SIZE = $cur_size bits = [expr $cur_size/8/1024] KB)"
+puts "  + emb_mem_gen_0 MEMORY_DEPTH = $cur_depth (MEMORY_SIZE = $cur_size bits = [expr $cur_size/8/1024] KB)"
 
 # 重 assign address: 用 0xA4100000 (在 M_AXI_FPD aperture 0xA4000000 [448M] 内, 0xA4000000 4KB
 # 已给 CSR). 跟之前 GUI 配的一致, host 测试脚本 BRAM_BASE 不用改.
-catch {assign_bd_address -offset 0xA4100000 -range 512K \
+catch {assign_bd_address -offset 0xA4100000 -range 256K \
     -target_address_space [get_bd_addr_spaces versal_cips_0/M_AXI_FPD] \
     [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force}
-catch {assign_bd_address -offset 0xA4100000 -range 512K \
+catch {assign_bd_address -offset 0xA4100000 -range 256K \
     -target_address_space [get_bd_addr_spaces u_mc_minimal/m_axi] \
     [get_bd_addr_segs axi_bram_ctrl_0/S_AXI/Mem0] -force}
-puts "  + assign_bd_address 0xA4100000 512K (both CIPS.M_AXI_FPD + u_mc_minimal.m_axi)"
+puts "  + assign_bd_address 0xA4100000 256K (both CIPS.M_AXI_FPD + u_mc_minimal.m_axi)"
 
 validate_bd_design
 save_bd_design
@@ -60,14 +61,14 @@ update_compile_order -fileset sources_1
 
 puts ""
 puts "  > launch synth_1"
-launch_runs synth_1 -jobs 8
+launch_runs synth_1 -jobs 16
 wait_on_run synth_1
 puts "synth_1 = [get_property STATUS [get_runs synth_1]]"
 
 set_param drc.disableLUTOverUtilError 1
 puts ""
 puts "  > launch impl_1 -to_step write_device_image"
-launch_runs impl_1 -to_step write_device_image -jobs 8
+launch_runs impl_1 -to_step write_device_image -jobs 16
 wait_on_run impl_1
 puts "impl_1 = [get_property STATUS [get_runs impl_1]]"
 

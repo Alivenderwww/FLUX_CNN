@@ -243,7 +243,7 @@ module core_top #(
     // Streaming / ring cfg (J-2 起恒 streaming)
     logic [15:0]       cfg_h_in_total;
     logic [7:0]        cfg_ifb_strip_rows;
-    logic [5:0]        cfg_ofb_strip_rows;
+    logic [7:0]        cfg_ofb_strip_rows;  // VD100 fix 2026-05-15: 6→8 bit (H_OUT=64 时 6-bit 截断 → 0 死锁)
     logic [ADDR_W-1:0] cfg_ddr_ifm_row_stride;
     logic [ADDR_W-1:0] cfg_ddr_ofm_row_stride;
 

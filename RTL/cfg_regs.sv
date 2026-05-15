@@ -49,7 +49,7 @@
 //   0x164  SDP_RELU_EN       [0]
 //   0x168  H_IN_TOTAL        [15:0]            整图输入高度
 //   0x16C  IFB_STRIP_ROWS    [7:0]             IFB ring 容纳输入行数
-//   0x170  OFB_STRIP_ROWS    [5:0]             OFB ring 容纳输出行数
+//   0x170  OFB_STRIP_ROWS    [7:0]             OFB ring 容纳输出行数
 //   0x174  DDR_IFM_ROW_STRIDE[19:0]            DDR 相邻输入行跨度（字节）
 //   0x178  DDR_OFM_ROW_STRIDE[19:0]            DDR 相邻输出行跨度（字节）
 //   0x17C  DMA_MODE          [0]=idma_stream [1]=odma_stream
@@ -166,7 +166,7 @@ module cfg_regs #(
     // ---- Streaming / ring 配置输出 ----
     output logic [15:0]              h_in_total,
     output logic [7:0]               ifb_strip_rows,
-    output logic [5:0]               ofb_strip_rows,
+    output logic [7:0]               ofb_strip_rows,  // VD100 fix 2026-05-15: 6→8 bit (H_OUT=64 时 6-bit 截断 → 0 死锁)
     output logic [CORE_ADDR_W-1:0]   ddr_ifm_row_stride,
     output logic [CORE_ADDR_W-1:0]   ddr_ofm_row_stride,
     // J-2: idma_streaming / odma_streaming outputs removed (hardware 恒 streaming).
@@ -462,7 +462,7 @@ module cfg_regs #(
     logic                    r_sdp_relu_en;
     logic [15:0]             r_h_in_total;
     logic [7:0]              r_ifb_strip_rows;
-    logic [5:0]              r_ofb_strip_rows;
+    logic [7:0]              r_ofb_strip_rows;  // VD100 fix 2026-05-15: 6→8 bit
     logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
     logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
     logic [31:0]             r_idma_src_base;
@@ -535,7 +535,7 @@ module cfg_regs #(
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= seq_w_data[0];
                 ADDR_H_IN_TOTAL      : r_h_in_total      <= seq_w_data[15:0];
                 ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[7:0];
-                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[5:0];
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[7:0];  // VD100 fix 2026-05-15: 6→8 bit
                 ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= seq_w_data[31:0];
@@ -685,7 +685,7 @@ module cfg_regs #(
             ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
             ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
             ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
-            ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
+            ADDR_OFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ofb_strip_rows};  // VD100 fix 2026-05-15: 6→8 bit
             ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
             ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
             ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};

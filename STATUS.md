@@ -2,11 +2,18 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **🎉 2026-05-15: VD100 board Stage 0~5 全 PASS, H>32 corner bug 真 ROOT CAUSE 找到 + 修复!**
-> 之前以为是 RTL race timing,实际是 **host script BRAM layout bug** — ISG/OSG 区只
-> 1 KB = 32 cmd 容量,H_OUT>32 时 cmd 越界写到 BRAM_IFM,ODMA dispatcher 拉错 cmd_data.
-> Fix: ISG/OSG 各扩 4 KB (128 cmd 容量). 验证 H=33/40/48/56/64/120 W=25 全 bit-exact PASS.
-> H=120 即 ResNet11 layer 0 size. 详见 §3.
+> **⚠️ 2026-05-15: H>32 bug 修复涉及多个改动, 部分 RTL fix 已确认假 fix 撤销**.
+> 真 root cause 是 **host script BRAM layout** (ISG/OSG 1KB → 4KB) + 整图 fit case
+> ODMA chicken-egg deadlock (host workaround: force streaming).
+> Stage 0~5 整图 fit 范围 + H≤32 case 全 PASS. H>32 + 整图 fit 通过 host workaround
+> 绕过 (真 RTL fix 未做). 详见 §3.
+>
+> **本 session debug 走错方向**:
+> - 多次错误归因为 RTL 路径 bug (实际是 host bug)
+> - 3 次重综合浪费 ~1.5 小时 (v3/v4/v5)
+> - 撤销假 fix: f4b0b59 (S_FLUSH 100 拍) + 3cccb6a 的 hw_files OFB +1 slack
+> - 保留 fix: 78b2b96 软 reset + f947cc9 r_yout_base + 961b995 axi_dm reset
+> - 当前 board PDI 仍是 v5 (含已 revert 的假 fix), git RTL 已干净, 下次重综合 v6 PDI 才彻底.
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
 > - 测试:

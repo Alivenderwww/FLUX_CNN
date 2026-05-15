@@ -76,14 +76,14 @@ foreach c {u_mc_minimal emb_mem_gen_0 axi_bram_ctrl_0 smartconnect_pl} {
 # 4. 加 N=4 ConvCore wrapper instance
 # -----------------------------------------------------------------------------
 puts ""
-puts "[Step 4] Creating multicore_top_n4_v instance"
+puts "(Step 4) Creating multicore_top_n4_v instance"
 create_bd_cell -type module -reference multicore_top_n4_v u_mc_n4
 
 # -----------------------------------------------------------------------------
 # 5. 加 SmartConnect (5 SI, 8 MI)
 # -----------------------------------------------------------------------------
 puts ""
-puts "[Step 5] Creating SmartConnect (5 SI × 8 MI)"
+puts "(Step 5) Creating SmartConnect (5 SI × 8 MI)"
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 smartconnect_pl
 set_property -dict [list \
     CONFIG.NUM_SI {5} \
@@ -95,7 +95,7 @@ set_property -dict [list \
 # 6. 加 4 × axi_bram_ctrl + 4 × emb_mem_gen URAM (1 MB each)
 # -----------------------------------------------------------------------------
 puts ""
-puts "[Step 6] Creating 4 × axi_bram_ctrl + 4 × emb_mem_gen URAM 1MB"
+puts "(Step 6) Creating 4 × axi_bram_ctrl + 4 × emb_mem_gen URAM 1MB"
 for {set i 0} {$i < 4} {incr i} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:axi_bram_ctrl:4.1 axi_bram_ctrl_$i
     set_property -dict [list \
@@ -118,7 +118,7 @@ for {set i 0} {$i < 4} {incr i} {
 # 7. 连线
 # -----------------------------------------------------------------------------
 puts ""
-puts "[Step 7] BD connections"
+puts "(Step 7) BD connections"
 
 # 时钟 + reset
 set CLK [get_bd_pins clk_wizard_0/clk_out1]
@@ -167,7 +167,7 @@ for {set i 0} {$i < 4} {incr i} {
 # 8. Assign addresses (CIPS.M_AXI_FPD 视角)
 # -----------------------------------------------------------------------------
 puts ""
-puts "[Step 8] assign_bd_address"
+puts "(Step 8) assign_bd_address"
 
 # csr_axil_0..3 (4 KB each)
 for {set i 0} {$i < 4} {incr i} {

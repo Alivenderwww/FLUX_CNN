@@ -1144,7 +1144,7 @@ if __name__ == '__main__':
                              '4 等分散布到 4 mem (halo 物理只一份). 生成 IDMA + ODMA SG cmd list '
                              'per-(core, layer), 跨 mem 边界 axi_crossbar IP 自动路由.')
     parser.add_argument('--demo',
-                        choices=['wslice1', 'h33_debug', 'h32_ref',
+                        choices=['wslice1', 'h33_debug', 'h32_ref', 'h40_test', 'h64_test', 'h200_test',
                                  'simple2', 'simple3', 'wslice4', 'wslice5',
                                  'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
                                  'wslice_smallw', 'wslice_k7', 'wslice_k1',
@@ -1174,6 +1174,21 @@ if __name__ == '__main__':
         # H=32 reference (board PASS)
         layers = [
             scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=32, w_in=75, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'h40_test':
+        # H=40 case (board fail @ yout 31+ stuck/mismatch)
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=40, w_in=75, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'h64_test':
+        # H=64 case (board stuck)
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=64, w_in=24, stride=1, pad=1, sdp_shift=2),
+        ]
+    elif args.demo == 'h200_test':
+        # H=200 W=48 N=3 → 每核 W=16, streaming, 验证 board H=200 W=16 单核 stuck
+        layers = [
+            scheduler.Layer('L0', k=3, c_in=16, c_out=16, h_in=200, w_in=48, stride=1, pad=1, sdp_shift=2),
         ]
     elif args.demo == 'simple2':
         # 2 层 conv chain (P0 minimal), 每核一层

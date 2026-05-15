@@ -22,17 +22,17 @@ sys.path.insert(0, r'C:/_Project/FLUX_CNN/toolchain')
 from vd100_rpc import Vd100Rpc
 import hw_files
 
-# ====== BRAM layout (v6 fix: ISG/OSG 各 4KB 装 128 cmd) ======
-# 关键修复 2026-05-15: 原 ISG/OSG 各 1KB = 32 cmd 容量, H_OUT > 32 时 ODMA cmd_count
-# 越出 OSG 区写到 BRAM_IFM, ODMA dispatcher 拉 cmd 32 时拿到 IFM data 当 cmd → r_dst_addr
-# 是 random IFM byte (不是合法地址) → axi_dm 写到错位置, row 31 被污染 + row 32 没写.
-# 这是 H>32 deterministic mismatch 643 byte @ row 31 的真因 (不是 RTL bug).
-# Fix: ISG/OSG 各 4KB (128 cmd 容量), DESC 4KB.
+# ====== BRAM layout (v8 fix: ISG/OSG 各 8KB 装 256 cmd) ======
+# 历史 fix 演进:
+#   v1: ISG/OSG 各 1KB = 32 cmd, H>32 越界 IFM 区 → mismatch 643 byte @ row 31
+#   v6: ISG/OSG 各 4KB = 128 cmd, H>128 越界 → ODMA dispatcher 拉 cmd 取到 X data 死锁
+#   v8: ISG/OSG 各 8KB = 256 cmd, 够 H≤256 (cover ResNet11 layer 0 H_OUT=240, ImageNet 224)
+# 真因: ODMA SG cmd 32 byte/cmd, cmd_count = H_OUT (每行一条), 区容量必须 ≥ H_OUT × 32.
 BRAM_BASE = 0xA4100000
 DESC_OFF  = 0x00000   # 4 KB
-ISG_OFF   = 0x01000   # 4 KB (128 cmd 容量, 够 H≤128)
-OSG_OFF   = 0x02000   # 4 KB
-IFM_OFF   = 0x03000   # 起点延后 0x1000
+ISG_OFF   = 0x01000   # 8 KB (256 cmd 容量, 够 H≤256)
+OSG_OFF   = 0x03000   # 8 KB
+IFM_OFF   = 0x05000   # 起点延后
 WB_OFF    = 0x10000
 RDMA_OFF  = 0x20000
 OFM_OFF   = 0x30000

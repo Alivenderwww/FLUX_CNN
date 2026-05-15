@@ -116,15 +116,25 @@ module mm2s_arb #(
     //   wdma 没 cmd → cnt 清零 (没活就不算饿)
     // =========================================================================
     logic [$clog2(STARVE_THRESH+1)-1:0] r_wdma_wait_cnt;
-    logic wdma_starve;
+    logic [$clog2(STARVE_THRESH+1)-1:0] r_ocmd_wait_cnt;  // VD100 fix 2026-05-15
+    logic wdma_starve, ocmd_starve;
     assign wdma_starve = (r_wdma_wait_cnt >= STARVE_THRESH);
+    assign ocmd_starve = (r_ocmd_wait_cnt >= STARVE_THRESH);
 
     // =========================================================================
-    // CMD 仲裁: 默认 idma > rdma > ocmd > wdma. WDMA 饿到阈值时强制 grant 一次.
+    // CMD 仲裁: 默认 idma > rdma > ocmd > wdma. WDMA/OCMD 饿到阈值时强制 grant.
+    //
+    // VD100 fix 2026-05-15: 加 ocmd starve 优先级抢占. 之前 ocmd 优先级最低 (idma > rdma > ocmd),
+    // 大图像 streaming (H=200 W=16) 时 IDMA 持续抢占 mm2s_arb, ocmd 永远等不到 cmd_tready,
+    // ODMA dispatcher 卡 S_FETCH_CMD_ISS → ofb_writer ring_full → mac 反压 → line_buffer
+    // 不推 yout → IDMA ring 不释放 → 死锁. sim tb_vd100_minimal H=200 W=16 1:1 复现.
+    //
+    // Fix: ocmd 等 STARVE_THRESH cycles 后强制 grant 一次, 类似 c9d41a8 WDMA 饥饿.
     // =========================================================================
     logic [OWN_W-1:0] cmd_owner;
     always_comb begin
         if      (wdma_starve && wdma_cmd_tvalid) cmd_owner = 2'd1;   // ★ WDMA 饿了优先抢
+        else if (ocmd_starve && ocmd_cmd_tvalid) cmd_owner = 2'd3;   // ★ OCMD 饿了优先抢 (VD100 fix)
         else if (idma_cmd_tvalid) cmd_owner = 2'd0;
         else if (rdma_cmd_tvalid) cmd_owner = 2'd2;
         else if (ocmd_cmd_tvalid) cmd_owner = 2'd3;
@@ -146,23 +156,27 @@ module mm2s_arb #(
             default: mm2s_cmd_tdata = idma_cmd_tdata;
         endcase
     end
-    // VD100 fix 2026-05-13: 仅 data single-outstanding (data_empty_w gate), 去掉 sts gate.
-    // axi_dm 在板上偶尔不出 sts 让 sts_cnt 累积 → sts_empty_w=0 永久 → cmd_tvalid 永卡.
-    // 配合 v29 dispatcher r_done 不依赖 sts, 整链 sts 信号已彻底无用.
-    // sts_full 也去掉 — 反正 dispatcher 不消费 sts, FIFO 写 wrap 不引发问题.
-    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full && data_empty_w;
+    // VD100 fix 2026-05-15 (commit XXX): 去 data_empty_w gate, 恢复 baseline (5fe16b2)
+    // multi-outstanding 行为. 之前 6490d27 加 data single-outstanding 是基于错误归因
+    // "axi_smc/axi_noc multi-outstanding race", 实际 axi_dm IP 多 outstanding 安全.
+    //
+    // data_empty_w gate 引入 deadlock: IDMA 在 S_DATA 持续消费 data, data FIFO 不空,
+    // mm2s_arb 拒发任何新 cmd → ocmd starve → ODMA 卡 S_FETCH_CMD_ISS → ofb_writer
+    // ring_full 不 drain → mac 反压 → line_buffer 不推 yout → IDMA ring 不释放 →
+    // 死锁. sim tb_vd100_minimal H=200 W=16 1:1 复刻 board, 实测 STATUS=0x656.
+    assign mm2s_cmd_tvalid = any_cmd_tvalid && !data_full;
 
     logic cmd_fire;
     assign cmd_fire = mm2s_cmd_tvalid && mm2s_cmd_tready;
 
     assign idma_cmd_tready = (cmd_owner == 2'd0) && idma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && data_empty_w;
+                          && !data_full;
     assign wdma_cmd_tready = (cmd_owner == 2'd1) && wdma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && data_empty_w;
+                          && !data_full;
     assign rdma_cmd_tready = (cmd_owner == 2'd2) && rdma_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && data_empty_w;
+                          && !data_full;
     assign ocmd_cmd_tready = (cmd_owner == 2'd3) && ocmd_cmd_tvalid && mm2s_cmd_tready
-                          && !data_full && data_empty_w;
+                          && !data_full;
 
     // =========================================================================
     // r_wdma_wait_cnt: WDMA 累计等待 cycle (Round E)
@@ -171,12 +185,19 @@ module mm2s_arb #(
     //   - WDMA 没 cmd → cnt 清零 (idle 不算饿)
     //   计数饱和到 STARVE_THRESH (再涨没意义).
     // =========================================================================
-    logic wdma_fire;
+    logic wdma_fire, ocmd_fire;
     assign wdma_fire = wdma_cmd_tvalid && wdma_cmd_tready;
+    assign ocmd_fire = ocmd_cmd_tvalid && ocmd_cmd_tready;
     always_ff @(posedge clk) begin
         if (!rst_n) r_wdma_wait_cnt <= '0;
         else if (wdma_fire || !wdma_cmd_tvalid) r_wdma_wait_cnt <= '0;
         else if (r_wdma_wait_cnt < STARVE_THRESH) r_wdma_wait_cnt <= r_wdma_wait_cnt + 1'b1;
+    end
+    // VD100 fix 2026-05-15: ocmd 饥饿 cnt 跟 wdma 对称
+    always_ff @(posedge clk) begin
+        if (!rst_n) r_ocmd_wait_cnt <= '0;
+        else if (ocmd_fire || !ocmd_cmd_tvalid) r_ocmd_wait_cnt <= '0;
+        else if (r_ocmd_wait_cnt < STARVE_THRESH) r_ocmd_wait_cnt <= r_ocmd_wait_cnt + 1'b1;
     end
 
     // =========================================================================

@@ -2,18 +2,17 @@
 
 > 本文件是 **任务交接文档**.
 >
-> **⚠️ 2026-05-15: H>32 bug 修复涉及多个改动, 部分 RTL fix 已确认假 fix 撤销**.
-> 真 root cause 是 **host script BRAM layout** (ISG/OSG 1KB → 4KB) + 整图 fit case
-> ODMA chicken-egg deadlock (host workaround: force streaming).
-> Stage 0~5 整图 fit 范围 + H≤32 case 全 PASS. H>32 + 整图 fit 通过 host workaround
-> 绕过 (真 RTL fix 未做). 详见 §3.
+> **🎉 2026-05-15: v6 PDI 验证完成 — RTL 已干净 + Stage 0~5 全 PASS**.
+> 真 root cause 是 **host script BRAM layout** (ISG/OSG 1KB → 4KB), 不是 RTL bug.
+> H>32 在干净 RTL (baseline ODMA S_TX → S_STS → S_DONE) 下也 PASS.
 >
-> **本 session debug 走错方向**:
-> - 多次错误归因为 RTL 路径 bug (实际是 host bug)
-> - 3 次重综合浪费 ~1.5 小时 (v3/v4/v5)
-> - 撤销假 fix: f4b0b59 (S_FLUSH 100 拍) + 3cccb6a 的 hw_files OFB +1 slack
-> - 保留 fix: 78b2b96 软 reset + f947cc9 r_yout_base + 961b995 axi_dm reset
-> - 当前 board PDI 仍是 v5 (含已 revert 的假 fix), git RTL 已干净, 下次重综合 v6 PDI 才彻底.
+> **本 session 完成的 audit + revert**:
+> - 撤销 4 项假 fix: f4b0b59 (S_FLUSH 100 拍) + 3cccb6a hw_files +
+>   6490d27 ODMA 跳 S_STS + f947cc9 r_yout_base (cancel pair)
+> - 保留 真 fix: 78b2b96 软 reset + 961b995 axi_dm 接 core_rst_n
+> - sim ResNet11 N=3 = 221250 cycles (baseline 221149, +101 noise)
+> - **v6 PDI board 验证**: H=8/33/64 W=25 bit-exact 全 PASS + Phase 1 多轮 100/100 PASS
+> - 完整 audit 报告: docs/rtl_audit_2026_05_15.md
 > - 工程: `Syn/vd100_minimal/` (ps_hello base + ConvCore + smartconnect_pl + BRAM, 绕过 axi_noc)
 > - PDI: `Syn/vd100_minimal/vd100_minimal_with_elf.pdi`
 > - 测试:

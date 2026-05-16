@@ -1,0 +1,163 @@
+% =============================================================================
+% fig5-0-verification-flow.tex --- 图 5.0 验证流程 (§5.2)
+%
+% 设计稿: paper/workspace/figures/fig5-0-verification-flow.md
+% 论证作用: 端到端 PyTorch FP32 -> INT8 量化 -> 编译器 -> cfg+ifm+wgt+bias
+%           dump -> TB -> ModelSim RTL -> OFM dump -> 浮点参考逐字节比对
+%           -> PASS/FAIL; 右侧参考通路在节点 2 分叉到 PyTorch INT8 参考模型,
+%           与节点 7 输出在节点 8 汇合.
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    flow node/.style={
+        main box,
+        fill=flBlue,
+        minimum width=50mm, minimum height=12mm,
+        align=center,
+        font=\sffamily\small,
+    },
+    ref node/.style={
+        main box,
+        fill=flYellow,
+        minimum width=44mm, minimum height=16mm,
+        align=center,
+        font=\sffamily\small,
+    },
+    cmp node/.style={
+        main box,
+        fill=flGreen,
+        minimum width=80mm, minimum height=11mm,
+        align=center,
+        font=\sffamily\small\bfseries,
+        line width=1pt,
+    },
+    pass node/.style={
+        draw=coImproved, line width=1.2pt,
+        rectangle, rounded corners=2pt,
+        fill=coImproved,
+        text=white,
+        minimum width=22mm, minimum height=8mm,
+        align=center,
+        font=\sffamily\small\bfseries,
+    },
+    fail node/.style={
+        draw=coAccent, line width=1.2pt,
+        rectangle, rounded corners=2pt,
+        fill=coAccent,
+        text=white,
+        minimum width=22mm, minimum height=8mm,
+        align=center,
+        font=\sffamily\small\bfseries,
+    },
+    pass arrow/.style={
+        -{Stealth[length=2.8mm,width=2mm]},
+        line width=1.2pt,
+        draw=coImproved,
+    },
+    fail arrow/.style={
+        -{Stealth[length=2.8mm,width=2mm]},
+        line width=1.2pt,
+        draw=coAccent,
+    },
+    ref arrow/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.7pt,
+        draw=coAnno,
+        dashed,
+    },
+]
+
+% 标题
+\node[label bold, anchor=north west, font=\sffamily\small\bfseries]
+    at (-8.0, 8.0) {验证流程 / Verification flow};
+
+% =============================================================================
+% 主流程 7 节点 (左侧, 自上而下)
+% =============================================================================
+\node[flow node] (n1) at (-4.5, 7.0)
+    {\textbf{1. PyTorch FP32}\\\scriptsize nn.Sequential 训练模型};
+
+\node[flow node] (n2) at (-4.5, 5.2)
+    {\textbf{2. INT8 量化}\\\scriptsize PTQ / QAT};
+
+\node[flow node] (n3) at (-4.5, 3.4)
+    {\textbf{3. 编译器 toolchain}\\\scriptsize gen\_isa\_test.py + scheduler};
+
+\node[flow node] (n4) at (-4.5, 1.5)
+    {\textbf{4. 生成 cfg + DDR dump}\\\scriptsize 权重 / 偏置 / 输入 / 描述符链表};
+
+\node[flow node] (n5) at (-4.5, -0.4)
+    {\textbf{5. TB tb\_core\_dma}\\\scriptsize 加载 DDR 镜像};
+
+\node[flow node] (n6) at (-4.5, -2.3)
+    {\textbf{6. ModelSim RTL 仿真}\\\scriptsize (含 axi\_dm IP)};
+
+\node[flow node] (n7) at (-4.5, -4.2)
+    {\textbf{7. OFB dump}\\\scriptsize OFM INT8 张量};
+
+% --- 主流程连线 + 数据张量标注 ---
+\draw[flow data] (n1.south) --
+    node[edge label, pos=0.5] {FP32 weights \& inputs} (n2.north);
+\draw[flow data] (n2.south) --
+    node[edge label, pos=0.5] {INT8 wgt, INT32 bias, scale/shift} (n3.north);
+\draw[flow data] (n3.south) --
+    node[edge label, pos=0.5] {cfg + DDR layout} (n4.north);
+\draw[flow data] (n4.south) --
+    node[edge label, pos=0.5] {binary dump (.hex / .bin)} (n5.north);
+\draw[flow data] (n5.south) --
+    node[edge label, pos=0.5] {AXI4 transactions} (n6.north);
+\draw[flow data] (n6.south) --
+    node[edge label, pos=0.5] {OFM INT8 tensor} (n7.north);
+
+% =============================================================================
+% 右侧参考通路 (在节点 2 分叉)
+% =============================================================================
+\node[ref node] (ref) at (3.5, 5.2)
+    {\textbf{PyTorch INT8}\\\textbf{参考模型}\\\scriptsize Reference model\\\scriptsize (逐层浮点模拟)};
+
+% 节点 2 -> 参考模型 (灰色实线)
+\draw[flow] (n2.east) --
+    node[edge label, pos=0.5] {scale / shift} (ref.west);
+
+% =============================================================================
+% 比对节点 (底部, 横跨主流程与参考通路)
+% =============================================================================
+\node[cmp node] (cmp) at (-0.5, -6.3)
+    {8. 逐字节比对 / byte-by-byte compare};
+
+% 节点 7 -> 比对节点
+\draw[flow data] (n7.south) --
+    node[edge label, pos=0.5] {RTL OFM} ($(cmp.north)+(-3.5,0)$);
+
+% 参考模型 -> 比对节点 (长虚线)
+\draw[ref arrow] (ref.south) --
+    node[edge label, pos=0.85] {ref OFM}
+    ($(cmp.north)+(3.5,0)$);
+
+% =============================================================================
+% PASS / FAIL 分支
+% =============================================================================
+\node[pass node] (pass) at (-3.5, -8.5) {PASS};
+\node[fail node] (fail) at ( 2.5, -8.5) {FAIL};
+
+\draw[pass arrow] ($(cmp.south)+(-1.0,0)$) --
+    node[edge label, pos=0.5, left, text=coImproved] {match} (pass.north);
+\draw[fail arrow] ($(cmp.south)+(1.0,0)$) --
+    node[edge label, pos=0.5, right, text=coAccent] {mismatch} (fail.north);
+
+% =============================================================================
+% 底部图例: 三层验证粒度
+% =============================================================================
+\node[legend box, anchor=north, minimum width=140mm] at (-0.5, -9.4) {%
+\textbf{验证粒度 / Verification granularity}:
+\;单算子 / single-op (22 case) \;|\;
+多层链 / multi-layer chain \;|\;
+ResNet11 整网 / full-net (11 layers)%
+};
+
+\end{tikzpicture}
+\end{document}

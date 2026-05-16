@@ -1,0 +1,120 @@
+% =============================================================================
+% fig4-4-sdp-postproc.tex --- 图 4.4 SDP 后处理模块 (§4.5)
+%
+% v5.1 修订:
+%   - 用户反馈: "元素遮挡、右上空白"
+%   - 修订要点: 改成横向 1 行 6 节点 (PSUM -> +bias -> shift -> clip -> +residual
+%               -> clip -> OFB);
+%               右侧空白处填 row_credit 反压细节 (红虚线箭头从 OFB 回 ofb_writer ready);
+%               位宽标注 (int32 / int8)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    stage box/.style={
+        draw=coAnno, line width=1pt, rounded corners=2pt,
+        fill=flBlue, minimum width=18mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    side rf/.style={
+        draw=coAnno, line width=1pt, rounded corners=2pt,
+        fill=flYellow, minimum width=22mm, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    ring box/.style={
+        draw=coImproved, line width=1pt, rounded corners=4pt,
+        fill=flGreen, minimum width=22mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    endp box/.style={
+        draw=coAnno, line width=1pt, rounded corners=2pt,
+        fill=flGray, minimum width=18mm, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\footnotesize,
+    },
+    bw/.style={
+        font=\sffamily\itshape\footnotesize, text=coAnno,
+        fill=white, inner sep=1pt,
+    },
+    flow/.style={
+        -{Stealth[length=2.8mm,width=1.8mm]},
+        line width=1.0pt, draw=coAnno,
+    },
+    backp/.style={
+        -{Stealth[length=2.6mm,width=1.6mm]},
+        line width=1.0pt, draw=coAccent, dashed,
+    },
+]
+
+% =============================================================================
+% 顶部输入: from parf_accum
+% =============================================================================
+\node[endp box] (in) at (-1.0, 0) {parf\_accum};
+
+% =============================================================================
+% 横向 1 行 6 节点: +bias -> shift -> clip -> +residual -> clip -> OFB
+% =============================================================================
+\def\sy{0}
+\node[stage box] (s1) at ( 1.6, \sy) {+bias};
+\node[stage box] (s2) at ( 4.4, \sy) {shift};
+\node[stage box] (s3) at ( 7.2, \sy) {clip};
+\node[stage box] (s4) at (10.0, \sy) {+residual};
+\node[stage box] (s5) at (12.8, \sy) {clip};
+\node[ring box]  (ofb) at (15.6, \sy) {OFB ring};
+
+% 节点下方 stage 标记 (一行小字)
+\foreach \nd/\lbl in {s1/[1], s2/[2], s3/[3], s4/[4], s5/[5]} {
+    \node[font=\sffamily\scriptsize\itshape, text=coGuide, anchor=north]
+        at (\nd.south) {\lbl};
+}
+
+% 输入箭头
+\draw[flow] (in.east) -- (s1.west) node[bw, midway, above=0pt] {int32};
+
+% 主链箭头 + 位宽
+\draw[flow] (s1.east) -- (s2.west) node[bw, midway, above=0pt] {int32};
+\draw[flow] (s2.east) -- (s3.west) node[bw, midway, above=0pt] {int32};
+\draw[flow] (s3.east) -- (s4.west) node[bw, midway, above=0pt] {int8};
+\draw[flow] (s4.east) -- (s5.west) node[bw, midway, above=0pt] {int32};
+\draw[flow] (s5.east) -- (ofb.west) node[bw, midway, above=0pt] {int8};
+
+% =============================================================================
+% 侧路: bias_rf (上方 -> s1) / Shortcut Bank (上方 -> s4)
+% =============================================================================
+\node[side rf] (brf) at (1.6, 1.6) {bias\_rf};
+\draw[flow, draw=coBaseline] (brf.south) -- (s1.north);
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(brf.east)+(1mm,0)$)
+    {RDMA 预拉, 32 b/cout};
+
+\node[side rf] (sbank) at (10.0, 1.6) {Shortcut Bank};
+\draw[flow, draw=coBaseline] (sbank.south) -- (s4.north);
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(sbank.east)+(1mm,0)$)
+    {上层 OFM push};
+
+% =============================================================================
+% 输出 to ODMA
+% =============================================================================
+\node[endp box] (odma) at (15.6, -2.4) {to ODMA};
+\draw[flow] (ofb.south) -- (odma.north) node[bw, midway, right=1pt] {int8 row};
+
+% =============================================================================
+% row_credit 反压: OFB ring 回到 ofb_writer ready (绕过整链下方, 填空白)
+% =============================================================================
+\draw[backp]
+    (ofb.south west)
+    .. controls ($(11.0,-1.4)$) and ($(6.5,-1.4)$) ..
+    ($(s1.south east)+(0.1,-0.1)$)
+    node[font=\sffamily\scriptsize\bfseries, text=coAccent, fill=white,
+         pos=0.5, inner sep=1.5pt]
+    {row\_credit \ back-pressure (from ODMA)};
+
+\end{tikzpicture}
+\end{document}

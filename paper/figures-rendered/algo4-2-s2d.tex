@@ -1,0 +1,63 @@
+% =============================================================================
+% algo4-2-s2d.tex --- 算法 4.2 空间到深度（Space-to-Depth, S2D）重排
+%
+% 渲染方式（Tectonic）:
+%   tectonic algo4-2-s2d.tex
+%   pdftoppm -png -r 300 algo4-2-s2d.pdf algo4-2-s2d
+%
+% 数据来源:
+%   toolchain/hw_files.py L91-148 (compute_s2d_params + s2d_input)
+%   paper.md §4.9 编译器优化：空间到深度
+%   核心思想: stride>=2 时把 stride² 个空间相位折到 cin 维度,
+%             等价转换为 (K_new=ceil(K/stride), stride=1, Cin_new=stride²·Cin) 标准卷积.
+% =============================================================================
+\documentclass[border=4pt,varwidth=18cm]{standalone}
+
+\usepackage{amsmath}
+\usepackage{xeCJK}
+% 中文：Microsoft YaHei（保持原配置）；英文：Times New Roman
+\setCJKmainfont{Microsoft YaHei}
+\setCJKsansfont{Microsoft YaHei}
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+
+\usepackage[linesnumbered,vlined,boxruled]{algorithm2e}
+\DontPrintSemicolon
+
+\begin{document}
+\begin{algorithm}[H]
+{\bfseries 输入：} 原卷积层 $(K, \text{stride}, C_\text{in}, C_\text{out}, \text{pad})$；输入 $I[H_\text{in}, W_\text{in}, C_\text{in}]$；阵列宽度 HW\_PE = 16\;
+{\bfseries 输出：} 等价 stride=1 卷积层 $(K_\text{new}, 1, C_\text{in}^\text{new}, C_\text{out})$；输入 $I_\text{s2d}$\;
+\BlankLine
+适用条件：$\text{stride} \geq 2$ 且 $K \geq \text{stride}$\;
+\If{$\text{stride} < 2$ \textbf{或} $K < \text{stride}$}{
+  返回原层，不适用 S2D\;
+}
+\BlankLine
+$K_\text{new} \leftarrow \lceil K / \text{stride} \rceil$，新核尺寸\;
+$C_\text{in}^\text{new} \leftarrow \text{stride}^2 \cdot C_\text{in}$，cin 扩张 stride 平方倍\;
+\BlankLine
+Step 1：pad 区填 0，输入 pre-pad 到 stride 整除尺寸\;
+$H_\text{pad} \leftarrow H_\text{in} + 2 \cdot \text{pad}$\;
+$W_\text{pad} \leftarrow W_\text{in} + 2 \cdot \text{pad}$\;
+$H_\text{aln} \leftarrow \lceil H_\text{pad} / \text{stride} \rceil \cdot \text{stride}$\;
+$W_\text{aln} \leftarrow \lceil W_\text{pad} / \text{stride} \rceil \cdot \text{stride}$\;
+$I_\text{padded} \leftarrow$ ZeroPad$(I, \text{pad}, H_\text{aln}, W_\text{aln})$\;
+\BlankLine
+Step 2：stride 平方 个相位重排到 cin 维度\;
+$H_\text{s2d} \leftarrow H_\text{aln} / \text{stride}$，$W_\text{s2d} \leftarrow W_\text{aln} / \text{stride}$\;
+分配 $I_\text{s2d}[H_\text{s2d}, W_\text{s2d}, C_\text{in}^\text{new}]$\;
+\For{$Y \leftarrow 0$ \KwTo $H_\text{s2d} - 1$}{
+  \For{$X \leftarrow 0$ \KwTo $W_\text{s2d} - 1$}{
+    \For{$a \leftarrow 0$ \KwTo $\text{stride} - 1$}{
+      \For{$b \leftarrow 0$ \KwTo $\text{stride} - 1$}{
+        $p \leftarrow a \cdot \text{stride} + b$，相位编号\;
+        $I_\text{s2d}[Y, X, p \cdot C_\text{in} : (p+1) C_\text{in}] \leftarrow I_\text{padded}[Y \cdot \text{stride} + a, X \cdot \text{stride} + b, :]$\;
+      }
+    }
+  }
+}
+\BlankLine
+{\bfseries 返回：} $(K_\text{new}, \text{stride}=1, C_\text{in}^\text{new}, C_\text{out}, I_\text{s2d})$，硬件按 stride=1 跑\;
+\end{algorithm}
+\end{document}

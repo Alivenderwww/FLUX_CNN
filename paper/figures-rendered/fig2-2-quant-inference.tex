@@ -1,0 +1,101 @@
+% =============================================================================
+% fig2-2-quant-inference.tex --- 图 2.2 INT8 量化推理数据流 (§2.7)
+%
+% v5.1 修订:
+%   - 用户反馈: "参考量化白皮书 Figure 1 版式"
+%   - 修订要点: 仿 Qualcomm 量化白皮书 Figure 1(a) "fixed-point on-device inference":
+%               纵向单列流水 (自下而上) Input -> Conv -> Accumulator (红色突出)
+%               -> Activation -> Requantization -> Output
+%               侧路 Weights -> Conv (左) / Biases -> Accumulator (右)
+%               侧路块用深蓝 coBaseline 实心 + 白字
+%               节点文字一律一个词
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    % 主轴节点: 深灰主体, 加深蓝边框
+    main op/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flBlue, minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % Accumulator: 红色 coAccent 实心填充 + 白字 (突出溢出关注)
+    accum op/.style={
+        draw=coAccent, line width=1.0pt, rounded corners=2pt,
+        fill=coAccent, text=white,
+        minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % Requantization: 青绿
+    req op/.style={
+        draw=coImproved, line width=0.8pt, rounded corners=2pt,
+        fill=flGreen, minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % 端点节点 (Input / Output): 灰色
+    endp/.style={
+        draw=coAnno, line width=0.6pt, rounded corners=2pt,
+        fill=flGray, minimum width=24mm, minimum height=9mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % 侧路节点 Weights / Biases: 深蓝实心 + 白字
+    side op/.style={
+        draw=coBaseline, line width=0.8pt, rounded corners=2pt,
+        fill=coBaseline, text=white,
+        minimum width=22mm, minimum height=9mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % 主轴箭头
+    main flow/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.0pt, draw=coAnno,
+    },
+    side flow/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=0.9pt, draw=coBaseline,
+    },
+    % 位宽标注: 斜体小字, 白底
+    bw/.style={
+        font=\sffamily\itshape\footnotesize, text=coAnno,
+        fill=white, inner sep=1.2pt,
+    },
+]
+
+% =============================================================================
+% 主轴 (自下而上): Input -> Conv -> Accumulator -> Activation -> Requantization -> Output
+% =============================================================================
+\node[endp]    (in)   at (0, -5.0) {Input};
+\node[main op] (conv) at (0, -2.8) {Conv};
+\node[accum op](acc)  at (0, -0.6) {Accumulator};
+\node[main op] (act)  at (0,  1.6) {Activation};
+\node[req op]  (req)  at (0,  3.8) {Requantization};
+\node[endp]    (out)  at (0,  5.6) {Output};
+
+\draw[main flow] (in.north)   -- node[bw, right=1mm] {int8}  (conv.south);
+\draw[main flow] (conv.north) -- node[bw, right=1mm] {int32} (acc.south);
+\draw[main flow] (acc.north)  -- node[bw, right=1mm] {int32} (act.south);
+\draw[main flow] (act.north)  -- node[bw, right=1mm] {int32} (req.south);
+\draw[main flow] (req.north)  -- node[bw, right=1mm] {int8}  (out.south);
+
+% =============================================================================
+% 侧路 Weights -> Conv (左)
+% =============================================================================
+\node[side op] (w) at (-3.6, -2.8) {Weights};
+\draw[side flow] (w.east) -- node[bw, above=0pt] {int8} (conv.west);
+
+% =============================================================================
+% 侧路 Biases -> Accumulator (右)
+% =============================================================================
+\node[side op] (b) at (3.6, -0.6) {Biases};
+\draw[side flow] (b.west) -- node[bw, above=0pt] {int32} (acc.east);
+
+\end{tikzpicture}
+\end{document}

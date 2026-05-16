@@ -1,0 +1,148 @@
+% =============================================================================
+% fig2-4-numa-topology.tex --- 图 2.4 NUMA 架构拓扑示意（§2.5）
+%
+% 设计稿: paper/workspace/figures/fig2-4-numa-topology.md
+% 论证作用: 通用 OS / 数据库领域 NUMA 概念图, 建立"本地访问快、远端访问慢"
+%           的直观印象, 为 §4.11 多核加速器跨核 SRAM 直送提供理论锚点.
+%           本图不画 FLUX_CNN 跨核 SRAM 拓扑, 那是 §4.11 fig4-8 的事.
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    numa node/.style={
+        draw=coAnno,
+        line width=0.8pt,
+        rounded corners=3pt,
+        fill=flBlue,
+        minimum width=44mm,
+        minimum height=22mm,
+        inner sep=2mm,
+    },
+    cpu mini/.style={
+        draw=coAnno,
+        line width=0.5pt,
+        rounded corners=1pt,
+        fill=flYellow,
+        minimum width=14mm,
+        minimum height=8mm,
+        align=center,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    mem mini/.style={
+        draw=coAnno,
+        line width=0.5pt,
+        rounded corners=1pt,
+        fill=flGray,
+        minimum width=18mm,
+        minimum height=8mm,
+        align=center,
+        font=\sffamily\scriptsize,
+    },
+    local link/.style={
+        line width=1.5pt,
+        draw=coImproved,
+    },
+    qpi link/.style={
+        line width=0.6pt,
+        draw=coGuide,
+    },
+    qpi diag/.style={
+        line width=0.6pt,
+        draw=coGuide,
+        dashed,
+    },
+    remote arrow/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.4pt,
+        draw=coAccent,
+        dashed,
+    },
+    node title/.style={
+        font=\sffamily\small\bfseries,
+        text=coAnno,
+        anchor=south,
+    },
+    local label/.style={
+        font=\sffamily\scriptsize,
+        text=coImproved,
+        inner sep=1.2pt,
+        align=center,
+    },
+]
+
+% ============================================================================
+% 4 NUMA 节点（对称四角布局）
+% ============================================================================
+\node[numa node] (n0) at (-3.2, 1.6) {};
+\node[node title] at (n0.north) {NUMA Node 0};
+\node[cpu mini] (n0cpu) at ($(n0.center)+(-1.2,0)$) {CPU\\Socket 0};
+\node[mem mini] (n0mem) at ($(n0.center)+( 1.1,0)$) {Local Memory\\DRAM};
+\draw[local link] (n0cpu.east) -- node[local label, above=0pt] {$\approx$100\,ns} (n0mem.west);
+
+\node[numa node] (n1) at ( 3.2, 1.6) {};
+\node[node title] at (n1.north) {NUMA Node 1};
+\node[cpu mini] (n1cpu) at ($(n1.center)+(-1.2,0)$) {CPU\\Socket 1};
+\node[mem mini] (n1mem) at ($(n1.center)+( 1.1,0)$) {Local Memory\\DRAM};
+\draw[local link] (n1cpu.east) -- node[local label, above=0pt] {$\approx$100\,ns} (n1mem.west);
+
+\node[numa node] (n2) at (-3.2,-1.6) {};
+\node[node title] at (n2.north) {NUMA Node 2};
+\node[cpu mini] (n2cpu) at ($(n2.center)+(-1.2,0)$) {CPU\\Socket 2};
+\node[mem mini] (n2mem) at ($(n2.center)+( 1.1,0)$) {Local Memory\\DRAM};
+\draw[local link] (n2cpu.east) -- node[local label, above=0pt] {$\approx$100\,ns} (n2mem.west);
+
+\node[numa node] (n3) at ( 3.2,-1.6) {};
+\node[node title] at (n3.north) {NUMA Node 3};
+\node[cpu mini] (n3cpu) at ($(n3.center)+(-1.2,0)$) {CPU\\Socket 3};
+\node[mem mini] (n3mem) at ($(n3.center)+( 1.1,0)$) {Local Memory\\DRAM};
+\draw[local link] (n3cpu.east) -- node[local label, above=0pt] {$\approx$100\,ns} (n3mem.west);
+
+% ============================================================================
+% 全连接互联线（4 边 + 2 对角线，对角线虚线），先画线再放中央标签
+% ============================================================================
+% 上下两边
+\draw[qpi link] (n0.east) -- (n1.west);
+\draw[qpi link] (n2.east) -- (n3.west);
+% 左右两边
+\draw[qpi link] (n0.south) -- (n2.north);
+\draw[qpi link] (n1.south) -- (n3.north);
+% 两条完整对角线（虚线，穿过中心）
+\draw[qpi diag] (n0.south east) -- (n3.north west);
+\draw[qpi diag] (n1.south west) -- (n2.north east);
+
+% ============================================================================
+% 中央 QPI / UPI Interconnect 标签（单行，白底覆盖在对角线交点上）
+% ============================================================================
+\node[draw=coAnno, line width=0.5pt, fill=white, rounded corners=1pt,
+      inner sep=2.5pt, align=center, font=\sffamily\scriptsize\itshape]
+      (icx) at (0,0)
+      {QPI / UPI Interconnect};
+
+% ============================================================================
+% 红色虚线：跨节点访问示例（Node 0 → Node 1，沿顶部边走，避开中心）
+% 选 Node 0 CPU → Node 1 Memory 作示例，路径走顶部 QPI 链路
+% ============================================================================
+\draw[remote arrow]
+    (n0cpu.north)
+    .. controls +(0,1) and +(0,1) ..
+    (n1mem.north)
+    node[edge label accent, pos=0.5, fill=white, inner sep=1.5pt, above=2pt]
+        {$\approx$250\,ns 远端访问};
+
+% ============================================================================
+% 图例（右下角）
+% ============================================================================
+\node[legend box, anchor=south east] (legend) at (6.0, -0.75) {%
+    \begin{tabular}{@{}l@{\ \ }l@{}}
+    \tikz\draw[local link] (0,0) -- (4mm,0); & 本地访问 \\[1pt]
+    \tikz\draw[remote arrow] (0,0) -- (4mm,0); & 远端访问 \\[1pt]
+    \tikz\draw[qpi link] (0,0) -- (4mm,0); & QPI / UPI \\[1pt]
+    \tikz\draw[qpi diag] (0,0) -- (4mm,0); & 全连接 \\
+    \end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

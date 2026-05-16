@@ -1,0 +1,200 @@
+% =============================================================================
+% fig4-8-multicore-top.tex --- 图 4.8 多核扩展层结构图 (§4.11)
+%
+% v5.1 修订:
+%   - 用户反馈: "线连飞, 到处乱引"
+%   - 修订要点: 重新规划走线;
+%               4 核 2x2 矩阵 + axi_lite_csr / DFE / SmartConnect 一线串过;
+%               跨核 push 红虚线 *只画 4 条主路径* (Core[i]->Core[i+1] mod 4)
+%               走外圈绕行, 不穿越 AXI Interconnect 横线;
+%               done_sticky 4 路汇聚走 AND 后再连下层;
+%               用 scope + clip 限制走线在框内
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    core box/.style={
+        draw=coAnno, line width=0.9pt, rounded corners=3pt,
+        fill=flBlue, minimum width=44mm, minimum height=22mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    bus box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flYellow, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    ctrl box/.style={
+        draw=coAnno, line width=0.7pt, rounded corners=2pt,
+        fill=flGreen, minimum width=24mm, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    ddr box/.style={
+        draw=coAnno, line width=0.7pt, rounded corners=2pt,
+        fill=flGray, minimum width=28mm, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    main bus/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.4pt, draw=coBaseline,
+    },
+    ctrl line/.style={
+        -{Stealth[length=2.6mm,width=1.6mm]},
+        line width=0.7pt, draw=coAnno,
+    },
+    xpush/.style={
+        -{Stealth[length=2.8mm,width=1.8mm]},
+        line width=1.0pt, draw=coAccent, dashed,
+    },
+    done line/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.6pt, draw=coImproved,
+    },
+    flow tag/.style={
+        font=\sffamily\scriptsize, text=coAnno,
+        fill=white, inner sep=1pt,
+    },
+]
+
+% =============================================================================
+% Top: DDR + SmartConnect 横向贯通
+% =============================================================================
+\node[ddr box] (ddr) at (0, 6.6) {Off-chip DDR};
+
+\node[bus box, minimum width=160mm] (smc) at (0, 5.2)
+    {SmartConnect \ (AXI4 128 b, 5-master $\times$ 5-slave)};
+
+\draw[main bus] (ddr.south) -- (smc.north);
+
+% =============================================================================
+% axi_lite_csr 控制总线 (左侧, 串过 4 核)
+% =============================================================================
+\node[ctrl box] (csr) at (-7.0, 3.7) {axi\_lite\_csr};
+\node[ctrl box] (dfe) at (-4.0, 3.7) {DFE};
+\draw[ctrl line] (smc.south west) ++(0.5,0) |- (csr.east);
+\draw[ctrl line] (csr.east) -- (dfe.west);
+
+% =============================================================================
+% 4 核 2x2 矩阵
+% =============================================================================
+\node[core box] (c0) at (-3.5, 1.8) {Core[0]\\\scriptsize sub\_W slice 0};
+\node[core box] (c1) at ( 3.5, 1.8) {Core[1]\\\scriptsize sub\_W slice 1};
+\node[core box] (c2) at (-3.5,-1.6) {Core[2]\\\scriptsize sub\_W slice 2};
+\node[core box] (c3) at ( 3.5,-1.6) {Core[3]\\\scriptsize sub\_W slice 3};
+
+% Core 内部小字: IFB / done_sticky / ifb_axi_slv
+\foreach \c/\addr in {c0/0x80000000, c1/0x90000000, c2/0xA0000000, c3/0xB0000000}{
+    \node[font=\sffamily\scriptsize, text=coAnno, anchor=north,
+          align=center]
+        at ($(\c.south)+(0,-1mm)$)
+        {IFB base \ \texttt{\addr}};
+}
+
+% =============================================================================
+% AXI4 主数据流: SmartConnect <-> 4 核 (4 条主线, 不交叉)
+% =============================================================================
+\foreach \c/\x in {c0/-3.5, c1/3.5} {
+    \draw[main bus] ($(smc.south)+({\x*0.4},0)$) -- (\c.north);
+}
+% 下面两核走外侧
+\draw[main bus]
+    ($(smc.south)+(-5.0,0)$) -- ++(0,-0.6)
+    -| (c2.north);
+\draw[main bus]
+    ($(smc.south)+( 5.0,0)$) -- ++(0,-0.6)
+    -| (c3.north);
+
+% AXI-Lite ctrl 进入 4 核 (从 DFE 出来分支)
+\draw[ctrl line] (dfe.south) -- ++(0,-0.4) -| (c0.north west);
+\draw[ctrl line] (dfe.south) -- ++(0,-0.4) -| (c1.north east);
+\draw[ctrl line] (dfe.south) -- ++(0,-0.4) -| ($(c2.north)+(-1.0,0)$) -- ($(c2.north)+(-1.0,0)$);
+% 简化: 把 ctrl 进入 c2/c3 也用一条短线
+\draw[ctrl line] ($(c2.north)+(-1.0,0)$) -- ($(c2.north)+(-1.0,-0.4)$);
+\draw[ctrl line] ($(c3.north)+(1.0,0)$) -- ($(c3.north)+(1.0,-0.4)$);
+
+% =============================================================================
+% 跨核 push (红虚): 只 4 条主路径, 走外圈, 不穿过 SmartConnect 横线
+% Core[0] -> Core[1] (上方横向, 直接连)
+% Core[1] -> Core[2] (右侧下行 + 底部横向)
+% Core[2] -> Core[3] (下方横向)
+% Core[3] -> Core[0] (左侧上行)
+% =============================================================================
+\begin{scope}
+\clip (-9, -3.6) rectangle (9, 3.5);
+
+% C0 -> C1 (上方横向, 走 core box 内上沿)
+\draw[xpush]
+    (c0.east) -- (c1.west);
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent,
+      fill=white, inner sep=1pt]
+    at (0, 2.0) {x-push};
+
+% C1 -> C2 (右侧绕外圈下来再到左侧底部)
+\draw[xpush]
+    (c1.east) -- ++(1.0, 0) |- (c2.east);
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent,
+      fill=white, inner sep=1pt]
+    at (5.0, 0.0) {x-push};
+
+% C2 -> C3 (下方横向)
+\draw[xpush]
+    (c2.east) ++(0.5,-0.5) -- ++(2.5, 0)
+    -- (c3.west);
+
+% C3 -> C0 (左侧绕外圈)
+\draw[xpush]
+    (c3.west) -- ++(-1.0, 0) ++(-0.0, 0)
+    .. controls ($(-5.0, -1.6)$) and ($(-5.0, 1.8)$) ..
+    (c0.west);
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent,
+      fill=white, inner sep=1pt]
+    at (-5.0, 0.0) {x-push};
+
+\end{scope}
+
+% =============================================================================
+% done_sticky 4 路汇聚到 AND 门 (底部)
+% =============================================================================
+\node[draw=coImproved, line width=0.8pt, fill=flGreen,
+      minimum width=14mm, minimum height=7mm, rounded corners=1pt,
+      align=center, font=\sffamily\scriptsize\bfseries]
+    (andg) at (0, -4.0) {AND};
+
+\draw[done line] (c0.south) -- ($(c0.south)+(0,-0.8)$) -| (andg.north west);
+\draw[done line] (c1.south) -- ($(c1.south)+(0,-0.8)$) -| (andg.north east);
+\draw[done line] (c2.south) -- ($(c2.south)+(0,-0.8)$) -| ($(andg.north)+(-0.3,0)$);
+\draw[done line] (c3.south) -- ($(c3.south)+(0,-0.8)$) -| ($(andg.north)+( 0.3,0)$);
+
+\node[font=\sffamily\scriptsize, text=coImproved, anchor=west]
+    at ($(andg.east)+(2mm,0)$)
+    {done\_sticky[0..3] \ all-done \ next-layer enable};
+
+% =============================================================================
+% W 切片说明 (右侧)
+% =============================================================================
+\node[font=\sffamily\scriptsize, text=coAnno, align=left, anchor=west,
+      draw=coAnno, line width=0.4pt, rounded corners=1pt, fill=flGray,
+      inner sep=3pt]
+    at (7.5, 3.7)
+    {W 切片 4 段\\halo: K=3 stride=1\\$\to$ 2 cols overlap\\computed redundancy};
+
+% =============================================================================
+% 图例 (左下)
+% =============================================================================
+\node[legend box, anchor=south west] at (-8.5, -4.7) {%
+\begin{tabular}{@{}l@{\ \ }l@{}}
+\tikz\draw[main bus] (0,0) -- (5mm,0); & AXI4 主数据流 \\[1pt]
+\tikz\draw[ctrl line] (0,0) -- (5mm,0); & AXI-Lite 控制 \\[1pt]
+\tikz\draw[xpush] (0,0) -- (5mm,0); & 跨核 SRAM push \\[1pt]
+\tikz\draw[done line] (0,0) -- (5mm,0); & done\_sticky \\
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

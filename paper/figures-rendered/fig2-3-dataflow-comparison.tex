@@ -1,0 +1,183 @@
+% =============================================================================
+% fig2-3-dataflow-comparison.tex --- 图 2.3 WS / OS / RS 三种数据流对比 (§2.3)
+%
+% 设计稿: paper/workspace/figures/fig2-3-dataflow-comparison.md
+% 论证作用: 三 panel 横向并列, 同一 PE 阵列底图, 三色箭头编码三种数据流;
+%           红=激活 / 绿=权重 / 蓝=部分和; 加粗边框=静止数据.
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    panel frame/.style={
+        draw=coAnno, line width=0.6pt,
+        rounded corners=2pt,
+        minimum width=46mm, minimum height=58mm,
+        inner sep=0pt,
+    },
+    pe cell/.style={
+        draw=coAnno, line width=0.4pt,
+        rectangle, fill=flGray,
+        minimum width=6mm, minimum height=6mm,
+        inner sep=0pt,
+        font=\sffamily\scriptsize,
+    },
+    pe stat/.style={
+        pe cell,
+        line width=1.4pt,
+        fill=flYellow,
+    },
+    arrow act/.style={
+        -{Stealth[length=1.8mm,width=1.2mm]},
+        line width=0.8pt,
+        draw=coAccent,
+    },
+    arrow wgt/.style={
+        -{Stealth[length=1.8mm,width=1.2mm]},
+        line width=0.8pt,
+        draw=coImproved,
+    },
+    arrow psum/.style={
+        -{Stealth[length=1.8mm,width=1.2mm]},
+        line width=0.8pt,
+        draw=coBaseline,
+    },
+    panel title/.style={
+        font=\sffamily\small\bfseries,
+        text=coAnno,
+        align=center,
+    },
+    panel sub/.style={
+        font=\sffamily\scriptsize\itshape,
+        text=coAnno,
+        align=center,
+    },
+    panel foot/.style={
+        font=\sffamily\scriptsize,
+        text=coAnno,
+        align=center,
+    },
+]
+
+% =============================================================================
+% 三 panel 参数: panel 宽 4.6cm, 高 5.8cm, 间距 0.6cm
+% panel 中心 x 坐标: -5.2 / 0 / 5.2
+% panel 内部 PE 阵列: 4x4 网格, 单元 6mm, 网格中心 (cx, 0)
+% 网格左下角对应 (cx - 0.9, -0.9), 步距 0.6cm
+% =============================================================================
+
+% =============================================================================
+% Panel A: WS (Weight-Stationary)
+% =============================================================================
+\node[panel frame] (pA) at (-5.2, 0) {};
+\node[panel title, anchor=north] at ($(pA.north)+(0,-2mm)$) {(a) WS / Weight-Stationary};
+\node[panel sub, anchor=north] at ($(pA.north)+(0,-7mm)$) {权重静止};
+
+% PE 阵列 4x4, 中心 (-5.2, 0.4)
+\foreach \r in {0,1,2,3} {
+  \foreach \c in {0,1,2,3} {
+    \node[pe stat] at ($(-5.2,-0.2)+({-0.9+\c*0.6},{-0.9+\r*0.6})$) {\bfseries\textcolor{coImproved}{W}};
+  }
+}
+% 激活流入: 左侧水平射入 (4 条, 一行一条)
+\foreach \r in {0,1,2,3} {
+    \draw[arrow act]
+        ($(-5.2,-0.2)+(-1.7,{-0.9+\r*0.6})$) --
+        ($(-5.2,-0.2)+(-1.25,{-0.9+\r*0.6})$);
+}
+% Psum 流出: 底部向下射出 (4 列)
+\foreach \c in {0,1,2,3} {
+    \draw[arrow psum]
+        ($(-5.2,-0.2)+({-0.9+\c*0.6},-1.25)$) --
+        ($(-5.2,-0.2)+({-0.9+\c*0.6},-1.7)$);
+}
+% 标签
+\node[panel sub, anchor=east] at ($(-5.2,-0.2)+(-1.8,0.3)$) {\textcolor{coAccent}{act}};
+\node[panel sub, anchor=north] at ($(-5.2,-0.2)+(0,-1.85)$) {\textcolor{coBaseline}{psum}};
+
+% =============================================================================
+% Panel B: OS (Output-Stationary)
+% =============================================================================
+\node[panel frame] (pB) at (0, 0) {};
+\node[panel title, anchor=north] at ($(pB.north)+(0,-2mm)$) {(b) OS / Output-Stationary};
+\node[panel sub, anchor=north] at ($(pB.north)+(0,-7mm)$) {输出静止};
+
+% PE 阵列 4x4, 中心 (0, 0.4)
+\foreach \r in {0,1,2,3} {
+  \foreach \c in {0,1,2,3} {
+    \node[pe stat] at ($(0,-0.2)+({-0.9+\c*0.6},{-0.9+\r*0.6})$) {\bfseries\textcolor{coBaseline}{O}};
+  }
+}
+% 激活流入: 左侧水平射入
+\foreach \r in {0,1,2,3} {
+    \draw[arrow act]
+        ($(0,-0.2)+(-1.7,{-0.9+\r*0.6})$) --
+        ($(0,-0.2)+(-1.25,{-0.9+\r*0.6})$);
+}
+% 权重流入: 顶部向下射入
+\foreach \c in {0,1,2,3} {
+    \draw[arrow wgt]
+        ($(0,-0.2)+({-0.9+\c*0.6},1.7)$) --
+        ($(0,-0.2)+({-0.9+\c*0.6},1.25)$);
+}
+% 标签
+\node[panel sub, anchor=east] at ($(0,-0.2)+(-1.8,0.3)$) {\textcolor{coAccent}{act}};
+\node[panel sub, anchor=south] at ($(0,-0.2)+(1.5,1.25)$) {\textcolor{coImproved}{weight}};
+\node[panel sub, anchor=north] at ($(0,-0.2)+(0,-1.4)$) {\scriptsize psum 内蓄};
+
+% =============================================================================
+% Panel C: RS (Row-Stationary)
+% =============================================================================
+\node[panel frame] (pC) at (5.2, 0) {};
+\node[panel title, anchor=north] at ($(pC.north)+(0,-2mm)$) {(c) RS / Row-Stationary};
+\node[panel sub, anchor=north] at ($(pC.north)+(0,-7mm)$) {行静止};
+
+% PE 阵列 4x4, 中心 (5.2, 0.4)
+\foreach \r in {0,1,2,3} {
+  \foreach \c in {0,1,2,3} {
+    \node[pe stat] at ($(5.2,-0.2)+({-0.9+\c*0.6},{-0.9+\r*0.6})$) {\bfseries\textcolor{coAccent}{R}};
+  }
+}
+% 权重: 水平复用 (每行从左到右画一条短箭头, 4 条)
+\foreach \r in {0,1,2,3} {
+    \draw[arrow wgt, line width=0.7pt]
+        ($(5.2,-0.2)+(-1.7,{-0.9+\r*0.6})$) --
+        ($(5.2,-0.2)+(-1.25,{-0.9+\r*0.6})$);
+}
+% 激活: 沿对角线复用 (4 条平行对角线代表 4 个 ifmap row, 从左下到右上, ↗)
+% 同一对角线上的所有 PE 共享同一 ifmap row 的 act
+% 用 clip 限制对角线在 PE 阵列范围内
+\begin{scope}
+    \clip ($(5.2,-0.2)+(-1.2,-1.2)$) rectangle ($(5.2,-0.2)+(1.2,1.2)$);
+    \foreach \i in {-2,-1,0,1,2} {
+        \draw[arrow act, line width=0.7pt]
+            ($(5.2,-0.2)+({-1.3-\i*0.45},{-1.3+\i*0.45})$) --
+            ($(5.2,-0.2)+({1.3-\i*0.45},{1.3+\i*0.45})$);
+    }
+\end{scope}
+% Psum: 垂直累加 (顶到底, 4 列)
+\foreach \c in {0,1,2,3} {
+    \draw[arrow psum, line width=0.7pt]
+        ($(5.2,-0.2)+({-0.9+\c*0.6},-1.25)$) --
+        ($(5.2,-0.2)+({-0.9+\c*0.6},-1.7)$);
+}
+% 标签
+\node[panel sub, anchor=east] at ($(5.2,-0.2)+(-1.8,0.3)$) {\textcolor{coImproved}{wgt}};
+\node[panel sub, anchor=north east] at ($(5.2,-0.2)+(-1.55,-1.55)$) {\textcolor{coAccent}{act}};
+\node[panel sub, anchor=north] at ($(5.2,-0.2)+(0,-1.85)$) {\textcolor{coBaseline}{psum}};
+
+% =============================================================================
+% 公共图例 (底部居中, 三 panel 下方)
+% =============================================================================
+\node[legend box, anchor=north] at (0, -3.4) {%
+\begin{tabular}{@{}l@{\ \ }l@{\quad}l@{\ \ }l@{\quad}l@{\ \ }l@{}}
+\tikz\draw[arrow act] (0,0) -- (5mm,0); & Activation &
+\tikz\draw[arrow wgt] (0,0) -- (5mm,0); & Weight &
+\tikz\draw[arrow psum] (0,0) -- (5mm,0); & Psum
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

@@ -15,13 +15,13 @@
 
 ## 摘要
 
-随着视频监控、工业视觉、消费电子与自动驾驶辅助感知等应用对端侧智能推理的需求快速增长，面向资源受限终端的卷积神经网络（Convolutional Neural Network，CNN）加速器已成为人工智能芯片设计的重要研究方向。端侧流式计算场景下，输入数据持续到达、单帧推理时延受限、片上存储与功耗预算紧张，对加速器的吞吐稳定性、调度灵活性与资源效率提出综合挑战。本文以"微观寄存器配置 + 宏观指令流调度"的软硬协同分层调度为核心命题，设计并实现了卷积加速器FLUX_CNN。在数据通路上，加速核采用16×16的INT8乘加阵列与三级寄存器堆构成的固定阵列，配合权重静止、激活值滑窗复用与输出通道广播三层数据流复用策略；在控制结构上，核内由6层嵌套自循环有限状态机完成单层全部调度，核间由任务描述符（Task Descriptor）链表完成多层串接与多核协同。针对小通道场景下处理单元（Processing Element，PE）的低利用率问题，本文在编译器侧提出Y维折叠（Ky-fold）与空间到深度（Space-to-Depth，S2D）两种重映射方法。针对FPGA验证平台上数字信号处理单元（Digital Signal Processor，DSP）资源的有效利用，本文进一步提出一种利用OC-broadcast数据流中相邻列共享激活值特性、把两个INT8乘法合并到单个DSP48E1块中的硬件无关映射方案。多核扩展层采用W维切片配合跨核SRAM直送，避免外部双倍速率同步动态随机存储器（Double Data Rate SDRAM，DDR）中转。在Xilinx Kintex-7 XC7K325T-2平台上完成了22个端到端测试用例与ResNet11整网验证。实测结果表明，$N=4$配置下DSP实现版本的布线后最高时钟频率达到143.8 MHz，ResNet11整网在100 MHz假设下达到526 FPS，相对$N=1$含S2D基线取得3.13倍多核加速比。本文工作为端侧定制化卷积加速器提供一种可参考的硬件实现范式。
+面向qHD/1080p高分辨率单batch实时视频流的端侧推理场景，卷积神经网络（Convolutional Neural Network，CNN）加速器在吞吐稳定性、调度灵活性与资源效率上面临综合挑战。与云端数据中心方案不同，端侧场景同时受限于单batch流式输入、毫秒级单帧延迟与瓦级功耗包线。本文设计并实现卷积加速器FLUX_CNN，以核内寄存器配置加核间任务描述符链表的软硬协同双层调度为核心命题：核内由6层嵌套自循环有限状态机在cfg_regs写入后自动完成单层全部调度，无运行时取指译码；核间由任务描述符（Task Descriptor）链表完成多层串接与多核协同。数据通路采用16×16的INT8乘加阵列与三级寄存器堆，同时实施输入通道广播、权重静止、激活值滑窗行复用与输出部分和累加四层数据流复用策略。针对小通道与大步长层的处理单元（Processing Element，PE）低利用率，本文在编译器侧提出Y维折叠（Ky-fold）与空间到深度（Space-to-Depth，S2D）两种重映射方法。针对现场可编程门阵列（Field Programmable Gate Array，FPGA）平台上数字信号处理单元（Digital Signal Processor，DSP）资源的有效利用，本文进一步提出利用输入通道广播下16列PE共享同一拍激活向量的特性、把两个INT8乘法合并至单个DSP块的硬件无关映射方案。多核扩展层采用W维切片配合跨核静态随机存储器（Static Random Access Memory，SRAM）直送。在Xilinx Kintex-7平台上完成22个端到端用例与ResNet-11整网验证，4核DSP实现版本布线后最高时钟频率达143.8 MHz，ResNet-11整网在100 MHz假设下达526 FPS，相对单核含S2D基线取得3.13倍加速比，超出qHD视频流30 FPS实时基线约17倍。本文工作为端侧定制化卷积加速器提供一种可参考的硬件实现范式。
 
 **关键词**：FLUX_CNN；卷积神经网络加速器；软硬协同分层调度；端侧流式计算；FPGA验证
 
 ## Abstract
 
-The rapid adoption of video surveillance, industrial inspection, consumer electronics and driver-assistance perception drives the demand for convolutional neural network (CNN) accelerators on resource-constrained edge devices. Under edge-side streaming computation scenarios, continuously arriving inputs, tight per-frame latency, limited on-chip storage and a strict power envelope jointly challenge the throughput stability, scheduling flexibility and resource efficiency of accelerators. This paper proposes a CNN accelerator FLUX_CNN, organized around a software-hardware co-scheduled hierarchical scheme that combines micro-level register configuration with macro-level instruction-stream scheduling. The datapath of one core consists of a fixed 16×16 INT8 multiply-accumulate (MAC) array and a three-level register file, integrated with a composite dataflow that combines weight stationary, sliding-window activation reuse and output-channel broadcast. The control structure delegates the per-layer schedule to a six-level nested self-iterating finite state machine inside one core, and delegates multi-layer chaining and multi-core coordination to task descriptor lists outside the core. To address the low processing element (PE) utilization in layers with small channel counts, this paper proposes two compiler-side remapping methods, namely Ky-folding and space-to-depth (S2D). To exploit digital signal processor (DSP) blocks on the FPGA verification platform, this paper further proposes a hardware-agnostic mapping scheme that packs two INT8 multiplications into one DSP48E1 block, leveraging the structural property that adjacent columns share the same activation vector under output-channel broadcast. The multi-core extension layer adopts W-dimension slicing together with inter-core SRAM forwarding, eliminating round-trips through external double data rate SDRAM (DDR). Twenty-two end-to-end test cases and a complete ResNet11 inference are validated on a Xilinx Kintex-7 XC7K325T-2 platform. Post-routing results show that the $N=4$ DSP implementation reaches 143.8 MHz, the ResNet11 network achieves 526 FPS at an assumed 100 MHz, and the four-core configuration delivers a 3.13× speedup over the single-core S2D reference configuration. The presented work offers a reference design path for customized CNN accelerators in edge-side streaming computation scenarios.
+Targeting edge-side inference on qHD/1080p high-resolution single-batch real-time video streams, applications such as video surveillance, industrial inspection, consumer electronics and driver-assistance perception jointly challenge the throughput stability, scheduling flexibility and resource efficiency of convolutional neural network (CNN) accelerators. Unlike cloud-data-center inference, edge-side scenarios are simultaneously constrained by single-batch streaming input, qHD/1080p or higher resolution, millisecond-level per-frame latency budget, watt-level power envelope and MB-scale on-chip storage, posing design constraints fundamentally different from those of throughput-oriented large-batch solutions. This paper proposes a CNN accelerator FLUX_CNN, organized around a software-hardware co-scheduled two-tier scheme that combines micro-level register configuration with macro-level instruction-stream scheduling, in which a six-level nested self-iterating finite state machine inside one core completes the entire per-layer schedule once cfg_regs are written, eliminating runtime instruction fetch and decode. The datapath of one core consists of a fixed 16×16 INT8 multiply-accumulate (MAC) array and a three-level register file, integrated with a four-layer composite dataflow that combines input-channel-vector broadcast, weight stationary, sliding-window activation row reuse and output partial-sum accumulation. The control structure delegates the per-layer schedule to a six-level nested self-iterating finite state machine inside one core, and delegates multi-layer chaining and multi-core coordination to task descriptor lists outside the core. To address the low processing element (PE) utilization in layers with small channel counts, this paper proposes two compiler-side remapping methods, namely Ky-folding and space-to-depth (S2D). To exploit digital signal processor (DSP) blocks on the FPGA verification platform, this paper further proposes a hardware-agnostic mapping scheme that packs two INT8 multiplications into one DSP48E1 block, leveraging the structural property that all 16 output-channel columns share the same per-cycle Cin activation vector under the input-channel-broadcast dataflow. The multi-core extension layer adopts W-dimension slicing together with inter-core SRAM forwarding, eliminating round-trips through external double data rate SDRAM (DDR). Twenty-two end-to-end test cases and a complete ResNet11 inference are validated on a Xilinx Kintex-7 XC7K325T-2 platform. Post-routing results show that the $N=4$ DSP implementation reaches 143.8 MHz, the ResNet11 network achieves 526 FPS at an assumed 100 MHz, and the four-core configuration delivers a 3.13× speedup over the single-core S2D reference configuration, exceeding the 30 FPS real-time baseline for qHD video streams by approximately 17×. The presented work offers a reference design path for customized CNN accelerators in edge-side streaming computation scenarios.
 
 **Key Words**: FLUX_CNN; CNN Accelerator; Software-Hardware Co-Scheduling; Edge-Side Streaming Computation; FPGA Verification
 
@@ -84,13 +84,36 @@ The rapid adoption of video surveillance, industrial inspection, consumer electr
 
 近年来，随着人工智能技术在边缘端（Edge）的广泛渗透，越来越多的应用场景要求将卷积神经网络（Convolutional Neural Network，CNN）等深度学习模型直接部署于资源受限的终端设备上。智慧城市的视频监控[1]、工业视觉缺陷检测[2]、消费电子中的手势识别与关键词唤醒[3]、自动驾驶辅助感知[4]等典型场景，均呈现出"高带宽数据流—边缘处理—低时延响应"的流式计算（Streaming Computation）特征。在智慧城市场景中，部署于路口与建筑外立面的高清摄像设备需对每秒数十帧的1080p视频流进行实时目标检测、车牌识别与异常行为分析，单台设备的推理时延普遍要求控制在50 ms以内；工业视觉缺陷检测场景往往需要对产线上以数米每秒速度行进的工件表面进行像素级缺陷分割，且不允许出现帧丢失；消费电子中的手势识别与关键词唤醒则要求处理设备始终保持低功耗常开状态，仅在检测到有效信号时唤醒主系统；自动驾驶辅助感知更是对端到端延迟与功能安全提出严苛要求。与云端推理相比，端侧部署能够显著降低数据上传带宽、保障用户隐私，并提供毫秒级实时响应，已成为人工智能落地的重要路径。
 
+如表 1.1所示，端侧推理与云端数据中心推理在批大小（batch size）、输入分辨率、单帧延迟预算、功耗包线与片上存储5个维度上均存在数量级差距，这些差距决定了面向端侧的CNN加速器架构无法直接沿用大batch吞吐导向的设计模板。
+
+表 1.1 端侧与云端 CNN 推理的硬约束对比
+Table 1.1 Hard-constraint comparison between edge-side and cloud-data-center CNN inference
+
+| 维度 | 端侧 | 云端 |
+|---|---|---|
+| 批大小 Batch | 1（单输入流式） | 32 ~ 256 |
+| 输入分辨率 | qHD / 1080p（≥540×960） | 224×224 ~ 384×384 主流 |
+| 单帧延迟 | < 50 ms 实时 | 100 ms ~ 秒级容忍 |
+| 功耗包线 | mW ~ 数 W | 100+ W |
+| 片上存储 | MB 量级 SRAM | GB 量级 DRAM / HBM |
+
+除上述物理约束外，端侧场景普遍承载多种骨干网络（如ResNet、MobileNet、YOLO系列）的并行部署需求，对加速器在保持高能效的同时提供模型快速适配能力提出综合要求。
+
 然而，端侧场景与云端数据中心在硬件资源约束上存在本质差异。主流CNN模型的参数量与单次推理计算量普遍在10⁷至10⁹次乘累加（Multiply-Accumulate，MAC）操作量级[5]，例如轻量级目标检测模型YOLOv5n单帧推理约需4.5 GFLOPs，而ResNet-50在224×224输入下需约4.1 GMAC<!-- [CHECK: 4.5 GFLOPs 与 4.1 GMAC 两处口径来源待按 Ultralytics YOLOv5 仓库 README 与 He et al. ResNet 原论文核对] -->；而端侧设备的供电功耗通常限制在数瓦乃至数百毫瓦以内，电池供电的可穿戴设备甚至要求亚瓦级常驻功耗，片上存储容量往往仅为数MB。将通用处理器（Central Processing Unit，CPU）或图形处理器（Graphics Processing Unit，GPU）直接移植到端侧推理，面临算力不足或功耗过大的两难困境[6]。CPU顺序执行的指令流模型难以在功耗包线内提供端侧实时推理所需的吞吐量；GPU虽具备数据并行能力，但其大规模SIMT架构与高速显存子系统在端侧场景下功耗占比过大，能效比通常显著低于专用加速硬件。面向端侧的商用AI加速器（如Google Edge TPU、Intel Movidius、Apple Neural Engine等）已证明硬件定制加速的工程可行性。然而端侧应用场景高度碎片化，不同终端在算子组合、数据位宽、延迟预算与功耗包线上的差异悬殊，单一通用商用产品难以同时覆盖全部细分需求[6]；与此同时，商用NPU的架构细节与编译栈通常以知识产权形式闭源发布，限制了其作为开放研究平台的二次创新空间。由此，面向特定端侧流式场景、以可复现可演进为目标的卷积加速器定制化设计，仍是当前硬件架构研究的主要热点之一。
 
 端侧加速器的最终硬件载体通常是专用集成电路（Application Specific Integrated Circuit，ASIC）。相比GPU，ASIC的动态功耗低一个数量级以上，单位面积算力与能效比（Energy Efficiency）显著更高；相比现场可编程门阵列（Field Programmable Gate Array，FPGA），ASIC流片后在静态功耗与时钟频率方面亦具备结构性优势，适合对功耗与算力密度要求严苛的端侧部署。然而固定的硬件规模与单一数据流策略难以覆盖多种网络结构与层间差异，限制了加速器的长期可用生命周期。为突破这一限制，近年业界开始探索粗粒度可重构阵列（Coarse-Grained Reconfigurable Array，CGRA）思想在AI加速器中的应用——以AMD XDNA / Versal AI Engine为代表的商用二维AI Engine阵列通过可编程tile结构与片上mesh互联，在保持ASIC能效优势的同时为不同算子提供运行时配置能力[7]。基于可重构阵列的CNN加速器设计涵盖数据流编排、阵列结构、存储层次、软硬协同调度等多个层面，是硬件架构、电子设计自动化（EDA）与深度学习三者的交叉研究方向[8,9,10]。在工艺方面，端侧加速器流片节点已从早期的65 nm演进至16 nm与7 nm，单位面积可集成的乘累加单元数与片上存储容量均提升近一个数量级，为更复杂的数据通路与更精细的调度机制提供了硬件基础。
 
 CNN加速器需要解决"计算—访存"不平衡问题。由于卷积运算本质上是规则的多维张量乘累加，其算术强度（Arithmetic Intensity）对数据复用策略设计极度敏感。在典型卷积层中，输入特征图、卷积核与输出特征图三者均存在跨维度复用机会：输入特征图沿空间维度被多个输出位置共享，卷积核在批量与空间维度上被反复使用，输出部分和则需在通道方向累加聚合。若数据复用策略不当，片外动态随机存取存储器（Dynamic Random-Access Memory，DRAM）的访问能耗将吞噬大部分能量预算。早期加速器采用全硬化卷积状态机，硬件生成2D图像坐标与步长循环，在小规模模型上可取得高能效；但面对任意K×K卷积核、可变步长（Stride）、多分支残差等现代网络结构时，硬件逻辑复杂度急剧上升，难以通用化[8]。为此，近年来出现了"软硬协同调度"（Software-Hardware Co-scheduling）的设计范式：将2D空间迭代、通道切片、层间依赖等调度决策交由软件完成，硬件仅负责执行简单、规则、可流水的原子算子[9,10]。这一范式着重划分软件与硬件的职责边界——硬件保持专用化与高吞吐，软件提供面向不同模型的调度灵活性，二者通过紧凑的配置接口或宏粒度指令耦合。
 
-本论文在上述背景下，以端侧流式CNN推理为目标场景，设计并实现了一款软硬协同分层调度的卷积加速器FLUX_CNN。在微观层面，核内采用配置寄存器驱动的自循环有限状态机（Finite State Machine，FSM），一次性写入全部卷积参数与地址步进量后即可自动完成单层计算；在宏观层面，预留多核Task Descriptor接口与行级流式跨层融合调度机制。本研究的工程意义在于通过分层调度架构兼顾灵活性与高能效，为端侧定制化卷积加速器提供一种可参考的硬件实现范式；学术意义在于通过模块化、开源式的设计实践为端侧加速器领域提供可复现、可扩展的研究平台，便于后续在数据流策略、稀疏加速、跨层融合等方向上开展演进研究。
+<!-- SYNC v4 2026-05-12: 同步自 Word 措辞 — 措辞调整 "预留" → "配备", 去掉 "一次性" -->
+本论文在上述背景下，以端侧流式CNN推理为目标场景，设计并实现了一款软硬协同分层调度的卷积加速器FLUX_CNN。在微观层面，核内采用配置寄存器驱动的自循环有限状态机（Finite State Machine，FSM），写入全部卷积参数与地址步进量后即可自动完成单层计算；在宏观层面，配备多核Task Descriptor接口与行级流式跨层融合调度机制。本研究的工程意义在于通过分层调度架构兼顾灵活性与高能效，为端侧定制化卷积加速器提供一种可参考的硬件实现范式；学术意义在于通过模块化、开源式的设计实践为端侧加速器领域提供可复现、可扩展的研究平台，便于后续在数据流策略、稀疏加速、跨层融合等方向上开展演进研究。如图 1.1 所示，端侧 CNN 推理场景在视频监控、工业视觉、消费电子与自动驾驶辅助感知四类典型应用中呈现"高带宽数据流—边缘处理—低时延响应"的共同特征。
+
+<!-- FIG: ../figures/fig1-1-cnn-edge-scenarios.png — Claude Design 待绘 -->
+
+**图 1.1 端侧 CNN 推理应用场景全景**
+**Figure 1.1 Application landscape of edge-side CNN inference scenarios**
+
+[删除该图片，效果不佳]
 
 ### 1.2 国内外相关研究工作进展
 
@@ -100,10 +123,11 @@ CNN专用硬件加速器的研究可追溯至2014年前后，寒武纪团队提�
 
 麻省理工学院Chen等人提出的Eyeriss架构[13]在数据流（Dataflow）层面做出了奠基性贡献，系统比较了权重静止（Weight Stationary，WS）、输出静止（Output Stationary，OS）、行静止（Row Stationary，RS）等多种数据流策略，并选择RS方案以最大化卷积核、部分和、输入激活三者的协同复用；该工作在65 nm工艺下取得了200 MHz / 168 GOPS / AlexNet 35 fps @ 278 mW的端侧能效水平[13]，成为学术界CNN加速器的重要标杆。Eyeriss的主要贡献在于建立了数据流策略与片上能耗之间的定量映射，为后续工作提供了系统化的设计空间分析方法。Chen等人随后提出的Eyeriss v2[14]针对移动端稀疏网络进一步优化，引入灵活的分层mesh互联网络以支持不同层数据流切换，使单一硬件能够在不同卷积层之间动态选取最优数据复用模式。Parashar等人的SCNN[15]通过压缩稀疏权重与跳零机制进一步降低冗余计算，在剪枝后的稀疏CNN上将计算与存储能耗同步降低；Horowitz的经典能耗分析[16]指出片外DRAM访问能耗高出片内寄存器访问约三个数量级，这一结论为后续加速器"尽量把数据留在片内"的设计思路提供了理论依据。Du等人的ShiDianNao[17]将感知计算部署至传感器附近，通过近传感器架构降低数据搬运能耗，与流式计算场景的能效诉求一脉相承——其主要思想在于把数据通路尽量收缩在传感器与计算阵列之间的短链路内，避免冗长的总线与片外缓存往返。
 
-进入2020年以后，开源与标准化成为该领域的重要趋势。NVIDIA的NVDLA（NVIDIA Deep Learning Accelerator）[18]作为开源参考设计，采用CDMA-CBUF-CSC-CMAC-CACC-SDP-PDP六级独立模块流水线结构，支持从边缘小型到服务器级的多种可配置参数。其内部的CDMA通过坐标发生器实现"逻辑零填充"式Padding，读取单元在边界越界时直接向计算流水线喂0，避免了额外SRAM存储开销。NVDLA采用多模块各自独立FSM的分布式控制，模块间通过握手与中间缓冲传递数据，便于在不同SoC中按需裁剪不同流水级。在FPGA加速器方向，Genc等人发布的开源框架Gemmini[19]为系统评估DNN架构提供了完整的SoC集成方案，其在22 nm工艺下达到1 GHz时钟与512 GOPS峰值算力；Yu等人的OPU（Overlay Processor Unit）[20]通过构建CNN专用指令集overlay，使多种不同模型共享同一硬件部署，无需针对每个模型重新综合，从而显著缩短部署周期；Zhang等人的DNNBuilder[21]通过自动化工具链从高层网络描述直接生成FPGA比特流，验证了端到端编译流程的可行性。近年来，Aung等人提出的DeepFire2[22]放弃传统查找表实现方式、采用灵活资源调度策略，在多芯片FPGA上达到600 MHz运行频率；Kim等人针对移动FPGA平台设计的可重构目标检测加速器[23]通过RTL级定向优化，在能效、资源利用率与吞吐率三个维度同步提升15%至58%。国内方面，Peng等人提出的全栈FPGA加速器[24]在Intel Arria 10平台上实现8.3 TOPS峰值吞吐、功耗仅0.93 W，代表当前同类设计的能效上限之一；Zhao等人提出的紧凑查找表乘法器结构[25]结合4-bit量化方案，在FPGA上大幅压缩模型体积的同时保持分类精度。Wang等人的FPGA加速器综述[26]系统梳理了2018-2023年间的典型工作，指出端侧场景下50-500 GOPS、1-3 W是当前FPGA CNN加速器的主流工作点，亦反映出当前学术界对端侧能效甜点的共识区间。
+进入2020年以后，开源与标准化成为该领域的重要趋势。NVIDIA的NVDLA（NVIDIA Deep Learning Accelerator）[18]作为开源参考设计，采用CDMA-CBUF-CSC-CMAC-CACC-SDP-PDP六级独立模块流水线结构，支持从边缘小型到服务器级的多种可配置参数。其内部的CDMA通过坐标发生器实现"逻辑零填充"式Padding，读取单元在边界越界时直接向计算流水线喂0，避免了额外SRAM存储开销。NVDLA采用多模块各自独立FSM的分布式控制，模块间通过握手与中间缓冲传递数据，便于在不同SoC中按需裁剪不同流水级。在FPGA加速器方向，Genc等人发布的开源框架Gemmini[19]为系统评估DNN架构提供了完整的SoC集成方案，其在22 nm工艺下达到1 GHz时钟与512 GOPS峰值算力；Yu等人的OPU（Overlay Processor Unit）[20]通过构建CNN专用指令集overlay，使多种不同模型共享同一硬件部署，无需针对每个模型重新综合，从而显著缩短部署周期；Zhang等人的DNNBuilder[21]通过自动化工具链从高层网络描述直接生成FPGA比特流，验证了端到端编译流程的可行性。<!-- SYNC v4 2026-05-12: 同步自 Word — 删除 Peng et al. [24] 段, Wang 综述 [26] 改为 Mohaidat 综述 [25] -->
+近年来，Aung等人提出的DeepFire2[22]放弃传统查找表实现方式、采用灵活资源调度策略，在多芯片FPGA上达到600 MHz运行频率；Kim等人针对移动FPGA平台设计的可重构目标检测加速器[23]通过RTL级定向优化，在能效、资源利用率与吞吐率三个维度同步提升15%至58%。国内方面，Zhao等人提出的紧凑查找表乘法器结构[24]结合4-bit量化方案，在FPGA上大幅压缩模型体积的同时保持分类精度。Mohaidat等人的神经网络加速器最新综述[25]系统梳理了近年来的典型工作，指出在50-500 GOPS、1-3 W功耗限制内端侧场景下，如何平衡能效与算力已成为学术界在设计加速器时的核心关注点与共识区间。
 
-表 1.1 代表性 CNN 硬件加速器的阵列规模、工作频率、峰值算力与能效对比
-Table 1.1 Comparison of array size, clock frequency, peak performance and energy efficiency among representative CNN hardware accelerators
+表 1.2 代表性 CNN 硬件加速器的阵列规模、工作频率、峰值算力与能效对比
+Table 1.2 Comparison of array size, clock frequency, peak performance and energy efficiency among representative CNN hardware accelerators
 
 | 加速器 | 年份 | 平台 | 频率（MHz） | 峰值算力（GOPS） | 功耗（mW） | 能效（TOPS/W） | 引用 |
 |---|---|---|---|---|---|---|---|
@@ -113,15 +137,14 @@ Table 1.1 Comparison of array size, clock frequency, peak performance and energy
 | NVDLA* | 2018 | 16 nm | 1000 | 128 | ~300 | ~0.40 | [18] |
 | Eyeriss v2 | 2019 | 65 nm | 200 | 153.6 | 606 | 0.96 | [14] |
 | VTA | 2019 | ZCU102 | 333 | 170 | - | - | [27] |
-| Simba* | 2019 | 16 nm | 1800 | - | - | 6.1 | [33] |
+<!-- SYNC v4 2026-05-12: 同步自 Word — Simba 行数据更新, 删除 Peng et al. 行 -->
+| Simba | 2019 | 16 nm | 1800 | 128000 | 65000 | 1.97 | [33] |
 | OPU | 2020 | XC7Z045 | 200 | 160 | 8700 | 0.018 | [20] |
 | Gemmini | 2021 | 22 nm | 1000 | 512 | 380 | 1.35 | [19] |
-| Peng et al. | 2022 | Arria 10 | 1000 | 8300 | 930 | 8.92 | [24] |
 
+<!-- SYNC v4 2026-05-12: 同步自 Word — 删除 Peng / Simba 注释 -->
 *NVDLA可配置为不同阵列形状。
 *Eyeriss v2能效按0%稀疏率测得；激活值稀疏被利用时该值更高。
-*Peng等人报告的是全栈加速器的片上活动功耗；板级功耗高于此值。
-*Simba在最优工作点上单芯粒能效达6.1 TOPS/W；36芯粒MCM整体能效与单芯粒结果不同。
 
 #### 1.2.2 软硬件协同调度与流式计算加速研究进展
 
@@ -133,33 +156,54 @@ Table 1.1 Comparison of array size, clock frequency, peak performance and energy
 
 数据流可重构（Dataflow Reconfigurability）是近年来该领域的活跃方向。Kwon等人提出的MAERI[31]通过可重构mesh互联支持WS、OS、RS等多种数据流在同一硬件上动态切换；Qin等人的SIGMA[32]进一步将该思路扩展至不规则稀疏矩阵乘法，使加速器能够在保持高利用率的前提下应对变化的张量形状。这类工作代表了软件指定数据流的技术路径，其主要代价是互联结构的额外面积与控制复杂度。在端侧单层卷积场景下，最优数据流策略（如WS+滑窗复用+输出通道广播）通常相对固定，柔性互联带来的面积与控制开销在单核场景下收益边际递减；而当任务粒度从单核扩展到多核多层时，灵活性的需求会迁移到核间互联与任务编排层面，由此催生了对单核内部紧凑数据流与核间可重构互联分层处理的需求。
 
-多核加速器的调度问题亦得到持续关注。NVIDIA与MIT合作的Simba[33]采用36芯片多核mesh架构，通过核间互联将大模型划分至多芯片并行执行，成为后续多核NPU研究的重要参考。Simba的工作揭示了多核扩展中数据路由与负载均衡的若干工程难点，特别是当模型层间张量形状变化较大时，固定划分策略往往难以兼顾各层的核利用率。Tan等人研究的NN-Baton[34]针对分布式NPU提出层级化的任务划分与负载均衡策略，从算子、张量、子张量三层粒度建立任务搜索空间；近年来Park等人进一步提出面向异构多核的任务调度框架[35]，支持多核之间能力差异下的全局调度。在FPGA端，Wang等人提出的分布式CNN推理框架[36]在多FPGA平台上实现跨层流水推理。多核调度的主要难点在于数据路由与核间同步：当不同核执行的层在张量形状、计算密度与数据依赖上存在差异时，简单的同步广播会导致显著的等待时间；如何在静态调度与动态反馈之间取得平衡，是当前多核CNN加速器仍在探索的开放问题。
+<!-- SYNC v4 2026-05-12: 同步自 Word — 删除 Park 异构多核 [35] 一句, Wang 分布式 [36] 改为 [34] -->
+多核加速器的调度问题亦得到持续关注。NVIDIA与MIT合作的Simba[33]采用36芯片多核mesh架构，通过核间互联将大模型划分至多芯片并行执行，成为后续多核NPU研究的重要参考。Simba的工作揭示了多核扩展中数据路由与负载均衡的若干工程难点，特别是当模型层间张量形状变化较大时，固定划分策略往往难以兼顾各层的核利用率。Tan等人研究的NN-Baton[34]针对分布式NPU提出层级化的任务划分与负载均衡策略，从算子、张量、子张量三层粒度建立任务搜索空间。在FPGA端，Wang等人提出的分布式CNN推理框架[36]在多FPGA平台上实现跨层流水推理。多核调度的主要难点在于数据路由与核间同步：当不同核执行的层在张量形状、计算密度与数据依赖上存在差异时，简单的同步广播会导致显著的等待时间；如何在静态调度与动态反馈之间取得平衡，是当前多核CNN加速器仍在探索的开放问题。
 
-除CNN类网络外，新型骨干网络对加速器架构亦提出了新的扩展需求。大模型时代Vision Transformer（ViT）[37]的兴起对CNN加速器架构也提出了新挑战。Sun等人的ViTA[38]、You等人的ViTCoD[39]等ViT专用加速器通过算法硬件协同剪枝、极化注意力图等方式降低计算复杂度。尽管ViT的自注意力与CNN的滑窗卷积访存特征差异较大，但二者在张量乘累加这一基础算子层面仍有共性，相关协同设计思想可为未来FLUX_CNN扩展至Transformer类算子提供借鉴。
+<!-- SYNC v4 2026-05-12: 同步自 Word — Sun 等人引用从 ViTA[38] 改为 VAQF[36], You 等人 ViTCoD 引用号同步调整 -->
+除CNN类网络外，新型骨干网络对加速器架构亦提出了新的扩展需求。大模型时代Vision Transformer（ViT）[35]的兴起对CNN加速器架构也提出了新挑战。Sun等人的VAQF[36]、You等人的ViTCoD[37]等ViT专用加速器通过算法硬件协同剪枝、极化注意力图等方式降低计算复杂度。尽管ViT的自注意力与CNN的滑窗卷积访存特征差异较大，但二者在张量乘累加这一基础算子层面仍有共性，相关协同设计思想可为未来FLUX_CNN扩展至Transformer类算子提供借鉴。
 
-综合上述分析可见，端侧CNN加速器发展呈现三条明显趋势：其一，从全硬化控制向软硬协同调度演化；其二，从层内优化向跨层流式融合扩展；其三，从单核高性能向多核高能效延伸。然而现有工作在以下两方面仍存在研究空间：第一，多数FPGA加速器沿用完整指令流控制方案，当网络结构固定、仅卷积参数变化时，指令流取指与译码开销存在冗余，指令序列复杂度也随Padding、Cin/Cout切片、轮次分块等特性迅速膨胀；第二，行级流式跨层融合的硬件接口尚未标准化，多核数据路由与同步机制仍是个案设计，缺少可在不同网络与不同核数下复用的统一调度抽象。本论文针对上述空间，从微观寄存器配置与宏观指令流调度两个层面展开研究。
+综合上述分析可见，端侧CNN加速器发展呈现三条明显趋势：其一，从全硬化控制向软硬协同调度演化；其二，从层内优化向跨层流式融合扩展；其三，从单核高性能向多核高能效延伸。然而以"qHD/1080p 单 batch 实时"为核心约束的端侧场景下，现有工作可按局限性质分为四类，分别构成本论文拟填补的研究空间。
+
+第一类，**核内控制开销冗余**。以 VTA[27]、Gemmini[19]、NVDLA[18] 为代表的开源参考设计沿用张量指令流或多模块独立 FSM 的控制范式；在端侧静态卷积场景下，推理阶段网络拓扑与卷积参数均已固定，运行时取指、译码、依赖跟踪等通用控制开销对该场景收益有限，反而成为低功耗包线下不可忽略的功耗与面积负担。
+
+第二类，**单 batch 高分辨率流式接口缺失**。以 TPU[12]、Simba[33] 为代表的数据中心方案面向大 batch 吞吐优化，以 DianNao[11]、Eyeriss[13,14]、SCNN[15] 为代表的学术里程碑主要在 224×224 量级图像上验证；在 qHD/1080p 单 batch 流式输入下，整图无法纳入片上 IFB，且现有架构缺少行级触发下层计算的硬件接口。近期 Stream[Stream]、DeepFrack[DeepFrack]、ZigZag[ZigZag] 等设计空间探索框架将层融合自动化推进至算子级 fusion 与离线搜索阶段，但行级流式融合的硬件接口规则化仍是开放问题；同时多核加速器的数据路由与同步机制仍是个案设计，缺少可在不同网络与不同核数下复用的统一调度抽象。
+
+第三类，**PE 利用率随层形状骤降**。固定阵列在小 Cin、大 stride、任意 K 的卷积层上利用率显著低于峰值；MAERI[31]、SIGMA[32] 等可重构数据流方案通过柔性互联部分缓解，但引入显著的互联面积与控制开销，对端侧严格功耗预算并不友好。轻量的"固定阵列 + 编译器侧重映射"方案在该方向上尚缺少系统化的端侧实践。
+
+第四类，**多模型快速适配的工具链能力**。端侧场景普遍承载多种骨干网络的并行部署需求，OPU[20]、DNNBuilder[21] 等已展示编译流程的工程可行性，但工具链覆盖范围与硬件接口耦合度仍以各家定制设计为主，缺少与"核内零控制开销"架构紧密协同的端到端部署链路。
+
+需说明的是，本论文面向具体硬件实现而非设计空间探索，与 ZigZag[ZigZag] 等以参数搜索为目标的工具链定位不同；评估部分（§5）以控制变量方式逐项剥离调度开销，不依赖外部 DSE 框架。本论文针对上述四类空间，从微观寄存器配置与宏观指令流调度两个层面展开研究，对应的具体创新内容在 1.3 节展开。
 
 ### 1.3 本论文的主要研究内容
 
-针对上述研究空间，本论文提出面向端侧流式计算场景的分层调度卷积加速器FLUX_CNN，主要研究工作包括：
+针对1.2.2节归纳的四类研究空间，本论文设计并实现卷积加速器FLUX_CNN，从核内控制范式、多核流式调度、PE利用率优化与软件部署四个方向展开核心创新工作，并以配套的工程实现承载这些创新落地于FPGA验证平台。
 
-第一，提出"微观寄存器配置 + 宏观指令流调度"的分层架构方案。核内采用配置寄存器 + 6层嵌套自循环FSM（cs → yout → tile → cins → round → pos）完成单层全部调度，无需运行时取指译码；核间保留宏指令流接口，通过Task Descriptor编排多核多层协作与数据路由。该方案兼顾单核高能效与多核高灵活性，使硬件能在严格的端侧功耗包线下保持充分的扩展空间。
+第一，提出**"核内寄存器配置 + 核间描述符链表"的双层调度架构**。核内采用配置寄存器 + 6层嵌套自循环FSM（cs → yout → tile → cins → round → pos）完成单层全部调度，cfg_regs一次写入即可启动，推理阶段无运行时取指、译码与依赖跟踪开销；核间保留Task Descriptor链表接口，编排多层串接与多核数据路由。该架构以"核内零控制开销 + 核间宏粒度可编程"的形式回应第一类研究空间——通用指令流控制范式在端侧静态卷积下的控制开销冗余。
 
-第二，设计16×16 INT8 MAC阵列与三级寄存器堆（WRF / ARF / PARF）数据通路，建立权重静止、激活值滑窗复用、输出通道广播三层数据复用策略；实现硬件零乘除法的地址生成，支持任意$K \times K$卷积核、任意步长、任意Cin/Cout切片，以及$K^2$ > WRF深度时的轮次分块（round chunking），从而在固定阵列规模下覆盖典型端侧CNN模型的全部卷积层形状。
+第二，提出**单 batch 高分辨率行级流式 + 多核 W 维切片调度机制**。单核内行级ring使上层产出若干行OFM即触发下层计算，将片上缓冲需求从*O*(H×W)降至*O*(K×W)；多核之间采用W维切片，每核处理一段图像宽度子图加必要边界冗余列，相邻核之间通过跨核SRAM直送把上一层OFM直接写入下一核IFB，避免经过外部DDR中转；多核同步通过描述符链表完成，不依赖中央调度器，扩展到$N=2$与$N=4$时单核RTL无需改动。该机制回应第二类研究空间——qHD/1080p单batch流式输入下的行级流式接口缺失与多核统一调度抽象缺失。
 
-第三，针对小通道场景下PE阵列利用率受限的问题，在编译器侧提出Y维折叠（Ky-fold）与空间到深度（Space-to-Depth，S2D）两种重映射方法。Y维折叠将卷积核*Y*维循环折叠到Cin方向，使Cin < 16的层在不改硬件接口的前提下填满16路Cin并行；S2D则在步长大于1的层将4个空间相位折叠到Cin方向，使降采样层的有效Cin同步扩张4倍。两种方法分别覆盖小Cin与大步长两种典型低利用率情形，且均不引入额外硬件代价。
+第三，提出**多维度数据复用 + Ky-fold / S2D 编译器侧 PE 利用率重映射**。硬件侧建立16×16 INT8 MAC阵列与三级寄存器堆（WRF / ARF / PARF）数据通路，采用输入通道广播、权重静止、激活值滑窗行复用与输出部分和累加四层复用策略，结合硬件零乘除法地址生成，支持任意$K \times K$卷积核、任意步长、任意Cin/Cout切片及$K^2$ > WRF深度时的轮次分块（round chunking），在固定阵列规模下覆盖典型端侧CNN模型的全部卷积层形状。编译器侧进一步引入Y维折叠（Ky-fold）与空间到深度（Space-to-Depth，S2D）两种重映射方法：Ky-fold将卷积核*Y*维循环折叠到Cin方向，使Cin < 16的层在不改硬件接口的前提下填满16路Cin并行；S2D在步长大于1的层将4个空间相位折叠到Cin方向，使降采样层有效Cin扩张4倍。两种方法均不引入额外硬件代价，回应第三类研究空间——固定阵列在小Cin / 大stride / 任意K 层上的PE利用率骤降。
 
-第四，针对端侧多核扩展中跨核数据搬运与中转开销问题，构建多核扩展层。多核之间采用W维切片调度，每核处理一段每核子图像宽度子图加上必要的边界冗余列；相邻核之间通过跨核SRAM直送把上一层OFM直接写入下一核的IFB区域，避免经过外部DDR中转。多核之间的同步通过描述符链表完成，不依赖中央调度器，扩展到$N=2$与$N=4$时单核RTL无需改动。
+第四，提出**端到端编译器工具链**。面向PyTorch / TensorFlow训练模型，构建覆盖前端算子解析与量化、中端图级调度与层间融合、后端代码生成与Task Descriptor编排的端到端部署链路。前端支持Conv2D、BatchNorm、ReLU、Pooling、Residual Add等典型CNN算子的适配；中端负责多层网络的层间融合、核间任务切分与Ky-fold / S2D策略决策；后端预算各地址步进、轮次分块参数与Cin/Cout切片策略，产出各核的cfg_regs取值与描述符链表。工具链使新模型部署目标在软件层完成而无需重新设计RTL，回应第四类研究空间——多模型快速适配的工具链能力。
 
-第五，针对FPGA验证平台上DSP资源的有效利用，提出一种利用OC-broadcast数据流中相邻列共享激活值特性、把两个INT8乘法合并到单个DSP48E1块中的硬件无关映射方案。该方案利用DSP48E1块25 bit×18 bit乘法器的位宽冗余，在A端打包两组相邻列的INT8权重、B端共享同一拍激活值；输出端通过位提取与符号校正还原两路独立乘积。该映射在不改动RTL数据通路接口的前提下，使16×16阵列的乘法器全部由DSP块承担，显著降低LUT占用并提升时序裕度。
+第五（工程实现配套）。围绕上述四条核心创新，论文进一步给出两项工程实现配套：其一，针对FPGA验证平台上DSP资源的有效利用，提出利用输入通道广播数据流下16列PE共享同一拍16-Cin激活值向量的特性、把两个INT8乘法合并到单个DSP48E1块中的硬件无关映射方案——利用DSP48E1块25 bit×18 bit乘法器的位宽冗余，A端打包两组相邻列INT8权重、B端共享同一拍激活值，输出端通过位提取与符号校正还原两路独立乘积，使16×16阵列的乘法器全部由DSP块承担，显著降低LUT占用并提升时序裕度；其二，在Xilinx Kintex-7 XC7K325T-2平台完成路由后实现，给出$N=1$ / $N=2$ / $N=4$三种配置的资源占用、布线后最高时钟频率与ResNet11整网帧率，并通过将SmartConnect IP、偏置寄存器堆、仲裁器逐个替换为零延迟理想模型的方式，对各调度因素在整网周期数中的贡献给出基于实测的定量分解。
 
-第六，构建面向FLUX_CNN加速器的软件工具链与验证框架，最终目标是实现TensorFlow / PyTorch训练模型的端到端部署。完整工具链规划包含三阶段：前端算子解析（Operator Parsing）与量化，支持Conv2D、BatchNorm、ReLU、Pooling、Residual Add等典型CNN算子的适配；中端图级调度（Graph-level Scheduling），负责多层网络的层间融合、核间任务切分与Task Descriptor生成；后端代码生成，预算各地址步进、轮次分块参数与Cin/Cout切片策略，产出各核的配置寄存器取值与宏指令流。
-
-第七，完成综合评估与控制变量验证。在Xilinx Kintex-7 XC7K325T-2平台完成路由后实现，给出$N=1$ / $N=2$ / $N=4$三种配置的资源占用、布线后最高时钟频率与ResNet11整网帧率；并通过将SmartConnect IP、偏置寄存器堆、仲裁器逐个替换为零延迟理想模型的方式，对各调度因素在整网周期数中的贡献给出基于实测的定量分解。
-
+<!-- SYNC v4 2026-05-12: 同步自 Word — 第六部分名称由 "结论与展望" 改为 "结论" -->
 ### 1.4 论文组织结构
 
-全文按章节顺序展开研究背景与意义、理论基础、总体方案、具体实现、验证与性能分析、结论与展望六个部分。
+全文按章节顺序展开研究背景与意义、理论基础、总体方案、具体实现、验证与性能分析、结论六个部分。
+
+第一章 文献综述。介绍端侧CNN加速器的研究背景与意义，对比端侧与云端推理差异；综述CNN硬件加速器架构、软硬协同调度与跨层流式融合三条研究脉络的国内外进展，按"qHD/1080p单batch实时"标尺归纳出4类研究空间；提出本论文的主要研究内容与各章组织结构。
+
+第二章 理论基础。介绍CNN的基本层结构；讨论经典数据流的复用关系与片上存储模式；介绍加速器常用基础技术；讨论非一致性内存访问与存储层级访存能耗差异两项体系结构原理；介绍两类模型量化方法。为后续加速器架构与模块实现提供理论铺垫。
+
+第三章 总体方案。给出FLUX_CNN加速器的设计目标与约束、总体架构、调度方案与数据流选择四个层面的整体设计。
+
+第四章 加速器具体实现。按模块顺序展开寄存器传输级实现细节，依次介绍5个数据通路模块、配置寄存器与6层嵌套自循环FSM的协同机制、Ky-fold与S2D两种编译器侧重映射方法、DMA子系统、多核扩展层与DSP块跨列复用映射方案。
+
+第五章 验证与性能分析。介绍验证环境与方法、功能仿真验证、板级实现验证、性能分析与对比分析五个层面的实验结果，给出与代表性CNN加速器在峰值算力、能效与端侧适配性维度的横向对照。
+
+第六章 结论。归纳全文主要工作与创新点，从短期、中期、长期三个时间尺度展望后续研究方向。
 
 ---
 
@@ -275,13 +319,14 @@ QAT方法在训练阶段即引入量化噪声的模拟，通过反向传播让�
 
 ### 3.1 引言
 
-面向端侧流式计算场景的卷积加速器FLUX_CNN在算力、功耗、面积与调度灵活性之间存在多重权衡。以端侧推理在小面积、低功耗下保持稳定吞吐为目标，加速器采用控制核与加速核分工的双层结构：加速核内由5个流水模块加1个共享配置寄存器堆通过valid-ready握手互联，对外仅暴露1个AXI4主接口与1个AXI-Lite从接口；多核扩展层提供$N=1$/2/4三种核数配置。调度方案采用核内寄存器配置与核外宏观指令流相结合的分层结构，并选用权重静止配合激活值滑窗复用与输出通道广播的复合数据流。下文围绕设计目标与约束、总体架构、调度方案与数据流选择四个层面分别展开。
+面向端侧流式计算场景的卷积加速器FLUX_CNN在算力、功耗、面积与调度灵活性之间存在多重权衡。以端侧推理在小面积、低功耗下保持稳定吞吐为目标，加速器采用控制核与加速核分工的双层结构：加速核内由5个流水模块加1个共享配置寄存器堆通过valid-ready握手互联，对外仅暴露1个AXI4主接口与1个AXI-Lite从接口；多核扩展层提供$N=1$/2/4三种核数配置。调度方案采用核内寄存器配置与核外宏观指令流相结合的分层结构，并在16×16 PE阵列上同时实施输入通道广播、权重静止、激活值滑窗行复用与输出部分和累加四层复用数据流。下文围绕设计目标与约束、总体架构、调度方案与数据流选择四个层面分别展开。
 
 ### 3.2 设计目标与约束
 
-端侧流式计算场景具有三个共性需求。一是输入数据持续到达，加速器需要支持任意H×W尺寸的特征图，而不是只能处理一张图后停机；二是供电与散热受限，单帧推理的能耗预算往往在毫焦量级；三是部署形态多样，从智慧城市的视频监控盒到工业相机的缺陷检测板，再到消费电子的手势识别芯片，对面积与成本敏感。这些需求共同决定了端侧加速器与云端加速器在设计目标上的差异：端侧不追求峰值TOPS，而追求在小面积、低功耗下保持稳定的实测吞吐。
+<!-- SYNC v4 2026-05-12: 同步自 Word — "峰值TOPS" 改为 "峰值算力"; 第一个目标加 (PPA) -->
+端侧流式计算场景具有三个共性需求。一是输入数据持续到达，加速器需要支持任意H×W尺寸的特征图，而不是只能处理一张图后停机；二是供电与散热受限，单帧推理的能耗预算往往在毫焦量级；三是部署形态多样，从智慧城市的视频监控盒到工业相机的缺陷检测板，再到消费电子的手势识别芯片，对面积与成本敏感。这些需求共同决定了端侧加速器与云端加速器在设计目标上的差异：端侧不追求峰值算力，而追求在小面积、低功耗下保持稳定的实测吞吐。
 
-第一个目标是算力—功耗—面积的均衡。本设计选用16×16的INT8乘加阵列（NUM_COL=NUM_PE=16，DATA=8 bit，PSUM=32 bit），共256个MAC单元，单时钟周期理论峰值256 ops。INT8量化后乘法器面积约为32位浮点的十分之一以下，单次乘加的能耗也大幅下降。乘加阵列规模选16×16而非更大，是因为端侧典型卷积层的Cin/Cout经常出现16量级（如ResNet早期层Cin=3、64，MobileNet深度卷积Cin=1），更大的阵列在这些层会出现严重的列空转，得不偿失。
+第一个目标是算力—功耗—面积（PPA）的均衡。本设计选用16×16的INT8乘加阵列（NUM_COL=NUM_PE=16，DATA=8 bit，PSUM=32 bit），共256个MAC单元，单时钟周期理论峰值256 ops。INT8量化后乘法器面积约为32位浮点的十分之一以下，单次乘加的能耗也大幅下降。乘加阵列规模选16×16而非更大，是因为端侧典型卷积层的Cin/Cout经常出现16量级（如ResNet早期层Cin=3、64，MobileNet深度卷积Cin=1），更大的阵列在这些层会出现严重的列空转，得不偿失。
 
 第二个目标是支持任意输入尺寸而不让片上存储成为瓶颈。本设计将片上IFB（Input Feature Buffer）固定为8192 word、OFB（Output Feature Buffer）固定为2048 word，在编译期按行粒度切分，让IFB与OFB都退化为环形缓冲。一张480×640的VGA图像（约4.9 MB）只占用IFB中10 KB量级的滚动窗口，仍能在一次启动内单遍跑完，不需要把整图全部装入片上。
 
@@ -298,7 +343,7 @@ QAT方法在训练阶段即引入量化噪声的模拟，通过反向传播让�
 
 加速器对外仅暴露两个接口：一个AXI4完整主接口与一个AXI-Lite从接口。AXI4主接口连接外部DDR控制器，承担IFM、OFM、权重、偏置与残差数据的批量搬运；AXI-Lite从接口连接控制核，用于核启动信号、状态寄存器与少量启动期参数的读写。这一接口形态使加速器易于挂接到Zynq、定制SoC或其他ARM/RISC-V控制核为主的端侧平台，集成边界清晰。
 
-加速核内部由5个数据通路模块加1个共享配置寄存器堆（cfg_regs）组成。如图3.2所示核内数据通路结构。第一个模块是行缓存模块（line_buffer），承担将片外像素流转为片上K×K卷积窗口的职能，输出激活值向量给MAC阵列；同时维护行级环形缓冲并通过行信用机制向IDMA反压。第二个模块是MAC阵列模块（mac_array），由16列×16 PE共256个INT8乘加单元组成，列间广播激活值，每列对应一个输出通道，列内16 PE沿Cin方向并行累加，单周期消耗1拍激活值向量与16列权重，输出16路部分和。第三个模块是部分和累加模块（parf_accum），对来自MAC阵列的部分和按cin切片维度累加；累加器拆分为16个独立SRAM实例（每列一个，外壳共享写地址与写使能），每列容量PARF=32，匹配输出通道广播的数据流。第四个模块是输出特征图写出模块（ofb_writer），负责接收累加完成的部分和，依次完成偏置加、量化移位、饱和截断到INT8、可选的残差融合，再写入OFB。第五个模块是权重缓存模块（wgt_buffer），从权重缓冲（WB，1024 word）侧路向MAC阵列各列分发权重，配合权重静止数据流让权重在一段时间内保持稳定。
+加速核内部由5个数据通路模块加1个共享配置寄存器堆（cfg_regs）组成。如图3.2所示核内数据通路结构。第一个模块是行缓存模块（line_buffer），承担将片外IFM行流组织为IFB行级环形缓冲、并按6层嵌套FSM节拍向MAC阵列发射16-Cin激活值像素向量的职能；$K \times K$窗口本身不由本模块组装，而由下游MAC阵列对紧邻PE的激活值寄存器堆ARF=32按$k_x$ / $iss_{pos}$偏移取值完成。模块同时通过行信用机制向IDMA反压。第二个模块是MAC阵列模块（mac_array），由16列×16 PE共256个INT8乘加单元组成，列间广播激活值，每列对应一个输出通道，列内16 PE沿Cin方向并行累加，单周期消耗1拍激活值向量与16列权重，输出16路部分和。第三个模块是部分和累加模块（parf_accum），对来自MAC阵列的部分和按cin切片维度累加；累加器拆分为16个独立SRAM实例（每列一个，外壳共享写地址与写使能），每列容量PARF=32，匹配输入通道广播下16路Cout并行与激活值滑窗行复用下32个相邻滑窗并发的数据流形态。第四个模块是输出特征图写出模块（ofb_writer），负责接收累加完成的部分和，依次完成偏置加、量化移位、饱和截断到INT8、可选的残差融合，再写入OFB。第五个模块是权重缓存模块（wgt_buffer），从权重缓冲（WB，1024 word）侧路向MAC阵列各列分发权重，配合权重静止数据流让权重在一段时间内保持稳定。
 
 5个模块之间用valid-ready握手互联，任意一方反压时另一方自动停顿。模块各自维护本地计数器，依次走完yout/xout/kx/ky/cin/cout_slice/cin_slice循环；不同模块的计数器自然形成流水关系，没有中心仲裁。模块边界处的弹性拼接使得反压期间在途数据不丢失，相邻tile之间也允许填充与排空重叠，相邻轮次之间允许指针跨界连续推进，提升了整条流水线的稳态利用率。
 
@@ -322,21 +367,22 @@ cfg_regs是加速核与外部交互的配置寄存器堆，采用双写口设计
 
 ### 3.5 数据流选择
 
-加速核的数据流选择需要在权重复用、激活值复用、部分和复用三者之间作出取舍。本设计选用权重静止（Weight-Stationary，WS）配合激活值滑窗复用与输出通道广播的复合数据流。
+加速核的数据流选择需要在权重复用、激活值复用、部分和复用三者之间作出取舍。本设计在16×16 PE阵列上同时实施四层数据流复用：**输入通道广播**、**权重静止**、**激活值滑窗行复用**与**输出部分和累加**。四者分别从输出通道维、时间维、空间W维与累加维降低片上访存频度，与卷积循环嵌套（cout / cin / yout / xout / K²）的不同维度一一对应。
 
-权重静止的核心思想是：在一段时间内，让每个PE持有的权重保持不变，重复用于多次乘加运算。WS在卷积层中天然成立，因为同一组权重要在整张OFM的所有空间位置上重复使用一次。在本设计中，权重静止体现在权重缓冲WB与权重寄存器堆WRF=32的双层结构：一层卷积启动时，wgt_buffer把当前cout_slice所需的全部权重一次性从WB读入WRF；之后整个cout_slice内所有空间位置的乘加都直接消费WRF内的权重，不再访问WB。权重静止使片外权重带宽与计算频率解耦，匹配端侧场景下权重数据量大但访问规整的特征。
+**输入通道广播**让16个输入通道的激活值向量在同一拍内被16列PE共享消费。每周期，行缓存模块对外输出1拍激活值向量，包含当前空间位置上16个Cin通道的像素值；这1拍向量同时广播到16列PE，列c的16个PE各自以16个Cin的激活值乘以对应权重并沿Cin维累加，产出输出通道cout=c的1路部分和。同一拍激活值跨16列共享、各列权重独立，使激活值的片上分发开销与输出通道数解耦——扩展输出通道并行度只需增加列数，无需复制激活值通路。
 
-激活值滑窗复用利用了相邻空间位置卷积窗口的列重叠性：相邻空间位置的卷积窗口存在K-stride列的重叠，重叠部分的激活值不需要重复读取。本设计通过行缓存模块的环形缓冲实现激活值复用：当K=3、stride=1时，相邻两个yout的窗口共享2行，相邻两个xout的窗口共享2列，行缓存模块只需在每个新行到来时写入一行，每个新列推进一个写指针，K×K窗口数据的访存量由K²降至接近1。激活值寄存器堆ARF=32缓存当前窗口供PE重复读取，使PE端的激活值访问集中在ARF内部，行缓存的访问频度随之下降。
+**权重静止**让WRF=32内的权重在连续32个周期内保持不变。本设计的权重静止不仅体现为"一层内权重不出WB"，更体现为更细粒度的"32周期内权重不出WRF"。这一性质来自于下文激活值滑窗行复用所确立的"32周期处理32个相邻空间位置"的执行节奏：32个滑窗位置共用同一组(Cin, Cout)权重，因此每32拍才需要从WB向WRF重载一次，权重更新频率降至原来的1/32，权重侧的片上带宽与功耗随之同步下降。
 
-输出通道广播则让同一空间位置的所有输出通道共用激活值：对同一个空间位置，所有输出通道使用相同的激活值乘以不同的权重。本设计将16列PE配置为16个并行输出通道，每周期由行缓存模块广播1拍激活值向量到16列，每列消费各自的权重产生1路输出通道的部分和。输出通道广播让激活值的片上分发开销与输出通道数解耦：增加输出通道维并行度只需要增加列数，不需要复制激活值通路。
+**激活值滑窗行复用**是本设计的关键机制：激活值寄存器堆ARF=32并不缓存单个$K \times K$卷积滑窗的元素，而是缓存当前行内**32个连续W维像素**。PE阵列在32个周期内对这32个相邻空间位置的滑窗依次发起卷积，共用同一组权重并各自累加自身的部分和——视上层时序为"同时进行32个滑窗的计算"。当32周期完成、滑窗向W维右移一段时，下一组滑窗需要的像素是2~33号，其中2~32号已经存在于ARF内，行缓存模块只需向ARF补入1个新像素即可；这种逐拍滑动的"切片级"复用使行缓存到ARF的写入频度降至1/32 wave，ARF成为PE端激活值访问的主入口。
 
-权重静止与输出通道广播的组合让16×16 PE阵列在片上呈现"每列一个输出通道、每列内沿Cin方向16 PE并行"的二维结构，与卷积循环嵌套中的cout维与cin维自然对齐。部分和累加沿列内方向走cin_slice累加，每列累加器使用独立SRAM，使16列累加在结构上彼此隔离、不发生端口冲突。
+**输出部分和累加**对应32个并行滑窗的部分和聚合：每列PE配备PARF=32个累加单元，第i个PARF单元持续累加第i个滑窗位置在Cin维与$K^2$维上的所有乘加结果。$K \times K$内偏移与Cin切片由6层嵌套FSM按节拍推进，PARF在一个完整卷积循环结束时直接给出32个相邻空间位置的最终部分和向量。16列PARF使用各自独立的SRAM端口，列间不发生端口冲突，结构上完全可并行。
 
-值得注意的是，输出通道广播在物理实现层面带来一个结构性特征：每周期同一行激活值向量被16列同时消费，列与列之间共享同一拍激活值数据，仅权重各自独立。这一"激活值跨列共享、权重列内独立"的对称性是输出通道广播数据流在物理实现层面的固定性质。
+四层数据流复用的组合让16×16 PE阵列在物理实现层面呈现一个三维对称结构：W维32并行（时分复用、单 PE 列内推进）、Cin维16并行（列内 16 PE 同时累加）、Cout维16并行（16 列 PE 同时输出16路）。权重静止把权重带宽折减为$1/32$；激活值滑窗行复用把行缓存→ARF的带宽折减为$\sim 1/32$；输入通道广播把激活值的列间分发开销折减为$1/16$；输出部分和累加让部分和始终留在阵列内的PARF中，完全不出阵列。四者叠加使16×16 PE阵列在端侧严格的功耗包线下保持稳定的高利用率。
 
 ### 3.6 本章小结
 
-本章给出了FLUX_CNN加速器的总体方案。面向端侧流式计算场景下算力—功耗—面积均衡、任意输入尺寸支持、片上控制简单性与调度层次化四项约束，加速器在整体上采用控制核与加速核组成的双层结构：加速核内部由5个数据通路模块加1个共享配置寄存器堆通过valid-ready握手互联，外部仅暴露1个AXI4主接口与1个AXI-Lite从接口；多核扩展层在不改动单核RTL的前提下提供$N=1$/2/4的核数可选。调度方案在核内采用配置寄存器与6层嵌套自循环FSM完成单层全部循环嵌套展开，在核外采用宏观指令流与任务描述符链表完成跨层与跨核任务编排，使硬件保持最简静态结构而灵活性集中在编译器侧。数据流层面，加速核选用权重静止配合激活值滑窗复用与输出通道广播的复合数据流，将权重带宽与计算频率解耦、把窗口复用集中至行缓存环形结构、把输出通道并行度展开至16列PE，并由此带来相邻列共享激活值的结构性特征。这些方案共同构成FLUX_CNN加速器具体实现的整体框架，模块级实现细节将在后续具体展开。
+本章给出了FLUX_CNN加速器的总体方案。面向端侧流式计算场景下算力—功耗—面积均衡、任意输入尺寸支持、片上控制简单性与调度层次化四项约束，加速器在整体上采用控制核与加速核组成的双层结构：加速核内部由5个数据通路模块加1个共享配置寄存器堆通过valid-ready握手互联，外部仅暴露1个AXI4主接口与1个AXI-Lite从接口；多核扩展层在不改动单核RTL的前提下提供$N=1$/2/4的核数可选。调度方案在核内采用配置寄存器与6层嵌套自循环FSM完成单层全部循环嵌套展开，在核外采用宏观指令流与任务描述符链表完成跨层与跨核任务编排，使硬件保持最简静态结构而灵活性集中在编译器侧。<!-- SYNC v4 2026-05-12: 同步自 Word — 删除末尾 "模块级实现细节将在后续具体展开" 一句 -->
+数据流层面，加速核在16×16 PE阵列上同时实施输入通道广播、权重静止、激活值滑窗行复用与输出部分和累加四层复用：每周期一拍16-Cin激活向量跨16列广播，WRF内权重在32周期内保持不变（更新频率降至1/32），ARF=32以"32个连续W维像素"为单位实现切片级滑窗行复用，PARF=32累加32个相邻滑窗的部分和且始终不出阵列。四层复用与卷积循环嵌套的cout/cin/W/累加维分别对应，把片外带宽、片上分发与累加功耗按维度分层折减。这些方案共同构成FLUX_CNN加速器具体实现的整体框架。
 
 ---
 
@@ -344,24 +390,32 @@ cfg_regs是加速核与外部交互的配置寄存器堆，采用双写口设计
 
 ### 4.1 引言
 
-FLUX_CNN加速器的具体实现按模块顺序展开：加速核内5个数据通路模块（行缓存模块、MAC阵列模块、部分和累加模块、SDP后处理模块、权重缓存模块）承担窗口生成、乘加计算、部分和累加、量化后处理与权重供给五项职责；配置寄存器与6层嵌套自循环FSM协同完成单层全部调度；编译器侧的Y维折叠与空间到深度（S2D）两项变换覆盖小Cin与大步长两类低利用率场景；DMA子系统、AXI接口集成与多核W切片扩展层承接片外数据搬运与多核扩展；最后给出16×16 INT8 MAC阵列在DSP48E1块上的跨列复用映射方案。
+FLUX_CNN加速器的具体实现按模块顺序展开：加速核内5个数据通路模块（行缓存模块、MAC阵列模块、部分和累加模块、SDP后处理模块、权重缓存模块）承担激活值像素供给、乘加计算、部分和累加、量化后处理与权重供给五项职责；配置寄存器与6层嵌套自循环FSM协同完成单层全部调度；编译器侧的Y维折叠与空间到深度（S2D）两项变换覆盖小Cin与大步长两类低利用率场景；DMA子系统、AXI接口集成与多核W切片扩展层承接片外数据搬运与多核扩展；最后给出16×16 INT8 MAC阵列在DSP48E1块上的跨列复用映射方案。
 
 ### 4.2 行缓存模块
 
-行缓存模块（line_buffer）承担将片外像素流转换为片上$K \times K$卷积窗口的职能，是片外IFM与MAC阵列之间的桥梁。如图4.1所示行缓存模块结构图。
+行缓存模块（line_buffer）承担把片外IFM行流组织为片上行级环形缓冲，并按6层嵌套FSM节拍向MAC阵列发射16-Cin激活值像素的职能，是片外IFM与MAC阵列之间的桥梁。它本身并不输出$K \times K$窗口——$K \times K$窗口的"组装"由MAC阵列模块在(*k_x*, *iss_pos*)内循环对激活值寄存器堆（Activation Register File，ARF）按地址偏移取值完成，使行缓存模块的对外接口收敛为"每周期一拍16-Cin像素向量"。如图4.1所示行缓存模块结构图。
 
 **图 4.1 行缓存模块结构图**
 **Figure 4.1 Line buffer module structure**
 
-行缓存模块的存储核心是一块容量为IFB=8192 word的输入特征缓冲（Input Feature Buffer，IFB），按行粒度组织为环形缓冲。每行宽度为*W_in*，所需行数为*strip_rows*，由编译器在cfg派生阶段算出，使*strip_rows*×*W_in*个word不超过IFB容量。环形缓冲在物理层面是一段连续SRAM，逻辑层面通过模*strip_rows*取地址实现。
+行缓存模块的存储核心是一块容量为IFB=8192 word的输入特征缓冲（Input Feature Buffer，IFB），按行粒度组织为环形缓冲。每行宽度为*W_in*，所需行数为*strip_rows*，由编译器在cfg派生阶段算出，使*strip_rows*×*W_in*个word不超过IFB容量。环形缓冲在物理层面是一段连续SRAM，逻辑层面通过模*strip_rows*取地址实现。一张480×640的VGA图像约4.9 MB，IFB仅占用10 KB量级即可流式跑完。
 
-行缓存模块的实现流程分为三步。第1步是行写入：IDMA控制器（idma_ctrl）按行向IFB写入新行，每写完一行向行缓存模块汇报"写指针+1"。第2步是窗口读取：行缓存模块按(*y_out*, *x_out*)输出位置组合，读出对应的$K \times K$窗口，沿Cin维聚成16元向量后向MAC阵列发射。第3步是行释放：当某行不再被任何*y_out*窗口需要时，行缓存模块向IDMA控制器拉起row_credit，释放该行的ring槽位，IDMA控制器据此发起下一行的搬运。
+紧邻IFB与MAC阵列之间是激活值寄存器堆ARF=32。**ARF并不缓存单个$K \times K$卷积窗口的全部元素**，而是按当前*k_y*偏移行缓存最多32个**沿W维连续的16-Cin像素向量**。在 stride=1 与 *K* > 1 的常规情形下，行缓存模块切换至滑窗复用模式（`cfg_arf_reuse_en=1`，详见下文），让ARF在一个*k_y*行内承担MAC阵列(*k_x*, *iss_pos*)内循环全部的激活值读出，使IFB读出频度降至每个*k_y*行一次；在 stride > 1 或 *K* = 1 的退化情形下，ARF退化为ring-FIFO，每拍读IFB一次发射给MAC阵列。
 
-行缓存模块的反压机制采用前向压力（forward-pressure）发射策略：仅当 `rows_available ≥ y_out × stride + K_y` 时才发射本行的窗口流，否则停顿等待IDMA写入。该策略确保任意*H*×*W*输入特征图都可在一次start内单遍跑完，片上仅占用*strip_rows*×*W_in*个word的ring容量，不需要把整图缓存到片上。一张480×640的VGA图像约4.9 MB，IFB仅占用10 KB量级即可流式跑完，环形缓冲读写指针在跨round处不复位，相邻tile与相邻round之间允许指针连续推进。
+行缓存模块的两种issue模式由`cfg_arf_reuse_en`字段选择，覆盖完整的形状空间。
 
-行缓存模块对外提供两路valid-ready接口：上游接idma_ctrl的写口，下游接mac_array的窗口口；上游反压通过row_credit实现，下游反压通过窗口valid-ready握手实现。模块内部不维护中心FSM，仅由(*y_out*, *x_out*, *k_x*, *k_y*)四级本地计数器自维护循环边界，循环边界由cfg_regs提供。
+**模式A（reuse_en=0，stride > 1 或 K = 1）**。ARF用作ring-FIFO：每拍当`issue_ok_std`成立时，根据当前6层FSM内层计数器(*k_x*, *iss_pos*)算出虚拟坐标(*src_y*, *src_x*)与IFB物理地址 `ptr_kx_base + iss_offset` 发起1拍IFB读，1拍SRAM延迟后将读出的16-Cin像素向量写入ARF的`wr_idx`槽位（pad越界拍写入零向量）；下游MAC阵列以`act_valid = (fifo_count > 0)`握手消费`act_buf[rd_idx]`。该模式下ARF的写入与读出频度均等于MAC阵列的发射频度，不构成滑窗复用，主要服务于点卷积（*K*=1）与降采样卷积（stride=2）两类。
 
-行缓存模块的输出端紧接一组激活值寄存器堆（Activation Register File，ARF=32），介于IFB与MAC阵列模块之间，承担窗口内激活值的局部缓存与PE像素内循环的数据供给。其设计动机有二：其一，单个输出位置(*y_out*, *x_out*)的$K \times K$邻域在MAC阵列内被反复消费$K^2$×cin_pe拍，若每拍直接读取IFB SRAM，将引入与峰值算力同量级的SRAM读功耗与端口竞争；将这部分高频读取迁移至紧邻PE的小容量寄存器堆后，IFB SRAM在像素内循环中保持静止，仅在跨像素切换窗口时才被访问。其二，ARF为MAC阵列模块提供一份与PE阵列流水节拍对齐的稳定数据视图：当(*k_x*, *k_y*, cin_pe)三级本地计数器在ARF视图内推进时，行缓存模块与IFB读出通路均无需参与，使像素内循环的发射节拍与外层(*y_out*, *x_out*)循环、外层IDMA行写入彻底解耦。ARF容量32项与cfg_regs中ARF=32一致，覆盖一个$K \times K$窗口在Cin方向并行展开的全部激活值，加载完成后整段像素内循环不再触发IFB读出。
+**模式B（reuse_en=1，stride = 1 且 K > 1）**。ARF用作线性FILL/CONSUME区，把单一*k_y*行内的滑窗激活值复用集中到ARF内部。具体而言，编译器在cfg派生阶段算出`cur_fill_len = tile_w + K - 1`并保证其不超过`ARF_DEPTH = 32`；行缓存模块进入新(*cins*, *tile*, *k_y*)时先进入FILL阶段，按`fill_pos`从0线性推进到`cur_fill_len`，每拍读一次IFB把对应像素填入`ARF[fill_pos]`。FILL与CONSUME并行：MAC阵列同时启动`(k_x, iss_pos)`内循环，按组合索引`rd_idx = k_x + iss_pos`直接读出`ARF[rd_idx]`，仅当该位置已被FILL填满（`rd_idx < wr_idx_fill`）时下游`act_valid`才拉起。
+
+模式B体现了**激活值滑窗行复用**的物理实现：MAC阵列在一个*k_y*行内沿(*k_x*, *iss_pos*)推进，*iss_pos*遍历`tile_w`个相邻输出空间位置，*k_x*遍历*K*个核内偏移，因此每个`iss_pos`滑窗位置共需`tile_w × K`次ARF读出，而ARF总写入只有`cur_fill_len = tile_w + K - 1`次——相邻空间位置的滑窗共享了`K - 1`个像素，与卷积运算"相邻滑窗K-1列重叠"的代数性质完全一致。当`k_x_wrap`到达*K*时`fill_reset`拉高，FILL指针归0进入下一*k_y*行；当`k_y_wrap`到达*K*时切到下一(*cins*, *tile*)组合。
+
+**Padding 处理**采用虚拟坐标越界判定。Sequencer 在 cfg 派生阶段把 `cfg_ifb_base` 预扣 `pad_top × W_in + pad_left`，让所有`ptr_*_base`累加器按虚拟坐标推进、自然在(*k_y* = pad_top, *k_x* = pad_left)那拍指向 IFB[0]。`is_pad = (src_y < 0) | (src_y ≥ H_in) | (src_x < 0) | (src_x ≥ W_in)`完全独立于物理地址，每拍组合算出；pad 拍只推进`issue_advance_d1`但不发`ifb_re`，下一拍由`is_pad_d1`选择写入零向量而非SRAM读出值。该方案使行缓存模块在统一的发射节奏内吸收任意 pad 配置，无需为 pad 区单独发IFB读。
+
+**前向压力发射**与**行级反压**保证任意$H \times W$输入特征图可单遍跑完。行缓存模块跟踪`rows_consumed`（已释放的输入行数）通知 IDMA 控制器；IDMA 控制器反向汇报`rows_available`。仅当 `rows_available ≥ clamp(y_row_base + cfg_ky, 0, H_in)` 时本拍才允许发射，否则stall等待新行到达。`rows_consumed`在每完成一个*yout*（`evt_iss_cs_wrap && !yout_is_last`）后增加`cfg_stride`，并扣除`pad_top`以避免 IDMA 过早覆盖尚被复用的真实行。
+
+**对外接口**收敛为四路：上游IFB SRAM读端口（`ifb_re/ifb_raddr`-out, `ifb_rdata`-in，1拍SRAM延迟）、下游MAC阵列激活值接口（`act_valid/act_ready`双向，`act_vec`-out 16-Cin × 8 bit拼接）、与 IDMA 控制器的`rows_consumed`-out / `rows_available`-in 行级握手、以及cfg_regs的`cfg_*`只读端口。模块内部不维护中心FSM，仅以(*y_out*, *cs*, *tile*, *cins*, *k_y*, *k_x*, *iss_pos*) 7级本地计数器自循环，并按外层进位级联推进5层`ptr_*_base`物理地址累加器，循环边界与地址步进全部由cfg_regs在层启动时一次性写入。
 
 ### 4.3 MAC阵列模块
 
@@ -372,7 +426,7 @@ MAC阵列模块（mac_array）是加速核的算力核心，承担卷积层的�
 
 MAC阵列模块由16列×16 PE共256个INT8乘加单元（NUM_COL=NUM_PE=16，DATA=8 bit）组成。16列在结构上彼此独立，每列对应一个输出通道；列内16个PE沿Cin方向并行排布，承担单输出通道在16个输入通道方向上的并行乘加。这一二维结构与卷积循环嵌套中的cout维与cin维自然对齐：列方向广播激活值、列内方向沿cin累加。
 
-MAC阵列模块采用权重静止（Weight-Stationary，WS）+激活值滑窗复用+输出通道广播的复合数据流。第1步权重加载：在一次cout_slice启动时，权重缓存模块（wgt_buffer）将当前cout_slice所需的全部权重从权重缓冲（Weight Buffer，WB）一次性读入权重寄存器堆（Weight Register File，WRF=32），整段cout_slice内的全部空间位置共享这份权重，不再访问WB。第2步激活值缓存：行缓存模块输出的当前窗口激活值向量进入激活值寄存器堆（Activation Register File，ARF=32），ARF内的激活值供同一窗口在*k_x*/*k_y*子周期内重复读取。第3步广播与乘加：每周期由ARF广播1拍激活值向量到16列，每列消费各自的WRF项产生1路输出通道的16路PE并行乘积，列内16路乘积经一棵加法树规约为1路PSUM=32 bit部分和。第4步部分和发射：每周期16列同时向部分和累加模块发射16路PSUM。
+MAC阵列模块采用输入通道广播+权重静止+激活值滑窗行复用+输出部分和累加的复合数据流。第1步权重加载：在一次cout_slice启动时，权重缓存模块（wgt_buffer）将当前cout_slice所需的全部权重从权重缓冲（Weight Buffer，WB）一次性读入权重寄存器堆（Weight Register File，WRF=32），WRF内的权重在连续32个周期内保持不变（更新频率1/32），由ARF切片级滑窗确立的"32周期处理32个相邻W维滑窗"节奏统一驱动权重重载。第2步激活值缓存：行缓存模块沿当前行连续写入32个W维像素到激活值寄存器堆（Activation Register File，ARF=32），32拍内由6层FSM按$k_x$/$k_y$偏移在ARF内取值；当32个滑窗完成后，下一组所需像素中2~32号仍在ARF内，行缓存只需补入1个新像素即可推进。第3步广播与乘加：每周期由ARF广播1拍含16个Cin的激活向量到16列PE（输入通道广播），列c的16个PE分别以16个Cin的激活乘以对应权重并沿Cin维加法树规约，产出1路Cout的32 bit部分和（PSUM）。第4步部分和发射：每周期16列同时向部分和累加模块发射16路PSUM，由PARF=32按滑窗位置完成"输出部分和累加"。
 
 MAC阵列模块的并行度可分解为三个维度。Cout维并行度16（列数）、Cin维并行度16（每列内PE数）、Kx/Ky维顺序展开（同一窗口在$K^2$个子周期内顺次计算）。理论峰值算力为256 ops/cy × Fmax。当Cin<16时，Cin维存在列空转，需配合编译器侧Y维折叠优化；当Cout<16时，硬件不复用，对应PE列空转，不在此层做硬件级优化。
 
@@ -389,7 +443,7 @@ MAC阵列模块对外提供三路接口。上游接行缓存模块的窗口口�
 
 部分和累加模块的实现流程分为三步。第1步累加器读出：当cin_slice索引大于0时，从PARF当前(*tile_w*, *cout_col*)槽位读出已累加的部分和。第2步加法：将本周期mac_array发射的16路PSUM与读出的累加值相加，结果回写PARF同一槽位；当cin_slice=0时跳过读出，直接写入新值。第3步累加完成发射：当一个(*tile_w*, *cout_col*)槽位的所有cin_slice累加完毕（由cfg_regs中的cin_slice_total边界标识），将累加结果通过valid-ready握手发射到SDP后处理模块。
 
-PARF=32容量对应一个cout_slice内32个*tile_w*输出位置的部分和缓存。当*tile_w*输出数大于32时，编译器会进一步切分tile，由6层FSM中的tile维循环承担。每列独立SRAM让16列累加在物理端口上完全隔离，匹配MAC阵列模块输出通道广播的数据流形态。
+PARF=32容量对应一个cout_slice内32个*tile_w*输出位置的部分和缓存——这32个位置正是激活值滑窗行复用中并发处理的32个相邻W维滑窗。当*tile_w*输出数大于32时，编译器会进一步切分tile，由6层FSM中的tile维循环承担。每列独立SRAM让16列累加在物理端口上完全隔离，匹配MAC阵列模块"输入通道广播 × 输出部分和累加"双维度并行的数据流形态。
 
 部分和累加模块对外提供两路接口。上游接MAC阵列模块的部分和口（16路PSUM valid-ready）；下游接SDP后处理模块的累加完成口（16路PSUM valid-ready）。模块内部由(*tile_w*, *cin_slice*)二级本地计数器自维护，循环边界由cfg_regs提供，cin_slice=0与cin_slice_total-1两个边界条件分别控制累加器初值与发射时机。
 
@@ -507,7 +561,7 @@ W切片调度的实现流程分为三步。第1步切片分配：编译器在sch
 
 ### 4.12 DSP块跨列复用映射方案
 
-MAC阵列模块在OC-broadcast数据流下，每周期同一行激活值同时被16列消费、各列权重独立，相邻列在物理实现层面共享同一拍激活向量、仅权重不同。据此结构性特征，可把单核mac_array中相邻两列的INT8乘法器合并映射到一个DSP48E1块上，使整个16×16阵列的256个乘法器从查找表实现迁移至DSP块实现。该方案在保持数据通路对外接口与位级行为完全等价的前提下，由综合阶段在两种映射之间作选择。如图 4.10 所示DSP块跨列复用映射方案原理图。
+MAC阵列模块在输入通道广播数据流下，每周期同一拍16-Cin激活值向量同时被16列消费、各列权重独立，相邻列在物理实现层面共享同一拍激活向量、仅权重不同。据此结构性特征，可把单核mac_array中相邻两列的INT8乘法器合并映射到一个DSP48E1块上，使整个16×16阵列的256个乘法器从查找表实现迁移至DSP块实现。该方案在保持数据通路对外接口与位级行为完全等价的前提下，由综合阶段在两种映射之间作选择。如图 4.10 所示DSP块跨列复用映射方案原理图。
 
 **图 4.10 DSP块跨列复用映射方案原理图**
 **Figure 4.10 Cross-column DSP-block mapping scheme**
@@ -518,7 +572,7 @@ DSP48E1块内部提供一个25 bit×18 bit有符号乘法器，其乘积位宽�
 
 ### 4.13 本章小结
 
-本章按模块顺序给出了FLUX_CNN加速器的具体实现。加速核内的5个数据通路模块依次承担窗口生成、乘加计算、部分和累加、量化后处理与权重供给五项职责：行缓存模块以IFB=8192 word行级环形缓冲组织$K \times K$窗口生成，前向压力发射策略支持任意$H \times W$输入；MAC阵列模块由16列×16 PE共256个INT8乘加单元组成，采用权重静止+滑窗复用+输出通道广播复合数据流；部分和累加模块以16列独立SRAM实现PARF=32累加，每列共享写地址写使能；SDP后处理模块在ofb_writer内实现“偏置 → 移位 → 饱和 → 残差 → 饱和 → OFB”全INT8后处理链；权重缓存模块以WB=1024 word+WRF=32双层结构供给权重。
+本章按模块顺序给出了FLUX_CNN加速器的具体实现。加速核内的5个数据通路模块依次承担窗口生成、乘加计算、部分和累加、量化后处理与权重供给五项职责：行缓存模块以IFB=8192 word行级环形缓冲组织IFM行流，按6层嵌套FSM节拍向ARF=32发射16-Cin激活值像素向量，$K \times K$窗口组装由下游MAC阵列在ARF内按$k_x$ / $iss_{pos}$偏移完成；前向压力发射策略支持任意$H \times W$输入；MAC阵列模块由16列×16 PE共256个INT8乘加单元组成，采用输入通道广播+权重静止+激活值滑窗行复用+输出部分和累加四层复合数据流；部分和累加模块以16列独立SRAM实现PARF=32累加，每列共享写地址写使能；SDP后处理模块在ofb_writer内实现“偏置 → 移位 → 饱和 → 残差 → 饱和 → OFB”全INT8后处理链；权重缓存模块以WB=1024 word+WRF=32双层结构供给权重。
 控制路径上，cfg_regs双写口设计与sequencer 6层嵌套自循环FSM协同完成单层全部调度：50余个cfg寄存器完整描述一层卷积，控制核仅写4个启动寄存器，描述符流由DFE自动消费。在此基础上，编译器侧的Y维折叠与空间到深度（S2D）两项PE利用率优化方案分别针对$C_{\mathrm{in}} < 16$与$\mathrm{stride} \geq 2$两类低利用率场景，将形状适配压力从硬件迁移至编译器，使硬件得以保持最简固定阵列。
 DMA子系统（axi_dm IP+自研4类控制器+mm2s_arb+axi_m_mux+axi_lite_csr+DFE）承担片外数据搬运，对外仅暴露1个AXI4主接口与1个AXI-Lite从接口；多核W切片扩展层（$N=1/2/4$，边界冗余列+跨核SRAM直送）在不改动单核RTL的前提下完成核数扩展。此外，本章给出了16×16 INT8 MAC阵列在DSP48E1块上的两种可选映射方案，为综合阶段在查找表与DSP块之间作权衡保留了入口。
 
@@ -613,7 +667,8 @@ DSP实现方案将$16 \times 16$阵列的INT8乘法器从查找表迁移至DSP�
 LUT实现方案下，关键路径定位于MAC阵列内16输入加法树。该加法树由5级查找表加法器级联构成，组合逻辑链长度7.977 ns。路由后WNS为 −0.777 ns，对应实际可达Fmax约125.4 MHz。
 DSP实现方案下，关键路径定位于DSP块P输出经符号校正查找表后入加法树的路径。每对相邻列乘法在DSP内部以硬连线方式完成，从乘积输出端经1拍寄存器进入16输入加法树，组合逻辑链长度由7.977 ns缩短至7.503 ns。路由后WNS为 −0.303 ns，对应实际可达Fmax约143.8 MHz。
 两种实现方案Fmax差异的原因可定性陈述为：DSP48E1块内的乘法器为硬连线结构，其传播延迟显著短于查找表搭建的乘法树。当16×16阵列的INT8乘法器全部迁移至DSP块后，原本由查找表加法器主导的关键路径退到DSP输出端之后的加法树部分，关键路径长度随之缩短，是DSP实现路由后Fmax高于LUT实现14.7%的主因。
-需要说明的是，FLUX_CNN最终目标实现为专用集成电路。FPGA综合Fmax受28 nm工艺、查找表实现的乘法器与BRAM接口固有时延约束，所反映的是当前FPGA验证平台的频率上限；同一RTL在专用集成电路工艺下可达到的频率显著高于FPGA综合结果。帧率统一以100 MHz时钟假设折算给出，并附$N=4$DSP实现路由后Fmax 143.8 MHz折算行作为横向对照。
+<!-- SYNC v4 2026-05-12: 同步自 Word — "28 nm 工艺" 改为 "28 nm FPGA 工艺" -->
+需要说明的是，FLUX_CNN最终目标实现为专用集成电路。FPGA综合Fmax受28 nm FPGA工艺、查找表实现的乘法器与BRAM接口固有时延约束，所反映的是当前FPGA验证平台的频率上限；同一RTL在专用集成电路工艺下可达到的频率显著高于FPGA综合结果。帧率统一以100 MHz时钟假设折算给出，并附$N=4$DSP实现路由后Fmax 143.8 MHz折算行作为横向对照。
 
 #### 5.4.3 功耗分析
 
@@ -628,7 +683,7 @@ Table 5.3 Power estimation under different core-count configurations
 | $N=2$ | 100 MHz | [CHECK] | [CHECK] | [CHECK] |
 | $N=4$ | 100 MHz | [CHECK] | [CHECK] | [CHECK] |
 
-定性而言，FLUX_CNN单核配置下动态功耗主要由MAC阵列的乘法翻转、IFB/OFB SRAM的读写翻转与AXI突发数据传输三部分贡献。由于权重静止数据流将权重在层内保持不变，权重缓存的读功耗在层启动后显著下降，仅在$C_{\mathrm{out}}$切片切换时由WB至WRF短暂触发；输出通道广播策略让16列PE共享同一拍激活值，激活总线的翻转规模由16列共享而非每列独立，进一步降低动态功耗。多核扩展时各加速核独立运行，核间仅在层边界与跨核SRAM直送时发生AXI写事件，核间互联的功耗占比相对较小。
+定性而言，FLUX_CNN单核配置下动态功耗主要由MAC阵列的乘法翻转、IFB/OFB SRAM的读写翻转与AXI突发数据传输三部分贡献。权重静止策略让WRF内权重在连续32个周期内保持不变（更新频率降至1/32），WB至WRF的读功耗仅在每32拍的边界触发；激活值滑窗行复用让行缓存到ARF的写入频度同步降至$\sim 1/32$，ARF内32个相邻像素由6层FSM按$k_x$/$k_y$偏移直接取值；输入通道广播让16列PE共享同一拍16-Cin激活向量，激活总线的翻转规模在16列间共享而非每列独立；输出部分和累加让32路部分和始终留在PARF内，列间端口隔离不发生争用。四层数据流复用叠加，使核内动态功耗主要集中在乘法翻转一项，存储侧带宽与列间分发功耗被同步压低。多核扩展时各加速核独立运行，核间仅在层边界与跨核SRAM直送时发生AXI写事件，核间互联的功耗占比相对较小。
 
 ### 5.5 性能分析
 
@@ -636,7 +691,12 @@ Table 5.3 Power estimation under different core-count configurations
 
 #### 5.5.1 端到端时延与帧率
 
-以ResNet11完整11层网络为载体测试端到端推理时延。ResNet11单帧浮点MAC量约为131 M MAC。在不同核数与编译器优化模式下的实测整网周期数与对应帧率如表 5.4所示，帧率列以FPGA路由后实测频率143.8 MHz折算。
+以ResNet11完整11层网络为载体测试端到端推理时延。ResNet11单帧浮点MAC量约为131 M MAC。在不同核数与编译器优化模式下的实测整网周期数与对应帧率如图 5.1 与表 5.4 所示，帧率列以FPGA路由后实测频率143.8 MHz折算；图 5.1 以演进路径形式呈现五个里程碑配置的周期数（左 Y 轴 log）与帧率（右 Y 轴）联合演化，段间注记给出每一步的增量优化机制。
+
+![图 5.1 ResNet11 整网端到端时延与帧率演进](../figures-rendered/png/fig5-4-end-to-end.png)
+
+**图 5.1 不同核数与编译器优化模式下的实测整网周期数与对应帧率**
+**Figure 5.1 End-to-end wall-cycle and frame-rate evolution under multi-core and compiler-optimization paths**
 
 表 5.4 ResNet11整网端到端时延与帧率
 Table 5.4 End-to-end latency and throughput on ResNet11
@@ -653,6 +713,8 @@ Table 5.4 End-to-end latency and throughput on ResNet11
 第一类为编译器侧PE利用率优化。空间到深度变换将Patch层（$K = 4$、$\mathrm{stride} = 4$、$C_{\mathrm{in}} = 4$）等价转换为$K = 1$、$\mathrm{stride} = 1$、$C_{\mathrm{in}} = 64$的标准卷积，PE行被填满，单层整网周期数由654,404降至129,594（5.05× 单层加速）。该优化驱动$N = 1$整网周期数由约1,115K降至596,088（1.87× 整网加速）。
 第二类为多核扩展。$N=4$含W切片且不启用跨核SRAM直送时，整网周期数为354,555（相对$N=1$含空间到深度加速1.68×）。引入跨核SRAM直送写入路径与NUMA跨核数据布局后，上一层OFM写片外DDR、下一层IFM再读片外DDR的双向带宽消耗被消除，整网周期数进一步降至220,824（相对$N=1$含空间到深度加速2.70×）。
 第三类为编译器侧调度优化。针对降采样层（$K = 1$、$\mathrm{stride} > 1$）观察到的访存受限特征，将IDMA行命令按步长行间隔分离，使该类层的IDMA数据量减半；同时将各核IDMA命令行内段顺序由"远端边界段优先"改为"本地段优先"，缓解共享互连中等待开销。两类调度策略叠加后整网周期数由354,555进一步降至190,133，相对未优化基线累计加速5.86×，对应FPGA实测频率下756 fps。
+
+按 1.1 节给出的端侧 qHD 视频流 30 FPS 实时基线对照，$N = 4$主配置即使采用保守的 100 MHz 假设折算仍达到 526 fps，超出实时基线约 17.5×；按 143.8 MHz 实测频率折算的 756 fps 对应约 25× 余量。这一余量为更高分辨率扩展（如 1080p 全分辨率或 4K 视频流）预留了充分的时序与算力空间，证实双层调度架构 + 多核行级流式 + Ky-fold / S2D 组合在 qHD 单 batch 端侧场景下能够稳定满足实时推理目标。
 
 #### 5.5.2 PE阵列利用率
 
@@ -691,7 +753,13 @@ Table 5.5 Pipeline duty cycle comparison between 1-DDR and 4-DDR under$N=4$
 
 ##### 5.5.5.1 输入通道$C_{\mathrm{in}}$扫频与Y维折叠适用域
 
-实验设置：固定$K = 3$、$\mathrm{stride} = 1$、$\mathrm{pad} = 1$、$H = W = 32$、$C_{\mathrm{out}} = 16$，自变量$C_{\mathrm{in}}$取$\{1, 2, 4, 8, 16, 32, 64\}$并分别在Y维折叠关闭与开启两种模式下扫频，在单核仿真平台环境采集整网周期数与PE利用率。
+实验设置：固定$K = 3$、$\mathrm{stride} = 1$、$\mathrm{pad} = 1$、$H = W = 32$、$C_{\mathrm{out}} = 16$，自变量$C_{\mathrm{in}}$取$\{1, 2, 4, 8, 16, 32, 64\}$并分别在Y维折叠关闭与开启两种模式下扫频，在单核仿真平台环境采集整网周期数与PE利用率。结果如图 5.2 与表 5.7 所示。
+
+![图 5.2 输入通道 Cin 与 Ky-fold 对 PE 利用率与整网周期数的影响](../figures-rendered/png/fig5-7-cin-kyfold.png)
+
+**图 5.2 不同输入通道下 Y 维折叠对 PE 利用率与整网周期数的影响**
+**Figure 5.2 Effect of Ky-folding on PE utilization and wall cycles under different input channels**
+
 表 5.7不同输入通道下Y维折叠对PE利用率与整网周期数的影响
 Table 5.7 Effect of Ky-folding on PE utilization and wall cycles under different input channels
 
@@ -709,7 +777,13 @@ Table 5.7 Effect of Ky-folding on PE utilization and wall cycles under different
 
 ##### 5.5.5.2 卷积核尺寸$K$扫频与阵列覆盖度
 
-实验设置：固定$\mathrm{stride} = 1$（$K = 8$例外取$\mathrm{stride} = 4$配空间到深度）、$H = W = 32$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，自变量$K$取$\{1, 3, 5, 7, 8\}$（其中$K = 8$含空间到深度变换），单核环境记录单层触发数、整网周期数与平均每触发占用周期数。
+实验设置：固定$\mathrm{stride} = 1$（$K = 8$例外取$\mathrm{stride} = 4$配空间到深度）、$H = W = 32$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，自变量$K$取$\{1, 3, 5, 7, 8\}$（其中$K = 8$含空间到深度变换），单核环境记录单层触发数、整网周期数与平均每触发占用周期数。结果如图 5.3 与表 5.8 所示。
+
+![图 5.3 卷积核尺寸 K 扫频结果](../figures-rendered/png/fig5-8-k-sweep.png)
+
+**图 5.3 卷积核尺寸 K 扫频下的触发数、周期数与 PE 利用率**
+**Figure 5.3 Kernel-size sweep: triggers, wall cycles and PE utilization**
+
 表 5.8卷积核尺寸扫频结果
 Table 5.8 Convolution kernel size sweep results
 
@@ -725,7 +799,13 @@ Table 5.8 Convolution kernel size sweep results
 
 ##### 5.5.5.3 降采样层stride扫频与行步长分离收益
 
-实验设置：固定$H = W = 64$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，分别取$K \times \mathrm{stride}$四种组合在单核仿真平台中得出基线，再以ResNet11$N=4$SMC实测对照H步长分离前后三个降采样层的周期数变化。
+实验设置：固定$H = W = 64$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，分别取$K \times \mathrm{stride}$四种组合在单核仿真平台中得出基线，再以ResNet11$N=4$SMC实测对照H步长分离前后三个降采样层的周期数变化。降采样 stride 扫频结果如图 5.4 与表 5.9 所示，H 步长分离的整网收益如图 5.5 与表 5.10 所示。
+
+![图 5.4 降采样层 stride 扫频单核基线](../figures-rendered/png/fig5-9-stride-sweep.png)
+
+**图 5.4 降采样层 stride 扫频单核基线（K×stride 四种组合）**
+**Figure 5.4 Single-core baseline of stride sweep on downsampling layers (four K×stride combinations)**
+
 表 5.9降采样层stride扫频单核基线
 Table 5.9 Single-core baseline of stride sweep on downsampling layers
 
@@ -735,6 +815,11 @@ Table 5.9 Single-core baseline of stride sweep on downsampling layers
 | K=1 stride=2 | 1 | 2 | 4,945  | 20.7% |
 | K=3 stride=1 | 3 | 1 | 38,484 | 95.8% |
 | K=3 stride=2 | 3 | 2 | 9,682  | 95.2% |
+
+![图 5.5 H 步长分离对 ResNet11 N=4 SMC 降采样层整网周期数的影响](../figures-rendered/png/fig5-10-h-stride-separation.png)
+
+**图 5.5 H 步长分离对 ResNet11 N=4 SMC 降采样层整网周期数的影响**
+**Figure 5.5 Effect of H-stride separation on wall cycles of ResNet11 N=4 SMC downsampling layers**
 
 表 5.10 H步长分离对ResNet11$N=4$SMC降采样层整网周期数的影响
 Table 5.10 Effect of H-stride separation on wall cycles of ResNet11 N=4 SMC downsampling layers
@@ -750,7 +835,13 @@ Table 5.10 Effect of H-stride separation on wall cycles of ResNet11 N=4 SMC down
 
 ##### 5.5.5.4 核数$N$与图像宽度$W$扫频
 
-实验设置：固定$K = 3$、$\mathrm{stride} = 1$、$\mathrm{pad} = 1$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，方阵$H = W$取$\{16, 32, 64, 128\}$，核数$N$取$\{1, 4\}$，分别在单核仿真平台与多核仿真平台环境运行；中间点$N = 2$因SMC互连IP的4端口固定拓扑跳过。
+实验设置：固定$K = 3$、$\mathrm{stride} = 1$、$\mathrm{pad} = 1$、$C_{\mathrm{in}} = C_{\mathrm{out}} = 16$，方阵$H = W$取$\{16, 32, 64, 128\}$，核数$N$取$\{1, 4\}$，分别在单核仿真平台与多核仿真平台环境运行；中间点$N = 2$因SMC互连IP的4端口固定拓扑跳过。结果如图 5.6 与表 5.11 所示。
+
+![图 5.6 核数 N 与图像宽度 W 扫频加速比](../figures-rendered/png/fig5-11-n-w-speedup.png)
+
+**图 5.6 核数 N 与图像宽度 W 扫频下的加速比、PE 利用率与边界冗余占比**
+**Figure 5.6 Speedup, PE utilization and halo-overhead ratio across core count N and image width W**
+
 表 5.11核数$N$与图像宽度$W$扫频加速比
 Table 5.11 Speedup under core count N and image width W sweep
 
@@ -765,7 +856,13 @@ Table 5.11 Speedup under core count N and image width W sweep
 
 ##### 5.5.5.5 ResNet11$N=4$主配置分层瓶颈分项
 
-实验设置：直接采用ResNet11$N = 4$SMC主配置整网仿真，按L0至L10各层分别取慢核的触发数、整网周期数、空闲周期数与PE利用率，呈现整网视角下的瓶颈分布。
+实验设置：直接采用ResNet11$N = 4$SMC主配置整网仿真，按L0至L10各层分别取慢核的触发数、整网周期数、空闲周期数与PE利用率，呈现整网视角下的瓶颈分布。整网视角下的层级瓶颈结构如图 5.7 与表 5.12 所示。
+
+![图 5.7 ResNet11 N=4 主配置分层瓶颈分项](../figures-rendered/png/fig5-12-resnet11-layers.png)
+
+**图 5.7 ResNet11 N=4 主配置分层瓶颈分项（触发/空闲/利用率/层类型）**
+**Figure 5.7 Per-layer bottleneck breakdown of ResNet11 N=4 mainline (triggers, idle, utilization, layer type)**
+
 表 5.12 ResNet11$N=4$主配置分层瓶颈分项
 Table 5.12 Per-layer bottleneck breakdown of ResNet11 N=4 mainline
 
@@ -789,7 +886,13 @@ Table 5.12 Per-layer bottleneck breakdown of ResNet11 N=4 mainline
 #### 5.5.6 多网络ASIC工艺折算性能
 
 将ResNet11之外的代表性CNN网络置于FLUX_CNN的分析模型中估计端到端延时与帧率，以刻画加速器在更广泛工作负载下的吞吐分布。模型口径如下：每层整网周期数按"有效MAC量除以 ($256 \times$层级PE利用率)"折算，层级PE利用率取自 §5.5.2的实测分类，对应取值为$K = 3$、$\mathrm{stride} = 1$主路径85%、$K = 3$、$\mathrm{stride} = 2$为85%、$K = 1$、$\mathrm{stride} = 2$降采样20%、$K = 5$与$K = 7$大核95%、$K = 4$、$\mathrm{stride} = 4$配空间到深度71%、深度可分卷积仅占PE行的1/16为6%、全连接层因触发数小为5%；多核加速比按ResNet11$N = 4$SMC实测3.13× 折算。ASIC目标频率取850 MHz（典型16 nm至22 nm工艺下$16 \times 16$INT8 MAC阵列的可达频点），峰值算力435.2 GOPS（$256 \times 850\,\mathrm{MHz} \times 2\,\mathrm{ops/MAC}$）；该频率为工艺折算口径，未做ASIC后端布局布线。
-如表 5.13所示7个代表性CNN网络在FLUX_CNN ASIC实现下的整网延时与帧率。
+如图 5.8 与表 5.13 所示，7 个代表性 CNN 网络在 FLUX_CNN ASIC 实现下的整网延时与帧率随网络计算量 / 层数 / PE 利用率分布呈现可预测规律。
+
+![图 5.8 代表性 CNN 网络在 FLUX_CNN ASIC 上的整网延时与帧率](../figures-rendered/png/fig5-13-multi-network.png)
+
+**图 5.8 代表性 CNN 网络在 FLUX_CNN ASIC 上的整网延时与帧率分布（@850 MHz）**
+**Figure 5.8 End-to-end latency and frame rate distribution of representative CNN networks on FLUX_CNN ASIC @ 850 MHz**
+
 表 5.13代表性CNN网络在FLUX_CNN ASIC上的整网延时与帧率（@850 MHz）
 Table 5.13 End-to-end latency and frame rate of representative CNN networks on FLUX_CNN ASIC @ 850 MHz
 
@@ -863,7 +966,13 @@ Table 5.15 PyTorch CPU FP32 single-thread vs FLUX_CNN ASIC speedup (@850 MHz, $N
 > \*表 5.15以MobileNet-V2作为CPU侧实测代表（torchvision未提供V1的官方权重），FLUX_CNN ASIC侧仍以V1的GMAC估算，两者MAC量级相近。
 
 由表 5.15可见，FLUX_CNN ASIC$N=4$相对桌面CPU FP32单线程在主流分类网络上取得6.7×至16.5×加速：ResNet-18达到最高加速比16.5×，原因是CPU上残差分支结构难以向量化，而ASIC侧$K=3$主路径占主导PE利用率82.3%；VGG-16加速10.4×，CPU端虽有AVX-512向量化但算量基数大；AlexNet加速6.7×偏低，源于其后段3个全连接层在ASIC侧PE利用率仅5%而CPU上GEMM调度高效。CPU基线为桌面级i7处理器，端侧ARM CPU上的相对加速比预期高于本表口径。
-如表 5.16所示FLUX_CNN ASIC与代表性CNN加速器在AlexNet、VGG-16、ResNet-50三个常见基准上的网络级帧率对比。
+如图 5.9 与表 5.16 所示，FLUX_CNN ASIC 与代表性 CNN 加速器在 AlexNet、VGG-16、ResNet-50 三个常见基准上的网络级帧率对比。
+
+![图 5.9 FLUX_CNN 与代表性 CNN 加速器网络级帧率对比](../figures-rendered/png/fig5-16-vs-accelerators.png)
+
+**图 5.9 FLUX_CNN 与代表性 CNN 加速器在峰值算力 / 帧率维度的散点对比**
+**Figure 5.9 Scatter comparison of FLUX_CNN versus representative CNN accelerators on peak GOPS and per-network frame rate**
+
 表 5.16 FLUX_CNN与代表性CNN加速器网络级帧率对比
 Table 5.16 Network-level frame rate comparison: FLUX_CNN ASIC vs representative CNN accelerators
 
@@ -894,15 +1003,16 @@ Table 5.16 Network-level frame rate comparison: FLUX_CNN ASIC vs representative 
 
 ---
 
-## 6 结论与展望
+<!-- SYNC v4 2026-05-12: 同步自 Word — 章节标题 "结论与展望" 改为 "结论"; 保留 paper.md 三节子结构 6.1/6.2/6.3 -->
+## 6 结论
 
-围绕端侧流式CNN加速器FLUX_CNN的研究工作，从硬件架构、数据通路、编译器侧优化、多核扩展与多层次验证五个维度归纳主要结论与创新点，并从短期、中期、长期三个时间尺度展望后续研究方向。
+围绕端侧流式CNN加速器FLUX_CNN的研究工作，从双层调度架构、行级流式与多核扩展、多维度数据复用与PE利用率优化、端到端编译器工具链以及工程实现配套五个维度归纳主要结论与创新点，并从短期、中期、长期三个时间尺度展望后续研究方向。
 
 ### 6.1 结论
 
 本论文围绕端侧流式计算场景下的卷积神经网络硬件加速需求，以“分层调度”为核心思路设计并实现了一款INT8卷积加速器FLUX_CNN，构建了从硬件架构、寄存器传输级实现到软件工具链与多层次验证的完整体系。在硬件架构层面，系统分析了端侧推理在功耗包线、片上存储与片外带宽三方面的资源约束，明确了“硬件保持专用化与高吞吐、软件提供调度灵活性”这一基本设计原则，并据此将调度职责按粒度分配至硬件与软件两侧。
 在硬件架构层面构建了分层调度方案：核内由配置寄存器驱动6层嵌套自循环有限状态机（cs→yout→tile→cins→round→pos）完成单层全部调度，核间通过Task Descriptor接口协调多核多层协作。该方案使硬件在端侧严格的功耗包线下保持16×16 INT8 MAC阵列的高吞吐能力，同时将层间融合、跨核切分等灵活性诉求集中到软件侧，避免了硬件为通用调度逻辑付出的额外代价。
-在数据通路与微架构层面，本论文设计了16×16 INT8 MAC阵列与三级寄存器堆（WRF/ARF/PARF）协同的数据通路，建立“权重静止+激活值滑窗复用+输出通道广播”的三层数据复用策略，并将地址生成全面下沉至零乘除法的硬件计数器。行级流式环形缓冲承接任意$H \times W$输入，PARF累加结构按列展开支持任意Cin/Cout切片，权重round chunking机制覆盖$K^2 > \mathrm{WRF\_depth}$的大卷积核情形。这一组合使单核硬件无需重新综合即可适配端侧典型CNN模型的全部卷积层形状空间。
+在数据通路与微架构层面，本论文设计了16×16 INT8 MAC阵列与三级寄存器堆（WRF/ARF/PARF）协同的数据通路，建立"输入通道广播+权重静止+激活值滑窗行复用+输出部分和累加"的四层数据复用策略，并将地址生成全面下沉至零乘除法的硬件计数器。行级流式环形缓冲承接任意$H \times W$输入，PARF累加结构按列展开支持任意Cin/Cout切片，权重round chunking机制覆盖$K^2 > \mathrm{WRF\_depth}$的大卷积核情形。这一组合使单核硬件无需重新综合即可适配端侧典型CNN模型的全部卷积层形状空间。
 在软件工具链与编译器侧优化层面，本论文构建了从PyTorch训练模型到加速器配置流的端到端编译路径，并提出Y维折叠（Ky-fold）与空间到深度（space-to-depth）两项PE利用率优化方案，分别针对小Cin卷积层与大步长Patch卷积层，将原本仅占用4/16行PE的低利用率层等效转换为填满阵列的标准卷积。这两项优化在硬件保持固定16×16阵列的前提下将ResNet11 Patch单层整网周期数从654,404降至129,594（5.05×），整网从约1,115K降至约596K（约1.87×）。
 在验证与综合层面，本论文建立了多层次的验证体系：单核22 case ResNet风格回归在三种编译模式下共66次仿真全部PASS，单核24 case形状鲁棒测试集24/24 PASS，多核$N=2$与$N=4$W切片测试集各10 case共20 case全部PASS，ResNet11完整11层网络在$N=1$、$N=2$、$N=4$三种核数配置下均与PyTorch浮点参考实现逐字节匹配。综合层面，单核在Kintex-7 XC7K325T平台综合占用LUT 36,942（18.1%）、BRAM36 128块（28.8%）、DSP48E1 82块（9.8%）；$N=4$LUT实现布线后占用LUT 153,892（75.5%）、BRAM36 288（64.7%）、DSP48E1 320（38.1%），布线后Fmax 125.4 MHz；$N=4$DSP实现布线后占用LUT 99,061（48.6%）、BRAM36 288（64.7%）、DSP48E1 832（99.0%），布线后Fmax 143.8 MHz。ResNet11整网在$N=4$主配置下整网周期数190,133，按100 MHz假设折算帧率约526 fps，按143.8 MHz实测折算约756 fps；多核W切片配合跨核SRAM直送写入路径相对$N=1$含S2D配置的596,088整网周期数实现3.13×加速，并通过1-DDR与4-DDR对照定量给出DDR带宽对加速比的限制。
 在调度策略量化分析层面，以控制变量法量化各调度因素对整网周期数的贡献，将SmartConnect IP、偏置寄存器堆、外存请求仲裁器分别替换为零延迟理想模型，识别出SmartConnect IP的寄存器流水级累计占整网周期数7.0%、命令调度引擎的取指与等待开销可压缩约2-3%、偏置寄存器堆切换开销小于0.06%等具有上界刻度的可优化方向，为后续工作提供了基于实测的分项收益参考。
@@ -910,13 +1020,19 @@ Table 5.16 Network-level frame rate comparison: FLUX_CNN ASIC vs representative 
 
 ### 6.2 创新点
 
-本论文围绕端侧流式CNN加速器的关键设计问题展开创新工作，主要创新点如下：
-**分层调度架构**：提出“微观寄存器配置+宏观指令流调度”的分层硬件架构。核内采用配置寄存器驱动的6层嵌套自循环FSM，一次性写入卷积参数即可自动完成单层全部计算，无需运行时取指译码；核间保留Task Descriptor宏指令流接口，支持多核多层协作与数据路由编排。该架构在硬件复杂度与编译器调度灵活性之间建立了清晰的职责边界，使核内保持专用化与高吞吐、核间保持可调度与可组合，兼顾单核高能效与多核高灵活性。
-**任意形状的固定阵列数据通路**：设计16×16 INT8 MAC阵列与三级寄存器堆（WRF/ARF/PARF）协同的数据通路，配合零乘除法的硬件地址生成、行级流式环形缓冲与权重round chunking机制，使单核硬件可在不重新综合的前提下处理任意$K \times K$卷积核、任意步长、任意Cin/Cout切片以及任意$H \times W$输入。行级流式环形缓冲使得输入特征图无需在片外整图拼接、可按行流入与覆盖，与端侧传感器逐行送入数据的流式特征自然对接，进一步覆盖端侧典型CNN模型的全部卷积层形状空间。
-**编译器侧PE利用率优化方案**：针对$C_{\mathrm{in}} < 16$与$\mathrm{stride} \geq 2$两类低PE利用率场景，提出Y维折叠与空间到深度两项编译器侧变换，把PE利用率优化从硬件迁移至编译器。Y维折叠在$C_{\mathrm{in}} < 16$时将卷积核Ky维折入伪$C_{\mathrm{in}}$维，由编译器在输入侧完成$y$偏移复制；空间到深度在$\mathrm{stride} \geq 2$时将多相位空间采样折入$C_{\mathrm{in}}$维，由编译器在输入侧完成无复制的DDR友好重排。两项优化在硬件保持固定阵列的前提下将ResNet11 Patch单层与整网周期数分别压缩约5.05×与约1.87×，且与硬件接口完全解耦。
-**多核W切片与跨核SRAM直送机制**：在不改动单核RTL的前提下，通过编译器侧W维切片与IFB跨核SRAM直送写入路径，实现$N=2$与$N=4$多核扩展。跨核直送机制使上一层OFM直接写入下一层IFB，避免了OFM写片外DDR、IFM再读片外DDR的双向带宽消耗；ResNet11$N=4$主配置相对$N=1$含S2D实现3.13×加速，并通过1-DDR与4-DDR对照定量给出DDR带宽对多核加速比的限制，为多核扩展规模与片外带宽配置之间的权衡提供了实测依据。
-**DSP48E1块跨列复用映射方案**：提出一种利用输出通道广播数据流中相邻列共享激活值的特性、将两个INT8乘法合并到单个DSP48E1块的硬件映射方案。该方案与原查找表实现的16×16阵列在外部接口与功能上完全一致，由综合阶段在两种映射之间作选择。在FPGA验证平台上，将16×16阵列的INT8乘法器全部从查找表迁移至专用乘法块，使查找表用量与路由后时序裕度同时改善，DSP48E1块占用从320提升至832（占器件99.0%）、布线后Fmax由125.4 MHz提升至143.8 MHz。该方案为端侧加速器从FPGA验证平台向ASIC工艺迁移阶段的资源映射策略提供了一种可参考的实现范式。
-实验验证显示，单核回归（22 case×3编译模式）、形状鲁棒（24 case）与多核W切片（$N = 2 / N = 4$各10 case）三套测试集全部与PyTorch浮点参考逐字节匹配，ResNet11完整11层网络在$N = 1 / N = 2 / N = 4$三种核数配置下均逐字节匹配；$N = 4$主配置整网周期数190,133，按100 MHz假设折算帧率约526 fps、按143.8 MHz实测折算约756 fps，相对$N = 1$含S2D实现3.13×加速，具有较好的工程实用性。
+本论文围绕端侧流式CNN加速器的关键设计问题展开创新工作，对应1.3节归纳的四个研究方向，主要创新点如下：
+
+**双层调度架构**（对应核内控制开销冗余）：提出"核内寄存器配置加核间任务描述符链表"的软硬协同双层调度架构。核内采用配置寄存器驱动的6层嵌套自循环FSM（cs→yout→tile→cins→round→pos），cfg_regs一次性写入卷积参数即可自动完成单层全部计算，无运行时取指译码与依赖跟踪；核间保留Task Descriptor宏指令流接口，编排多层串接与多核协同。该架构以"核内零控制开销+核间宏粒度可编程"的形式回应通用指令流加速器在端侧静态卷积下的控制开销冗余问题，使核内保持专用化与高吞吐、核间保持可调度与可组合。
+
+**单batch高分辨率行级流式+多核W切片调度机制**（对应单batch高分辨率流式接口缺失）：单核内行级ring使上层产出若干行OFM即触发下层计算，将片上缓冲需求从$O(H \times W)$降至$O(K \times W)$；多核之间采用W维切片配合跨核SRAM直送，将上一层OFM直接写入下一核IFB，避免外部DDR双向带宽消耗。多核同步通过描述符链表完成、不依赖中央调度器，扩展到$N=2$与$N=4$时单核RTL无需重新综合；ResNet-11 $N=4$主配置相对$N=1$含S2D实现3.13×加速，并通过1-DDR与4-DDR对照定量给出DDR带宽对多核加速比的限制。该机制使端侧qHD/1080p单batch流式输入下的多核协同形成规则的硬件接口与统一的调度抽象。
+
+**多维度数据复用+Ky-fold/S2D编译器侧PE利用率重映射**（对应PE利用率随层形状骤降）：硬件侧建立16×16 INT8 MAC阵列与三级寄存器堆（WRF/ARF/PARF）协同的数据通路，同时实施输入通道广播、权重静止、激活值滑窗行复用与输出部分和累加四层复用策略，结合零乘除法的硬件地址生成与权重round chunking机制，支持任意$K \times K$卷积核、任意步长、任意Cin/Cout切片与任意$H \times W$输入。编译器侧进一步引入Y维折叠（Ky-fold）与空间到深度（S2D）两种重映射方法：Ky-fold针对$C_{\mathrm{in}} < 16$场景将Ky维折入伪Cin维；S2D针对$\mathrm{stride} \geq 2$场景将多相位空间采样折入Cin维。两种方法不引入额外硬件代价、与硬件接口完全解耦，将ResNet-11 Patch单层周期数从654,404降至129,594（5.05×）、整网周期数从约1,115K降至约596K（约1.87×）。
+
+**端到端编译器工具链**（对应多模型快速适配的工具链能力）：构建从PyTorch / TensorFlow训练模型到加速器配置流的端到端编译路径，覆盖前端算子解析与量化、中端图级调度与层间融合、后端代码生成与Task Descriptor编排三个阶段。前端支持Conv2D、BatchNorm、ReLU、Pooling、Residual Add等典型CNN算子的适配；中端负责多层网络的层间融合、核间任务切分与Ky-fold/S2D策略决策；后端预算各地址步进、轮次分块参数与Cin/Cout切片策略，产出各核的cfg_regs取值与描述符链表。工具链使新模型部署目标在软件层完成而无需重新设计RTL，与"核内零控制开销"硬件架构形成软硬协同的端侧多模型部署链路。
+
+**工程实现配套**：围绕上述四条核心创新，论文进一步给出两项工程实现配套。其一，DSP48E1块跨列复用映射方案——利用输入通道广播数据流下16列PE共享同一拍16-Cin激活向量的特性、将两个INT8乘法合并到单个DSP48E1块，A端打包两组相邻列INT8权重、B端共享同一拍激活值，输出端通过位提取与符号校正还原两路独立乘积，使16×16阵列的256个乘法器全部由DSP块承担，DSP48E1占用从320提升至832（占器件99.0%）、布线后Fmax由125.4 MHz提升至143.8 MHz，为端侧加速器从FPGA验证平台向ASIC工艺迁移阶段的资源映射策略提供可参考的实现范式。其二，控制变量法量化分析——将SmartConnect IP、偏置寄存器堆、外存请求仲裁器分别替换为零延迟理想模型，识别出SmartConnect IP的寄存器流水级累计占整网周期数7.0%、命令调度引擎的取指与等待开销可压缩约2-3%、偏置寄存器堆切换开销小于0.06%等具有上界刻度的可优化方向，为后续工作提供基于实测的分项收益参考。
+
+实验验证显示，单核回归（22 case × 3编译模式）、形状鲁棒（24 case）与多核W切片（$N=2 / N=4$各10 case）三套测试集全部与PyTorch浮点参考逐字节匹配，ResNet-11完整11层网络在$N=1 / N=2 / N=4$三种核数配置下均逐字节匹配；$N=4$主配置整网周期数190,133，按100 MHz假设折算帧率约526 fps、按143.8 MHz实测折算约756 fps，超出qHD视频流30 FPS实时基线约17倍，具有较好的工程实用性。
 
 ### 6.3 展望
 
@@ -931,3 +1047,197 @@ Table 5.16 Network-level frame rate comparison: FLUX_CNN ASIC vs representative 
 ## 参考文献
 
 > [TBD: 待Phase 5参考文献节生成 — 按GB/T 7714格式整理 [1]-[39] 全部条目]
+
+---
+
+<!-- SYNC v4 2026-05-12: 附录 A 数据填充 (A.1 cfg_regs 映射 + A.4 回归用例清单) -->
+
+## 附录 A
+
+本附录提供 FLUX_CNN 加速器硬件接口与验证完整性的两份参考数据：A.1 列出核内配置寄存器（cfg_regs）的完整字段映射，作为外部读者复现核心硬件接口的依据；A.4 列出单核 ResNet 类回归测试集的全部用例形状参数，作为 §5.3.1 功能验证完整性的具体证据。原计划的 A.2 ResNet11 网络结构与每层参数已通过图 5.0d ResNet11 网络结构图（§5.3.4）覆盖；A.3 编译器侧伪代码已通过算法 4.1 / 4.2（§4.8 / §4.9）覆盖，本附录不重复。
+
+### A.1 cfg_regs 完整寄存器映射表
+
+数据来源：`RTL/cfg_regs.sv`。本表汇总核内所有配置寄存器的字段名、位宽、地址偏移、访问类型与默认值。该寄存器组由 host CPU 通过 AXI-Lite 写入，加速核内部各模块按 RO 方式读取。寄存器组按 4 字节对齐，外部地址空间宽度 12 位。访问类型说明：CSR=host AXI-Lite 写口直接写入（boot 寄存器，含复位）；SEQ=sequencer 通过 CFG_WRITE descriptor 写入（layer cfg 寄存器，按 §6.1 数据路径无复位）；CSR/SEQ=两条写口均可（mesh 模式下 host 旁路）；RO=只读状态。默认值列：CSR 类带硬件复位写明复位值，SEQ 类（数据路径）无复位标 "—"。
+
+#### A.1.1 控制 / 状态寄存器（boot，CSR 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| CTRL | [5:0] | 0x000 | CSR(WO,pulse) | — | [4]=start_dfe 脉冲（拉 descriptor list），[5]=start_layer 脉冲（启 sequencer 跑整层）|
+| STATUS | [11:0] | 0x004 | RO | 0 | [0]=core_done(sticky)，[1]=core_busy，[2..4]=idma/wdma/odma_busy，[5..7]=idma/wdma/odma_done，[8..9]=dfe_busy/done，[10..11]=layer_busy/done |
+| DESC_LIST_BASE | [31:0] | 0x180 | CSR(WO) | — | host 写：descriptor list 在 DDR 的起始字节地址 |
+| DESC_COUNT | [15:0] | 0x184 | CSR(WO) | — | host 写：descriptor 总条数 |
+| DMA_MODE | [1:0] | 0x17C | CSR(WO) | 2'b00 | 控制路径（带复位），J-2 后硬件恒 streaming，软件可写无副作用 |
+| SKIP_IDMA | [0] | — | CSR/SEQ | 1'b0 | M2 mesh：1=本核 IDMA 不启动，等远端核 push 进 IFB |
+| OFM_TDEST | [7:0] | — | CSR(WO) | 8'd0 | Mesh：ODMA 出包目的节点（[7:4]=dst_y, [3:0]=dst_x）|
+| OFM_OPCODE | [3:0] | — | CSR(WO) | 4'd0 | Mesh：ODMA 出包 opcode |
+
+#### A.1.2 卷积形状寄存器（layer cfg，SEQ 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| H_OUT | [15:0] | 0x100 | SEQ | — | 输出行数 |
+| W_OUT | [15:0] | 0x104 | SEQ | — | 输出列数 |
+| W_IN | [15:0] | 0x108 | SEQ | — | 输入列数 |
+| K | [3:0] | 0x10C | SEQ | — | 卷积核 K（K×K 方核） |
+| KY | [3:0] | — | SEQ | — | Ky-fold 后等效 Ky（无 fold 时 = K） |
+| STRIDE | [2:0] | 0x110 | SEQ | — | W 维 stride（同步默认设到 STRIDE_H） |
+| STRIDE_H | [2:0] | — | SEQ | — | H 维 stride（Round I 解耦，默认 = STRIDE） |
+| CIN_SLICES | [5:0] | 0x114 | SEQ | — | ⌈Cin/16⌉，输入通道切片数 |
+| COUT_SLICES | [5:0] | 0x118 | SEQ | — | ⌈Cout/16⌉，输出通道切片数 |
+| TILE_W | [5:0] | 0x11C | SEQ | — | tile 列宽（普通 tile，最后一个 tile 用 LAST_VALID_W）|
+| NUM_TILES | [7:0] | 0x120 | SEQ | — | W 方向 tile 数 |
+| LAST_VALID_W | [5:0] | 0x124 | SEQ | — | 最后一个 tile 的有效列数 |
+| TOTAL_WRF | [9:0] | 0x128 | SEQ | — | 整层 WRF 总词数 |
+| KK | [9:0] | 0x130 | SEQ | — | K×K |
+| ROUNDS_PER_CINS | [2:0] | 0x134 | SEQ | — | 每 Cin 切片对应的 WRF 轮次 |
+| ROUND_LEN_LAST | [5:0] | 0x138 | SEQ | — | 最后一轮长度 |
+
+#### A.1.3 SRAM 基址 / 步长寄存器（layer cfg，SEQ 写，20 位 CORE_ADDR_W）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| IFB_BASE | [19:0] | 0x13C | SEQ | — | IFB SRAM 起始 word 地址 |
+| WB_BASE | [19:0] | 0x140 | SEQ | — | WB SRAM 起始 word 地址 |
+| OFB_BASE | [19:0] | 0x144 | SEQ | — | OFB SRAM 起始 word 地址 |
+| IFB_ROW_STEP | [19:0] | 0x14C | SEQ | — | IFB NHWC 一行步长 = stride×W_IN×cin_slices |
+| WB_COUT_STEP | [19:0] | 0x154 | SEQ | — | WB cout 切片步长 |
+| TILE_IN_STEP | [19:0] | 0x15C | SEQ | — | IFB NHWC 一 tile 步长 = TILE_W×stride×cin_slices |
+| IFB_ISS_STEP | [19:0] | 0x1AC | SEQ | — | IFB 跨像素 word 步长 = stride×cin_slices |
+| IFB_KY_STEP | [19:0] | 0x1B0 | SEQ | — | IFB 跨 ky 行 word 步长 = W_IN×cin_slices |
+| TILE_PIX_STEP | [15:0] | 0x1B4 | SEQ | — | 像素域 tile 步长 = TILE_W×stride |
+| ARF_REUSE_EN | [0] | 0x1B8 | SEQ | — | 1=kx 滑窗复用（仅 stride==1 && K>1） |
+
+#### A.1.4 Streaming / Ring 配置（layer cfg，SEQ 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| H_IN_TOTAL | [15:0] | 0x168 | SEQ | — | 整图输入高度 |
+| IFB_STRIP_ROWS | [7:0] | 0x16C | CSR/SEQ | — | IFB ring 容纳输入行数（mesh 模式 host 旁路写优先） |
+| OFB_STRIP_ROWS | [5:0] | 0x170 | SEQ | — | OFB ring 容纳输出行数 |
+| DDR_IFM_ROW_STRIDE | [19:0] | 0x174 | SEQ | — | DDR 相邻输入行字节跨度 |
+| DDR_OFM_ROW_STRIDE | [19:0] | 0x178 | SEQ | — | DDR 相邻输出行字节跨度 |
+| IFB_RING_WORDS | [19:0] | 0x1A0 | CSR/SEQ | — | IFB ring 总 word 数 = ifb_strip_rows×W_IN×cin_slices |
+| OFB_ROW_WORDS | [19:0] | 0x1A4 | SEQ | — | OFB 一行 word 数 = W_OUT×cout_slices |
+| OFB_RING_WORDS | [19:0] | 0x1A8 | SEQ | — | OFB ring 总 word 数 = ofb_strip_rows×W_OUT×cout_slices |
+
+#### A.1.5 DMA 描述符寄存器（layer cfg，SEQ 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| IDMA_SRC_BASE | [31:0] | 0x200 | SEQ | — | IDMA 源地址（DDR） |
+| IDMA_BYTE_LEN | [23:0] | 0x204 | SEQ | — | IDMA 字节长度（descriptor 内可覆盖） |
+| WDMA_SRC_BASE | [31:0] | 0x210 | SEQ | — | WDMA 源地址（DDR） |
+| WDMA_BYTE_LEN | [23:0] | 0x214 | SEQ | — | WDMA 字节长度 |
+| ODMA_DST_BASE | [31:0] | 0x220 | SEQ | — | ODMA 目的地址（DDR） |
+| ODMA_BYTE_LEN | [23:0] | 0x224 | SEQ | — | ODMA 字节长度（descriptor 内覆盖） |
+| RDMA_SRC_BASE | [31:0] | 0x230 | SEQ | — | RDMA 拉 [bias][shortcut] 进 SB 的源地址 |
+| RDMA_BYTE_LEN | [23:0] | 0x234 | SEQ | — | RDMA 字节长度 |
+
+#### A.1.6 SDP / Residual / Bias 寄存器（layer cfg，SEQ 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| SDP_SHIFT | [5:0] | 0x160 | SEQ | — | 量化右移位数 |
+| SDP_RELU_EN | [0] | 0x164 | SEQ | — | 1=ReLU on |
+| SDP_MULT | signed[31:0] | 0x188 | SEQ | — | 量化乘子 |
+| SDP_ZP_OUT | signed[8:0] | 0x18C | SEQ | — | 输出 zero-point |
+| SDP_CLIP_MIN | signed[8:0] | 0x190 | SEQ | — | 量化下钳值 |
+| SDP_CLIP_MAX | signed[8:0] | 0x194 | SEQ | — | 量化上钳值 |
+| SDP_ROUND_EN | [0] | 0x198 | SEQ | — | 1=round-half-up |
+| RESIDUAL_EN | [0] | 0x1BC | SEQ | — | 1=SDP 启用 shortcut add 通路 |
+| SHORTCUT_MULT | signed[15:0] | 0x1C0 | SEQ | — | shortcut 标度乘子 |
+| SHORTCUT_SHIFT | [4:0] | 0x1C4 | SEQ | — | shortcut 右移位数（0..31） |
+| BIAS_BASE | [12:0] | 0x1C8 | SEQ | — | bias 在 Shortcut Bank 的起始 word-index |
+
+#### A.1.7 SMC + NUMA SG cmd list 寄存器（Phase 7，layer cfg，SEQ 写）
+
+| 字段名 | 位宽 | 偏移 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- | --- |
+| IDMA_CMD_LIST_PTR | [31:0] | — | SEQ | — | IDMA SG cmd list 起始字节地址 |
+| IDMA_CMD_COUNT | [15:0] | — | SEQ | — | IDMA SG cmd 条数 |
+| IDMA_CMDS_PER_ROW | [7:0] | — | SEQ | — | 单行跨 mem 时 cmd 数 |
+| ODMA_CMD_LIST_PTR | [31:0] | — | SEQ | — | ODMA SG cmd list 起始字节地址 |
+| ODMA_CMD_COUNT | [15:0] | — | SEQ | — | ODMA SG cmd 条数 |
+| ODMA_CMDS_PER_ROW | [7:0] | — | SEQ | — | 单行跨 mem 时 cmd 数 |
+
+A.1 合计：控制状态 8 个 + 卷积形状 16 个 + SRAM 步长 10 个 + Ring 8 个 + DMA 描述符 8 个 + SDP/Residual 11 个 + SMC SG 6 个 = **67 个寄存器字段**。
+
+### A.4 ResNet 类回归用例配置清单
+
+数据来源：`toolchain/run_regression.py` 的 `CASES` 列表（链式 DSL，由 `_chain.cases` 导出）。<!-- [CHECK]: 论文 §5.3.1 与表 5.5 描述为 22 case；代码当前实际为 26 case（4 个 K 边界 R.K1_C16/K2_C16/K5_C16/K7_C16 在论文初稿后追加）。回归仍按 PASS 计数。表格按代码当前状态列出 26 行。 -->前 11 个为 ResNet-18-like 主链（Patch embed → 3 个 residual block → FC，链上 `chn` 表示父层 ofm 直接作为本层 ifm，`res` 表示父层 ofm 作为 SDP shortcut）。后 15 个为独立 corner case，每个用自己的随机 IFM 覆盖 K∈{1,2,3,5,7}、stride∈{1,2}、Cin∈{4,8,12,16}、Cout∈{16,24,32}、H/W 奇偶与 ring 边界等参数空间。每个用例在 LUT-only / Ky-fold / Ky-fold+S2D 三种编译模式下分别仿真，全部 PASS。pad 为对称填充；shortcut 列 "—" 表示无残差。
+
+| 序号 | 名称 | K | stride | H×W | Cin→Cout | pad | shortcut | 类型 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1  | Patch       | 4 | 4 | 960×540 | 4→16   | 0 | —                | Patch embed |
+| 2  | L1.B1.C1    | 3 | 2 | 240×135 | 16→16  | 1 | —                | 主路径 conv（降采样） |
+| 3  | L1.B1.C2    | 3 | 1 | 120×68  | 16→16  | 1 | —                | 主路径 conv |
+| 4  | L1.B2.ds    | 1 | 2 | 240×135 | 16→16  | 0 | L1.B1.C2         | shortcut 降采样 + 残差融合 |
+| 5  | L2.B1.C1    | 3 | 2 | 120×68  | 16→32  | 1 | —                | 主路径 conv（降采样 + 升通道） |
+| 6  | L2.B1.C2    | 3 | 1 | 60×34   | 32→32  | 1 | —                | 主路径 conv |
+| 7  | L2.B2.ds    | 1 | 2 | 120×68  | 16→32  | 0 | L2.B1.C2         | shortcut 降采样 + 残差融合 |
+| 8  | L3.B1.C1    | 3 | 2 | 60×34   | 32→64  | 1 | —                | 主路径 conv（降采样 + 升通道） |
+| 9  | L3.B1.C2    | 3 | 1 | 30×17   | 64→64  | 1 | —                | 主路径 conv |
+| 10 | L3.B2.ds    | 1 | 2 | 60×34   | 32→64  | 0 | L3.B1.C2         | shortcut 降采样 + 残差融合 |
+| 11 | FC          | 1 | 1 | 1×1     | 256→522| 0 | —                | 全连接（1×1 conv 实现） |
+| 12 | R.K1_C16    | 1 | 1 | 16×16   | 16→16  | 0 | —                | corner: K=1 |
+| 13 | R.K2_C16    | 2 | 1 | 16×16   | 16→16  | 0 | —                | corner: K=2 |
+| 14 | R.K5_C16    | 5 | 1 | 16×16   | 16→16  | 2 | —                | corner: K=5 |
+| 15 | R.K7_C16    | 7 | 1 | 16×16   | 16→16  | 3 | —                | corner: K=7 |
+| 16 | R.K3S2      | 3 | 2 | 32×32   | 16→16  | 1 | —                | corner: stride=2 |
+| 17 | R.K5S2      | 5 | 2 | 32×32   | 16→16  | 2 | —                | corner: K=5 + stride=2 |
+| 18 | R.Cin4      | 3 | 1 | 16×16   | 4→16   | 1 | —                | corner: Cin=4（Ky-fold 覆盖） |
+| 19 | R.Cin8      | 3 | 1 | 16×16   | 8→16   | 1 | —                | corner: Cin=8 |
+| 20 | R.Cin12     | 3 | 1 | 16×16   | 12→16  | 1 | —                | corner: Cin=12 |
+| 21 | R.Cout24    | 3 | 1 | 16×16   | 16→24  | 1 | —                | corner: Cout 非 16 倍数 |
+| 22 | R.Cout32    | 3 | 1 | 16×16   | 16→32  | 1 | —                | corner: Cout=2 切片 |
+| 23 | R.H15W17    | 3 | 1 | 15×17   | 16→16  | 1 | —                | corner: 奇尺寸 |
+| 24 | R.H33W33    | 3 | 1 | 33×33   | 16→16  | 1 | —                | corner: 奇尺寸 |
+| 25 | R.H64W32    | 3 | 1 | 64×32   | 16→16  | 1 | —                | corner: OFB ring 边界 |
+| 26 | R.1x1FC     | 1 | 1 | 1×1     | 64→32  | 0 | —                | corner: 1×1 FC |
+
+### A.2 / A.3 已并入正文
+
+- A.2 ResNet11 网络结构与每层参数 → 图 5.0d（§5.3.4）与表 5.x 单层 cycle 分布。
+- A.3 Ky-fold / S2D 编译器侧伪代码 → 算法 4.1（§4.8）/ 算法 4.2（§4.9）。
+
+---
+
+## 修改记录
+
+> [TBD: 大连理工模板必填章节，按答辩各阶段修改依次填入]
+>
+> **一、毕业论文题目修改**（无则删除）
+>
+> **二、指导教师变更**（无则删除）
+>
+> **三、校外毕业论文时间节点记录**（无则删除）
+>
+> **四、毕业论文内容重要修改记录**
+> - [ ] 指导教师要求的重大修改：
+> - [ ] 评阅教师要求的修改：
+> - [ ] 答辩委员会提出的修改意见：
+> - [ ] 重复比检测后的修改记录：
+>
+> **五、毕业论文外文翻译修改记录**
+>
+> **六、毕业论文最后一次检测重复比**：[TBD]
+
+---
+
+## 致谢
+
+> [TBD: 待答辩前定稿，必填章节]
+>
+> 致谢稿件大纲：
+> - 对指导教师在选题、研究方法、论文撰写各阶段指导的具体感谢；
+> - 对评阅教师、答辩委员会的感谢；
+> - 对在加速器架构、FPGA 综合、编译器实现等环节提出建议与帮助的同学与老师的感谢；
+> - 对家人在求学期间支持的感谢。
+>
+
+---
+
+<!-- SYNC METADATA v4 2026-05-12: paper.md 全量同步自 paper-from-docx.md（来源 Word docx 2026-05-11 版本）-->
+

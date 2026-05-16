@@ -1,0 +1,264 @@
+% =============================================================================
+% _tikz-style.tex --- FLUX_CNN 论文 TikZ 共享样式包
+%
+% 用法（每张 figX-Y.tex 头部 \input 本文件）:
+%   \documentclass[border=4pt,varwidth=18cm]{standalone}
+%   \input{_tikz-style.tex}
+%   \begin{document}
+%   \begin{tikzpicture}[<额外局部样式>]
+%     ...
+%   \end{tikzpicture}
+%   \end{document}
+%
+% 风格基线: IEEE 期刊配色 / 白底黑字 / Times New Roman + Microsoft YaHei /
+%           禁卡通 / 禁渐变 / 禁阴影 / 禁 3D / 禁 emoji
+% 与 figures-rendered/_style.py (matplotlib) 配色一致, 保证全文图风格统一.
+% =============================================================================
+
+% ---- 字体（XeLaTeX 必须）----
+% 中文字体：Microsoft YaHei（保持原配置，本次只调整英文）.
+% 英文字体：Times New Roman, 把 \sffamily / \rmfamily 同时映射到 Times,
+%           保证 TikZ 节点无论用哪个 family, 拉丁字符都是 Times New Roman.
+% 数学公式（mathmode）保留 latin modern math, 与 Times 视觉差异可接受.
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xeCJK}
+\setCJKmainfont{Microsoft YaHei}
+\setCJKsansfont{Microsoft YaHei}
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+
+% ---- 颜色（与 figures-rendered/_style.py PALETTE='default' 同款）----
+\usepackage{xcolor}
+\definecolor{coBaseline}{HTML}{1f4e79}  % 深蓝 - 主体强调 / 基线
+\definecolor{coImproved}{HTML}{2e7d32}  % 深绿 - 提升 / 高亮
+\definecolor{coThird}   {HTML}{b8860b}  % 深金 - 第三系列
+\definecolor{coFourth}  {HTML}{6a4c93}  % 深紫 - 第四系列
+\definecolor{coAnno}    {HTML}{404040}  % 学术深灰 - 注记
+\definecolor{coGuide}   {HTML}{808080}  % 辅助线
+\definecolor{coGrid}    {HTML}{cccccc}  % 网格
+\definecolor{coAccent}  {HTML}{c00000}  % 强调红 - 仅用于关键警示 / 跨节点
+% 浅色填充（CMYK 转 RGB 近似）
+\definecolor{flBlue}    {RGB}{226,238,247}  % 淡蓝 CMYK 30/10/0/0 ≈
+\definecolor{flYellow}  {RGB}{252,242,219}  % 淡黄 CMYK 0/10/30/0 ≈
+\definecolor{flGray}    {RGB}{235,235,235}  % 淡灰 CMYK 0/0/0/10 ≈
+\definecolor{flGreen}   {RGB}{226,239,224}  % 浅绿 - 高亮区域
+
+% ---- TikZ + 常用库 ----
+\usepackage{tikz}
+\usetikzlibrary{
+    arrows.meta,
+    positioning,
+    calc,
+    fit,
+    backgrounds,
+    decorations.pathreplacing,
+    decorations.pathmorphing,
+    shapes.geometric,
+    shapes.misc,
+    shapes.multipart,
+    matrix,
+    chains,
+    shadows.blur,    % 不用阴影 (禁用), 但 fit 节点偶尔用 inner sep
+    patterns
+}
+
+% ---- 全局 TikZ 默认 ----
+\tikzset{
+    every picture/.style={
+        line cap=round,
+        line join=round,
+        >={Stealth[length=2.4mm, width=1.6mm]},
+        font=\sffamily\small,
+    },
+    % ---- 节点基础类型 ----
+    %
+    % 主体方框 (深色边框, 白底) - 用于一般模块
+    main box/.style={
+        draw=coAnno,
+        line width=0.7pt,
+        rectangle,
+        rounded corners=1.5pt,
+        minimum width=20mm,
+        minimum height=8mm,
+        align=center,
+        inner sep=2pt,
+    },
+    % 强调方框 (深蓝填充 alpha)
+    accent box/.style={
+        main box,
+        fill=flBlue,
+    },
+    % 计算单元 / PE (淡黄填充)
+    pe box/.style={
+        main box,
+        fill=flYellow,
+    },
+    % SRAM / 存储 (淡灰填充)
+    mem box/.style={
+        main box,
+        fill=flGray,
+    },
+    % 控制单元 / FSM (浅绿填充)
+    ctrl box/.style={
+        main box,
+        fill=flGreen,
+    },
+    % 大容器 (圆角矩形, 虚线边框, 用于 multicore_top / NUMA 节点等)
+    container box/.style={
+        draw=coAnno,
+        line width=0.7pt,
+        rounded corners=2pt,
+        rectangle,
+        dashed,
+        inner sep=3mm,
+    },
+    container solid/.style={
+        container box,
+        solid,
+    },
+    %
+    % ---- 箭头类型 ----
+    %
+    flow/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.7pt,
+        draw=coAnno,
+    },
+    flow thick/.style={
+        flow,
+        line width=1.2pt,
+    },
+    flow dashed/.style={
+        flow,
+        dashed,
+    },
+    flow accent/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=1.0pt,
+        draw=coAccent,
+        dashed,
+    },
+    flow data/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.9pt,
+        draw=coBaseline,
+    },
+    flow weight/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.9pt,
+        draw=coImproved,
+    },
+    flow psum/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.9pt,
+        draw=coThird,
+    },
+    bus/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.6pt,
+        draw=coAnno,
+    },
+    handshake/.style={
+        <->,
+        line width=0.7pt,
+        draw=coAnno,
+    },
+    %
+    % ---- 标注 / 文字 ----
+    %
+    label small/.style={
+        font=\sffamily\footnotesize,
+        text=coAnno,
+        align=center,
+    },
+    label tiny/.style={
+        font=\sffamily\scriptsize,
+        text=coAnno,
+        align=center,
+    },
+    label bold/.style={
+        font=\sffamily\bfseries\small,
+        text=black,
+        align=center,
+    },
+    formula/.style={
+        font=\small,
+        align=center,
+    },
+    % 边线上的标注 (背景白底, 不挡线)
+    edge label/.style={
+        font=\sffamily\scriptsize,
+        text=coAnno,
+        fill=white,
+        inner sep=1.2pt,
+        align=center,
+    },
+    edge label accent/.style={
+        edge label,
+        text=coAccent,
+        font=\sffamily\bfseries\scriptsize,
+    },
+    %
+    % ---- 图例 ----
+    %
+    legend box/.style={
+        draw=coAnno,
+        line width=0.4pt,
+        fill=white,
+        rounded corners=1pt,
+        inner sep=2.5pt,
+        font=\sffamily\scriptsize,
+        text=coAnno,
+        align=left,
+    },
+    %
+    % ---- 网格 / 阵列 (用于 PE 阵列示意) ----
+    %
+    grid cell/.style={
+        draw=coAnno,
+        line width=0.3pt,
+        minimum width=4mm,
+        minimum height=4mm,
+        inner sep=0pt,
+        rectangle,
+    },
+    grid cell light/.style={
+        grid cell,
+        fill=flGray,
+    },
+    grid cell accent/.style={
+        grid cell,
+        fill=flBlue,
+    },
+    %
+    % ---- 时序波形 (用于内嵌时序示意时, 非主要; 主要用 WaveDrom) ----
+    %
+    wave hi/.style={line width=1pt, draw=coBaseline},
+    wave lo/.style={line width=1pt, draw=coBaseline},
+}
+
+% ---- 通用辅助宏 ----
+
+% 章节图标题命令 (备选, 一般由论文 caption 承担, 不在 TikZ 内画)
+% \newcommand{\figtitle}[1]{\node[font=\bfseries\small,text=black] {#1};}
+
+% 端口标记: 在节点边缘画个小圆点表示端口
+\newcommand{\port}[2][black]{\fill[#1] (#2) circle (0.5mm);}
+
+% 中文/英文双行标签: \biLabel{中文}{English}
+\newcommand{\biLabel}[2]{\shortstack{\sffamily #1\\\itshape\footnotesize #2}}
+
+% =============================================================================
+% 使用约定 (写 figX-Y.tex 时遵守):
+%
+% 1. 不在 TikZ 内画"图 X.Y"标题——由 Word caption 承担
+% 2. 节点用上述预定义样式 (main box / accent box / pe box / mem box / ctrl box / container box)
+%    避免每张图重复定义节点样式
+% 3. 数据流统一用 flow data (蓝) / flow weight (绿) / flow psum (金) 三色编码
+%    握手 / 控制流用 flow / flow dashed (灰)
+%    强调 / 警示用 flow accent (红虚线), 慎用
+% 4. 文字标注用 label small / label tiny / label bold / edge label
+% 5. 图例统一放右下角, 用 legend box 样式
+% 6. 中英混排时: 中文用 \sffamily (思源黑体), 英文数学用 \rmfamily (Times New Roman)
+% =============================================================================

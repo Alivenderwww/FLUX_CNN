@@ -36,12 +36,11 @@ for bar, v in zip(bars_a, after):
     ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() * 1.06,
              f"{v:,}", ha="center", va="bottom", fontsize=8, color=COLOR_IMPROVED)
 
-# 减幅注记 — 标在 启用后 柱中部偏上（不放 x 轴下方避免布局拉长）
+# 减幅注记 — 标在 启用后 柱中部
 for xi, r, av in zip(x, reduction, after):
     ax1.text(xi + w/2, av * 0.45, f"{r:+.1f}%",
              ha="center", va="center",
-             fontsize=10, fontweight="bold", color="white",
-             bbox=dict(boxstyle="round,pad=0.2", facecolor=COLOR_ANNO, edgecolor="none"))
+             fontsize=11, fontweight="bold", color="white")
 
 ax1.set_xticks(x)
 ax1.set_xticklabels(labels, fontsize=9)

@@ -1,0 +1,87 @@
+% =============================================================================
+% fig1-3-contributions-mindmap.tex --- 图 1.3 五大创新点思维导图 (§1.3)
+%
+% v5.1 修订:
+%   - 用户反馈: "排版稀疏"
+%   - 修订要点: 5 个辐射节点向中心收紧 (半径减小 30%);
+%               节点文字简化为关键词 (一两个词);
+%               中心节点 FLUX_CNN 加重对比 (深蓝实心填充 + 白字)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    % 中心节点: 深蓝实心 + 白字, 视觉重锚
+    center node/.style={
+        draw=coAccent, line width=1.4pt, rounded corners=3pt,
+        fill=coBaseline, text=white,
+        minimum width=32mm, minimum height=20mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    % 辐射节点: 关键词 + 章节锚, 5 种淡色背景区分
+    branch1/.style={
+        draw=coAnno, line width=0.7pt, rounded corners=2pt,
+        fill=flBlue, minimum width=30mm, minimum height=18mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    branch2/.style={branch1, fill=flYellow,},
+    branch3/.style={branch1, fill=flGreen,},
+    branch4/.style={branch1, fill={rgb,255:red,237;green,231;blue,246},}, % 淡紫
+    branch5/.style={branch1, fill=flGray,},
+    % 辐射连线: 深蓝粗实线
+    spoke/.style={
+        -{Stealth[length=2.6mm,width=1.8mm]},
+        line width=1.2pt, draw=coBaseline,
+    },
+    sec/.style={
+        font=\sffamily\scriptsize\itshape, text=coAnno, align=center,
+    },
+]
+
+% =============================================================================
+% 中心节点
+% =============================================================================
+\node[center node] (ctr) at (0,0) {FLUX\_CNN\\[1pt]
+    \scriptsize\mdseries 端侧分层调度加速器};
+
+% =============================================================================
+% 五条辐射分支 (按时钟方向 12 / 2 / 5 / 7 / 10 点, 半径 3.6, 比设计稿收紧 30%)
+% =============================================================================
+\def\rad{3.6}
+
+% 12 点 — 分支 1: 分层调度
+\node[branch1] (b1) at ({\rad*cos(90)}, {\rad*sin(90)+0.3})
+    {分层调度\\[1pt]\scriptsize\mdseries cfg + Task Desc.};
+\draw[spoke] (ctr.north) -- (b1.south);
+\node[sec, anchor=south] at (b1.north) {§3.4 / §4.7};
+
+% 2 点 — 分支 2: 任意形状阵列
+\node[branch2] (b2) at ({\rad*cos(18)+0.4}, {\rad*sin(18)})
+    {任意形状\\[1pt]\scriptsize\mdseries 16$\times$16 + RF};
+\draw[spoke] (ctr.east) -- (b2.west);
+\node[sec, anchor=west] at ($(b2.east)+(1mm,0)$) {§3.3};
+
+% 5 点 — 分支 3: Ky-fold + S2D
+\node[branch3] (b3) at ({\rad*cos(-54)+0.4}, {\rad*sin(-54)-0.2})
+    {Ky-fold + S2D\\[1pt]\scriptsize\mdseries 编译器变换};
+\draw[spoke] (ctr.south east) -- (b3.north west);
+\node[sec, anchor=west] at ($(b3.east)+(1mm,0)$) {§4.8 / §4.9};
+
+% 7 点 — 分支 4: W 切片 + SMC
+\node[branch4] (b4) at ({\rad*cos(-126)-0.4}, {\rad*sin(-126)-0.2})
+    {W 切片 + SMC\\[1pt]\scriptsize\mdseries 多核 NUMA};
+\draw[spoke] (ctr.south west) -- (b4.north east);
+\node[sec, anchor=east] at ($(b4.west)+(-1mm,0)$) {§4.11};
+
+% 10 点 — 分支 5: DSP 跨列
+\node[branch5] (b5) at ({\rad*cos(162)-0.4}, {\rad*sin(162)})
+    {DSP 跨列\\[1pt]\scriptsize\mdseries 1 DSP / 2 INT8};
+\draw[spoke] (ctr.west) -- (b5.east);
+\node[sec, anchor=east] at ($(b5.west)+(-1mm,0)$) {§4.12};
+
+\end{tikzpicture}
+\end{document}

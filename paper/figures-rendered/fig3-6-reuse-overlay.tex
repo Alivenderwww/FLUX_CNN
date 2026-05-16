@@ -1,0 +1,135 @@
+% =============================================================================
+% fig3-6-reuse-overlay.tex --- 图 3.6 三层数据复用叠加 (§3.5)
+%
+% v5.1 修订:
+%   - 用户反馈: "信息密度低、意义不明"
+%   - 修订要点: 分 3 panel 横向对比, 每 panel 一个 4x4 PE 阵列, 分别叠加:
+%     (a) 权重静止 -- 每 PE 标固定权重黑方块
+%     (b) 激活滑窗复用 -- K×K 窗口从左到右滑 (红箭头连接相邻列共享 act)
+%     (c) 输出通道广播 -- 同一拍 16 列 PE 共享同一 act (红横向广播总线)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    pe cell/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=8mm, minimum height=8mm,
+        inner sep=0pt, fill=flGray,
+    },
+    pe lit/.style={pe cell, fill=flBlue,},
+    panel title/.style={
+        font=\sffamily\small\bfseries, text=coAnno,
+        anchor=south, align=center,
+    },
+    panel sub/.style={
+        font=\sffamily\scriptsize\itshape, text=coAnno,
+        anchor=north, align=center,
+    },
+    red bus/.style={
+        -{Stealth[length=2.6mm,width=1.8mm]},
+        line width=1.2pt, draw=coAccent,
+    },
+    w mark/.style={
+        font=\sffamily\scriptsize\bfseries, text=black,
+    },
+]
+
+% =============================================================================
+% Panel (a) 权重静止 -- 每 PE 一个黑方块 + W 标
+% =============================================================================
+\def\xa{0}
+\def\ya{0}
+
+\node[panel title] at (\xa+1.4, \ya+3.6) {(a) 权重静止};
+
+\foreach \r in {0,1,2,3} {
+    \foreach \c in {0,1,2,3} {
+        \node[pe cell] (pa\r\c) at (\xa+\c*0.85, \ya+2.55-\r*0.85) {};
+        % 每 PE 内放小黑方块 + W
+        \fill[black] (\xa+\c*0.85-0.12, \ya+2.55-\r*0.85-0.12) rectangle
+                     (\xa+\c*0.85+0.12, \ya+2.55-\r*0.85+0.12);
+        \node[w mark, text=white]
+            at (\xa+\c*0.85, \ya+2.55-\r*0.85) {W};
+    }
+}
+
+\node[panel sub] at (\xa+1.4, \ya-0.3)
+    {每 PE 持有一个固定权重\\WB $\to$ WRF 加载后不变};
+
+% =============================================================================
+% Panel (b) 激活滑窗复用 -- K×K 窗口从左到右滑, 红箭头连接相邻列共享 act
+% =============================================================================
+\def\xb{6.0}
+\def\yb{0}
+
+\node[panel title] at (\xb+1.4, \yb+3.6) {(b) 激活滑窗复用};
+
+\foreach \r in {0,1,2,3} {
+    \foreach \c in {0,1,2,3} {
+        \node[pe cell] (pb\r\c) at (\xb+\c*0.85, \yb+2.55-\r*0.85) {};
+    }
+}
+
+% K=3 蓝色窗口 (盖在左上角 3x3, 突出 K×K)
+\draw[line width=1.4pt, draw=coBaseline, fill=flBlue, fill opacity=0.4]
+    (\xb-0.42, \yb+0.85+0.42) rectangle
+    (\xb+0.85*2+0.42, \yb+2.55+0.42);
+\node[font=\sffamily\scriptsize\bfseries, text=coBaseline]
+    at (\xb+0.85, \yb+2.95) {K$\times$K window};
+
+% 红箭头: 窗口滑动方向 (从左到右), 在阵列下方
+\draw[red bus] (\xb-0.4, \yb-0.05) -- (\xb+0.85*3+0.4, \yb-0.05)
+    node[midway, below=0pt, font=\sffamily\scriptsize\bfseries, text=coAccent]
+        {sliding $\to$};
+
+% 相邻列共享 act 红虚线 (列与列之间共享窗口左 2 列)
+\foreach \c in {0,1,2} {
+    \draw[->, line width=0.7pt, draw=coAccent, dashed]
+        (\xb+\c*0.85+0.4, \yb+1.4) -- (\xb+\c*0.85+0.85-0.4, \yb+1.4);
+}
+
+\node[panel sub] at (\xb+1.4, \yb-0.5)
+    {窗口右滑一列 $\to$ 仅 1 新列\\旧 K-1 列从 ARF 直接复用};
+
+% =============================================================================
+% Panel (c) 输出通道广播 -- 同一拍 16 列共享同一 act, 红横向广播总线
+% =============================================================================
+\def\xc{12.0}
+\def\yc{0}
+
+\node[panel title] at (\xc+1.4, \yc+3.6) {(c) 输出通道广播};
+
+\foreach \r in {0,1,2,3} {
+    \foreach \c in {0,1,2,3} {
+        \node[pe cell] (pc\r\c) at (\xc+\c*0.85, \yc+2.55-\r*0.85) {};
+    }
+}
+
+% 红横向广播总线 (4 条水平箭头, 每行 1 条, 贯穿整行)
+\foreach \r in {0,1,2,3} {
+    \draw[red bus]
+        (\xc-0.85, \yc+2.55-\r*0.85) -- (\xc+0.85*3+0.4, \yc+2.55-\r*0.85);
+    % 行起点 act 圆点
+    \fill[coAccent] (\xc-0.85, \yc+2.55-\r*0.85) circle (1.2mm);
+}
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent, anchor=east]
+    at (\xc-1.0, \yc+1.275) {act};
+
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent]
+    at (\xc+1.4, \yc+3.2) {broadcast $\to$ 16 cols};
+
+\node[panel sub] at (\xc+1.4, \yc-0.3)
+    {1 拍 act 向量同时\\广播到 16 列 (Cout 并行)};
+
+% =============================================================================
+% 顶部主标题 (技术性说明, 非图标题)
+% =============================================================================
+\node[font=\sffamily\small, text=coAnno, anchor=south]
+    at (7.0, 4.4)
+    {16$\times$16 PE 阵列上的三种数据复用机制};
+
+\end{tikzpicture}
+\end{document}

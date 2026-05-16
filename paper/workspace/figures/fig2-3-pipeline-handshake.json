@@ -1,0 +1,46 @@
+{
+  "_comment_role": "图 2.3 / Figure 2.3 — 五级流水线 + valid-ready 握手时序图（§2.4.3 握手协议）",
+  "_comment_render": "用法: 浏览器开 https://wavedrom.com/editor.html, 粘贴 JSON, Save as SVG",
+  "_comment_caption": "图标题由 figure caption 承担, WaveDrom 内不画 head 标题",
+  "_comment_design": [
+    "时间轴 T0..T10 共 11 拍, 三段戏剧:",
+    "  T1-T2: 稳态握手, valid=ready=1, 上游连续传 D0/D1",
+    "  T3-T4: 下游反压 (ready=0), 上游 p_data hold D2 不变, pipeline 全级冻结",
+    "  T5-T9: 反压解除, 流水继续推进 D2/D3/D4/D5/D6",
+    "Key invariant: 握手仅在 valid 与 ready 都为 1 的时钟沿发生; ready=0 期间所有 stage 内容保持不变.",
+    "5 级流水延迟下, T2 进入 stage1 的 D0 首次到达 stage5_out 要到 T6 (无反压时), 含 2 拍反压则推迟到 T8."
+  ],
+
+  "signal": [
+    { "name": "clk",            "wave": "P.........." },
+
+    {},
+    [ "Producer",
+      { "name": "p_valid",      "wave": "01........0",                                    "node": ".A........." },
+      { "name": "p_data",       "wave": "x333..3333x", "data": ["D0","D1","D2","D3","D4","D5","D6"] }
+    ],
+
+    {},
+    [ "Consumer",
+      { "name": "c_ready",      "wave": "1..0.1.....",                                    "node": "...B.C....." }
+    ],
+
+    {},
+    [ "pp 5-stage",
+      { "name": "stage1_in",  "wave": "x.33..33333", "data": ["D0","D1","D2","D3","D4","D5","D6"] },
+      { "name": "stage5_out", "wave": "x.......333", "data": ["D0","D1","D2"],          "node": "........D.." }
+    ],
+    {}
+  ],
+
+  "edge": [
+    "A~>B   T1-T2",
+    "B-C    ready to 0",
+    "C~>D   D0-T8"
+  ],
+
+  "config": {
+    "hscale": 1.4,
+    "skin":   "default"
+  }
+}

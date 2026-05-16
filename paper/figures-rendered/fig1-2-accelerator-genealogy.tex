@@ -1,0 +1,207 @@
+% =============================================================================
+% fig1-2-accelerator-genealogy.tex --- 图 1.2 CNN 加速器演进谱系 (§1.2)
+%
+% v5.1 修订:
+%   - 用户反馈: "形状+颜色+纵轴三重区分混乱; 箭头细灰; 本工作星星太大"
+%   - 修订要点: 只保留颜色区分 (ASIC=深蓝 / FPGA=深金 / Hybrid=深绿);
+%               所有节点统一圆形, 纵轴泳道内做散点交错避免标签重叠;
+%               承袭箭头线宽 0.9pt; 本工作星标尺寸减半但用 coAccent 红框高亮;
+%               不画图标题, 不加括号补充说明
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    % 三大泳道背景 (淡色填充, 无边框, 用颜色区分)
+    laneA/.style={
+        rectangle, fill=flBlue,
+        minimum width=200mm, minimum height=24mm,
+        inner sep=0pt,
+    },
+    laneF/.style={laneA, fill=flYellow,},
+    laneH/.style={laneA, fill=flGreen,},
+    lane title/.style={
+        font=\sffamily\small\bfseries,
+        text=coAnno, anchor=east, align=right,
+    },
+    % 统一节点形状: 圆形, 仅颜色区分
+    nodeASIC/.style={
+        draw=coBaseline, line width=0.6pt, circle, fill=coBaseline,
+        minimum size=3.5mm, inner sep=0pt,
+    },
+    nodeFPGA/.style={
+        draw=coThird, line width=0.6pt, circle, fill=coThird,
+        minimum size=3.5mm, inner sep=0pt,
+    },
+    nodeHyb/.style={
+        draw=coImproved, line width=0.6pt, circle, fill=coImproved,
+        minimum size=3.5mm, inner sep=0pt,
+    },
+    % 本工作: ASIC 平台定位, 蓝色填充 + coAccent 红框高亮
+    nodeFlux/.style={
+        draw=coAccent, line width=1.4pt,
+        star, star points=5, star point ratio=0.5,
+        fill=coBaseline,
+        minimum size=5mm, inner sep=0pt,
+    },
+    nlabel/.style={
+        font=\sffamily\scriptsize, text=coAnno,
+        align=center, anchor=north,
+    },
+    nlabel up/.style={
+        font=\sffamily\scriptsize, text=coAnno,
+        align=center, anchor=south,
+    },
+    % 承袭箭头加粗到 0.9pt
+    lineage/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.9pt, draw=coAnno,
+    },
+    cross/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=0.9pt, draw=coGuide, dashed,
+    },
+    tick/.style={
+        font=\sffamily\scriptsize, text=coAnno, anchor=north,
+    },
+]
+
+% =============================================================================
+% 时间轴: 2014-2023 严格线性 1.85 cm / 年
+% FLUX_CNN (2026) 用绝对坐标 18.5 单独压缩, 时间轴加断点标记
+% =============================================================================
+\newcommand{\yx}[2]{({(#1-2014)*1.85},{#2})}
+\newcommand{\fluxx}{18.5}
+
+% =============================================================================
+% 三大泳道
+% =============================================================================
+\node[laneA, anchor=west] (asic) at (-0.3, 3.6) {};
+\node[lane title] at ($(asic.west)+(-1mm,0)$) {ASIC};
+
+\node[laneF, anchor=west] (fpga) at (-0.3, 1.0) {};
+\node[lane title] at ($(fpga.west)+(-1mm,0)$) {FPGA};
+
+\node[laneH, anchor=west] (hyb) at (-0.3, -1.6) {};
+\node[lane title] at ($(hyb.west)+(-1mm,0)$) {Hybrid};
+
+% =============================================================================
+% ASIC 散点交错 (同泳道内 y 上下错开)
+% =============================================================================
+\node[nodeASIC] (a_dn)  at \yx{2014}{4.1} {};
+\node[nlabel] at ($(a_dn.south)+(0,-1mm)$) {DianNao\\\scriptsize 2014};
+
+\node[nodeASIC] (a_ey)  at \yx{2016.8}{3.1} {};
+\node[nlabel up] at ($(a_ey.north)+(0,1mm)$) {Eyeriss\\\scriptsize 2017};
+
+\node[nodeASIC] (a_tpu) at \yx{2017.6}{4.1} {};
+\node[nlabel] at ($(a_tpu.south)+(0,-1mm)$) {TPU v1\\\scriptsize 2017};
+
+\node[nodeASIC] (a_nv)  at \yx{2018.6}{3.1} {};
+\node[nlabel up] at ($(a_nv.north)+(0,1mm)$) {NVDLA\\\scriptsize 2018};
+
+\node[nodeASIC] (a_ey2) at \yx{2019.5}{4.1} {};
+\node[nlabel] at ($(a_ey2.south)+(0,-1mm)$) {Eyeriss v2\\\scriptsize 2019};
+
+\node[nodeASIC] (a_si)  at \yx{2020.2}{3.1} {};
+\node[nlabel up] at ($(a_si.north)+(0,1mm)$) {Simba\\\scriptsize 2019};
+
+\draw[lineage] (a_dn.east)  -- (a_ey.west);
+\draw[lineage] (a_ey.east)  -- (a_ey2.west);
+\draw[lineage] (a_tpu.east) -- (a_si.west);
+\draw[lineage] (a_nv.east)  -- (a_si.west);
+
+% =============================================================================
+% FPGA 散点交错
+% =============================================================================
+\node[nodeFPGA] (f_dnb) at \yx{2018.0}{1.5} {};
+\node[nlabel] at ($(f_dnb.south)+(0,-1mm)$) {DNNBuilder\\\scriptsize 2018};
+
+\node[nodeFPGA] (f_vta) at \yx{2019.0}{0.5} {};
+\node[nlabel up] at ($(f_vta.north)+(0,1mm)$) {VTA\\\scriptsize 2019};
+
+\node[nodeFPGA] (f_opu) at \yx{2020.0}{1.5} {};
+\node[nlabel] at ($(f_opu.south)+(0,-1mm)$) {OPU\\\scriptsize 2020};
+
+\node[nodeFPGA] (f_gem) at \yx{2021.0}{0.5} {};
+\node[nlabel up] at ($(f_gem.north)+(0,1mm)$) {Gemmini\\\scriptsize 2021};
+
+\node[nodeFPGA] (f_pe)  at \yx{2022.2}{1.5} {};
+\node[nlabel] at ($(f_pe.south)+(0,-1mm)$) {Peng et al.\\\scriptsize 2023};
+
+\node[nodeFPGA] (f_df)  at \yx{2023.1}{0.5} {};
+\node[nlabel up] at ($(f_df.north)+(0,1mm)$) {DeepFire2\\\scriptsize 2023};
+
+\draw[lineage] (f_dnb.east) -- (f_vta.west);
+\draw[lineage] (f_vta.east) -- (f_opu.west);
+\draw[lineage] (f_opu.east) -- (f_gem.west);
+\draw[lineage] (f_gem.east) -- (f_pe.west);
+\draw[lineage] (f_pe.east)  -- (f_df.west);
+
+% =============================================================================
+% 本工作 FLUX_CNN (ASIC 平台定位; 用绝对坐标 \fluxx 压缩, 视觉贴近近期节点)
+% =============================================================================
+\node[nodeFlux] (flux) at (\fluxx, 4.1) {};
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent,
+      anchor=north, align=center]
+    at ($(flux.south)+(0,-1mm)$)
+    {FLUX\_CNN\\\scriptsize 2026};
+
+% ASIC 泳道承袭: Simba -> FLUX_CNN (跨年度斜线), Eyeriss v2 -> FLUX_CNN (水平)
+\draw[lineage] (a_ey2.east) -- (flux.west);
+\draw[lineage] (a_si.east)  -- (flux.west);
+
+% =============================================================================
+% Hybrid 散点交错
+% =============================================================================
+\node[nodeHyb] (h_fl)  at \yx{2016.5}{-1.2} {};
+\node[nlabel] at ($(h_fl.south)+(0,-1mm)$) {Fused-Layer\\\scriptsize 2016};
+
+\node[nodeHyb] (h_ma)  at \yx{2018.5}{-2.1} {};
+\node[nlabel up] at ($(h_ma.north)+(0,1mm)$) {MAERI\\\scriptsize 2018};
+
+\node[nodeHyb] (h_sig) at \yx{2020.5}{-1.2} {};
+\node[nlabel] at ($(h_sig.south)+(0,-1mm)$) {SIGMA\\\scriptsize 2020};
+
+\node[nodeHyb] (h_nn)  at \yx{2021.5}{-2.1} {};
+\node[nlabel up] at ($(h_nn.north)+(0,1mm)$) {NN-Baton\\\scriptsize 2021};
+
+\draw[lineage] (h_fl.east)  -- (h_ma.west);
+\draw[lineage] (h_ma.east)  -- (h_sig.west);
+\draw[lineage] (h_sig.east) -- (h_nn.west);
+
+% =============================================================================
+% 跨分支虚线 (少而精)
+% =============================================================================
+\draw[cross] (f_vta.north) .. controls +(0,0.8) and +(0,-0.8) .. (a_nv.south);
+\draw[cross] (f_gem.north) .. controls +(0,1.2) and +(0,-1.2) .. (a_si.south);
+
+% =============================================================================
+% 底部时间轴: 2014-2023 线性 tick + 断点斜线 + FLUX_CNN (2026) 单独 tick
+% =============================================================================
+\draw[line width=0.7pt, draw=coAnno]
+    \yx{2014}{-3.2} -- (\fluxx + 0.2, -3.2);
+% 线性 tick (2014, 2016, 2018, 2020, 2022)
+\foreach \y in {2014,2016,2018,2020,2022} {
+    \draw[line width=0.5pt, draw=coAnno]
+        \yx{\y}{-3.15} -- \yx{\y}{-3.25};
+    \node[tick] at \yx{\y}{-3.3} {\y};
+}
+% 断点斜线 (在 2022 tick 与 FLUX_CNN 2026 tick 之间)
+\pgfmathsetmacro{\brkA}{17.0}
+\pgfmathsetmacro{\brkB}{17.4}
+\draw[line width=0.6pt, draw=white]
+    (\brkA - 0.15, -3.2) -- (\brkB + 0.15, -3.2);
+\draw[line width=0.5pt, draw=coAnno]
+    (\brkA - 0.15, -3.1) -- (\brkA + 0.15, -3.3);
+\draw[line width=0.5pt, draw=coAnno]
+    (\brkB - 0.15, -3.1) -- (\brkB + 0.15, -3.3);
+% FLUX_CNN 单独 tick
+\draw[line width=0.5pt, draw=coAnno]
+    (\fluxx, -3.15) -- (\fluxx, -3.25);
+\node[tick] at (\fluxx, -3.3) {2026};
+
+\end{tikzpicture}
+\end{document}

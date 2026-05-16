@@ -62,20 +62,16 @@ for w, sp, sh, u, hp in zip(W_values, speedup_real, speedup_halo, util_n4, halo_
 
 # 关键观察注记
 ax1.annotate("PE 列覆盖下限\n(子图像宽度 = 4)",
-             xy=(16, 1.20), xytext=(20, 1.6),
-             fontsize=8.5, color=COLOR_ANNO,
+             xy=(16, 1.20), xytext=(20, 0.35),
+             fontsize=9.5, color=COLOR_ANNO,
              arrowprops=dict(arrowstyle="->", color=COLOR_ANNO, linewidth=0.8),
-             ha="left",
-             bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
-                       edgecolor=COLOR_ANNO, linewidth=0.5))
+             ha="left", va="bottom")
 
 ax1.annotate("超过理论上限：\n边界冗余可被 SDP 复用",
              xy=(128, 3.81), xytext=(56, 2.6),
-             fontsize=8.5, color=COLOR_ANNO,
+             fontsize=9.5, color=COLOR_ANNO,
              arrowprops=dict(arrowstyle="->", color=COLOR_ANNO, linewidth=0.8),
-             ha="left",
-             bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
-                       edgecolor=COLOR_ANNO, linewidth=0.5))
+             ha="left")
 
 # 轴
 ax1.set_xscale("log", base=2)
@@ -88,9 +84,11 @@ ax1.set_ylabel("加速比（相对 $N=1$）", color=COLOR_BASELINE)
 ax1.set_ylim(0, 4.5)
 ax1.tick_params(axis="y", labelcolor=COLOR_BASELINE)
 ax2.set_ylabel("PE 利用率（%）", color=COLOR_IMPROVED)
-ax2.set_ylim(0, 100)
+# 关键：右 Y 范围扩到 113，使 PE 100% 屏幕高度对齐到左 Y 的 4× 上限
+ax2.set_ylim(0, 113)
+ax2.set_yticks([0, 20, 40, 60, 80, 100])
 ax2.tick_params(axis="y", labelcolor=COLOR_IMPROVED)
-ax1.grid(True, axis="both", linestyle=":", linewidth=0.5, alpha=0.5)
+ax1.grid(True, axis="both", which="major", linestyle=":", linewidth=0.5, alpha=0.5)
 
 # 三图例
 ax1.legend(handles=[l_real, l_halo, l_util], loc="lower right",

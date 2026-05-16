@@ -46,40 +46,44 @@ l2, = ax1.plot(x, util_on, marker="s", color=COLOR_IMPROVED,
 # 注记 Cin=8 边界缺陷
 ax1.annotate(r"$C_{\mathrm{in}}=8$ 边界缺陷",
              xy=(3, 45.5), xytext=(1.6, 70),
-             fontsize=9, color=COLOR_ANNO,
+             fontsize=10, color=COLOR_ANNO,
              arrowprops=dict(arrowstyle="->", color=COLOR_ANNO, linewidth=0.8),
-             ha="left",
-             bbox=dict(boxstyle="round,pad=0.18", facecolor="white",
-                       edgecolor=COLOR_ANNO, linewidth=0.5))
+             ha="left")
 
-# 拐点 Cin=16
+# 拐点 Cin=16 — 标在拐点上方但偏离折线节点（移到左下方更空旷处）
 ax1.axvline(x=4, color=COLOR_GUIDE, linestyle="--", linewidth=0.7, alpha=0.7)
-ax1.text(4, 88, "拐点", fontsize=9, color=COLOR_ANNO, ha="center", va="bottom",
-         bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                   edgecolor=COLOR_ANNO, linewidth=0.5))
+ax1.text(3.6, 102, "拐点 $C_{\\mathrm{in}}=16$", fontsize=10, color=COLOR_ANNO,
+         ha="right", va="top")
 
-# 加速比注记
+# 加速比注记 — 竖直箭头从关闭折叠节点指向开启折叠节点，2.47× 标在箭头侧
 for xi, u_on, u_off in zip([0, 1, 2], util_on[:3], util_off[:3]):
-    ax1.text(xi, (u_on + u_off) / 2, "2.47×", fontsize=9, color=COLOR_ANNO,
-             ha="center", va="center",
-             bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
-                       edgecolor=COLOR_ANNO, linewidth=0.5))
+    ax1.annotate("", xy=(xi, u_on), xytext=(xi, u_off),
+                 arrowprops=dict(arrowstyle="->", color=COLOR_ANNO,
+                                 linewidth=1.4, shrinkA=4, shrinkB=4))
+    ax1.text(xi + 0.08, (u_on + u_off) / 2, "2.47×",
+             fontsize=10, color=COLOR_ANNO, fontweight="bold",
+             ha="left", va="center")
 
-# 周期数比例注记（折叠收益）
+# 周期数比例注记（折叠收益）— Cin=1,2,4 柱顶值上移避开折线
 for xi, c_off, c_on in zip([0, 1, 2], cy_off[:3], cy_on[:3]):
-    ratio = c_off / c_on
-    ax2.text(xi - w/2, c_off + 1500, f"{c_off/1000:.1f}K",
-             ha="center", va="bottom", fontsize=7.5, color=COLOR_BASELINE, alpha=0.7)
-    ax2.text(xi + w/2, c_on + 1500, f"{c_on/1000:.1f}K",
-             ha="center", va="bottom", fontsize=7.5, color=COLOR_IMPROVED, alpha=0.9)
+    # 关闭折叠柱顶（蓝色）— 利用率折线在低位（5.7%-22.7%），柱顶在 10K 高度
+    # 把数值标在柱顶之外（往上偏），用 ax2 数据坐标
+    ax2.text(xi - w/2, c_off + 2500, f"{c_off/1000:.1f}K",
+             ha="center", va="bottom", fontsize=8, color=COLOR_BASELINE, alpha=0.9,
+             fontweight="bold")
+    ax2.text(xi + w/2, c_on + 2500, f"{c_on/1000:.1f}K",
+             ha="center", va="bottom", fontsize=8, color=COLOR_IMPROVED, alpha=0.95,
+             fontweight="bold")
 
 # Cin=8 周期数注记
-ax2.text(3 - w/2, cy_off[3] + 1500, f"{cy_off[3]/1000:.1f}K",
-         ha="center", va="bottom", fontsize=7.5, color=COLOR_BASELINE, alpha=0.7)
+ax2.text(3 - w/2, cy_off[3] + 2500, f"{cy_off[3]/1000:.1f}K",
+         ha="center", va="bottom", fontsize=8, color=COLOR_BASELINE, alpha=0.9,
+         fontweight="bold")
 # Cin=16/32/64 周期数（仅标关闭折叠）
 for xi, c_off in zip([4, 5, 6], cy_off[4:]):
-    ax2.text(xi - w/2, c_off + 1500, f"{c_off/1000:.1f}K",
-             ha="center", va="bottom", fontsize=7.5, color=COLOR_BASELINE, alpha=0.7)
+    ax2.text(xi - w/2, c_off + 2500, f"{c_off/1000:.1f}K",
+             ha="center", va="bottom", fontsize=8, color=COLOR_BASELINE, alpha=0.9,
+             fontweight="bold")
 
 # 轴
 ax1.set_xticks(x)
@@ -88,15 +92,15 @@ ax1.set_xlabel(r"输入通道数 $C_{\mathrm{in}}$")
 ax1.set_ylabel("PE 利用率（%）")
 ax1.set_ylim(0, 110)
 ax1.set_yticks(np.arange(0, 101, 20))
-ax2.set_ylabel("整网周期数（柱）", color=COLOR_ANNO)
-ax2.set_ylim(0, max(cy_off) * 1.18)
-ax1.grid(True, axis="both", linestyle=":", linewidth=0.5, alpha=0.5, zorder=0)
+ax2.set_ylabel("整网周期数")
+ax2.set_ylim(0, max(cy_off) * 1.22)
+ax1.grid(True, axis="both", which="major", linestyle=":", linewidth=0.5, alpha=0.5, zorder=0)
 
 # 双图例
 h1, l1_lbl = ax1.get_legend_handles_labels()
 h2, l2_lbl = ax2.get_legend_handles_labels()
 ax1.legend(h1 + h2, l1_lbl + l2_lbl, loc="upper left", framealpha=0.95,
-           fontsize=8.5)
+           fontsize=9)
 
 plt.tight_layout()
 save_figure(fig, "fig5-7-cin-kyfold", Path(__file__).parent)

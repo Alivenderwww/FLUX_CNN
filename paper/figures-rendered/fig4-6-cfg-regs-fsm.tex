@@ -1,0 +1,166 @@
+% =============================================================================
+% fig4-6-cfg-regs-fsm.tex --- 图 4.6 配置寄存器与 6 层 FSM (§4.7)
+%
+% v5.1 修订: 沿 fig3-5 的 counter × 模块矩阵风格,
+%   - 上部: cfg_regs 字段分组 (loop bounds / buffer addrs / quant / schedule)
+%   - 主体: counter × 模块矩阵 (同 fig3-5)
+%   - 下部: DFE / desc_fifo / sequencer 支撑层 (CFG_WRITE 通路)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    cfg group/.style={
+        draw=coAnno, line width=0.5pt, rounded corners=1pt,
+        fill=flYellow, minimum width=34mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    cfg main/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flGreen, minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    cell/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=22mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize,
+    },
+    cell head/.style={cell, fill=flGreen, font=\sffamily\scriptsize\bfseries,},
+    cell row/.style={cell, fill=flYellow, font=\sffamily\scriptsize\bfseries,},
+    cell main/.style={cell, fill=flBlue, font=\sffamily\scriptsize,},
+    cell sub/.style={cell, fill=white, font=\sffamily\scriptsize, text=coGuide,},
+    support/.style={
+        draw=coAnno, line width=0.6pt, rounded corners=1pt,
+        fill=flGray, minimum width=24mm, minimum height=8mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    flow ctrl/.style={
+        -{Stealth[length=2.5mm,width=1.8mm]},
+        line width=0.7pt, draw=coAnno,
+    },
+    flow cfgw/.style={
+        -{Stealth[length=2.8mm,width=2mm]},
+        line width=1.0pt, draw=coAccent,
+    },
+    section title/.style={
+        font=\sffamily\small\bfseries, text=coAnno, anchor=west,
+    },
+]
+
+% =============================================================================
+% Section 1: cfg_regs 字段分组 (左上)
+% =============================================================================
+\node[section title] at (-0.5, 6.3)
+    {cfg\_regs 字段分组 \ (host AXI-Lite + DFE CFG\_WRITE 双写口)};
+
+\node[cfg group] (g1) at (1.5, 5.3) {Loop bounds\\\scriptsize $H_{out}/W_{out}/C_{in}/C_{out}$\\\scriptsize $K/$stride$/$pad};
+\node[cfg group] (g2) at (5.5, 5.3) {Buffer addrs\\\scriptsize IFB / WB / OFB\\\scriptsize bias / shortcut};
+\node[cfg group] (g3) at (9.5, 5.3) {Quant params\\\scriptsize shift\_amt\\\scriptsize sat\_min/max};
+\node[cfg group] (g4) at (13.0, 5.3) {Schedule\\\scriptsize $n_{cs}/n_{tile}/n_{cins}$\\\scriptsize tile width};
+
+\node[cfg main] (cfg) at (7.0, 3.6) {cfg\_regs};
+
+\foreach \g/\dx in {g1/-3.6, g2/-0.6, g3/2.6, g4/5.6}{
+    \draw[flow ctrl] (\g.south) -- ($(cfg.north)+(\dx*0.18,0)$);
+}
+
+% =============================================================================
+% Section 2: counter × 模块矩阵 (主体, 与 fig3-5 同风格)
+% =============================================================================
+\node[section title] at (-0.5, 2.4)
+    {6 级 counter $\times$ 5 模块矩阵 \ (本地 counter 推进, valid-ready 握手汇流)};
+
+\def\colw{2.2}
+\def\rowh{0.8}
+\def\xz{1.0}
+\def\yz{1.4}
+
+\foreach \c/\mod in {0/line\_buffer, 1/mac\_array, 2/parf\_accum, 3/ofb\_writer, 4/wgt\_buffer}{
+    \node[cell head] at ({\xz+\c*\colw}, \yz) {\mod};
+}
+
+% Row 0: cs
+\node[cell row]  at ({\xz-\colw}, {\yz-\rowh}) {cs\\\scriptsize cout slice};
+\node[cell sub]  at ({\xz+0*\colw}, {\yz-\rowh}) {-};
+\node[cell main] at ({\xz+1*\colw}, {\yz-\rowh}) {WRF 切片};
+\node[cell main] at ({\xz+2*\colw}, {\yz-\rowh}) {累加结束};
+\node[cell main] at ({\xz+3*\colw}, {\yz-\rowh}) {bias 切换};
+\node[cell main] at ({\xz+4*\colw}, {\yz-\rowh}) {WB load};
+
+% Row 1: yout
+\node[cell row]  at ({\xz-\colw}, {\yz-2*\rowh}) {yout\\\scriptsize 输出行};
+\node[cell main] at ({\xz+0*\colw}, {\yz-2*\rowh}) {ring 行步进};
+\node[cell sub]  at ({\xz+1*\colw}, {\yz-2*\rowh}) {-};
+\node[cell sub]  at ({\xz+2*\colw}, {\yz-2*\rowh}) {-};
+\node[cell main] at ({\xz+3*\colw}, {\yz-2*\rowh}) {OFB 行步进};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-2*\rowh}) {-};
+
+% Row 2: tile
+\node[cell row]  at ({\xz-\colw}, {\yz-3*\rowh}) {tile\\\scriptsize $W$ 维 tile};
+\node[cell main] at ({\xz+0*\colw}, {\yz-3*\rowh}) {tile addr};
+\node[cell sub]  at ({\xz+1*\colw}, {\yz-3*\rowh}) {-};
+\node[cell main] at ({\xz+2*\colw}, {\yz-3*\rowh}) {cs 维发射};
+\node[cell main] at ({\xz+3*\colw}, {\yz-3*\rowh}) {写 OFM};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-3*\rowh}) {-};
+
+% Row 3: cins
+\node[cell row]  at ({\xz-\colw}, {\yz-4*\rowh}) {cins\\\scriptsize cin slice};
+\node[cell main] at ({\xz+0*\colw}, {\yz-4*\rowh}) {cin 步进};
+\node[cell main] at ({\xz+1*\colw}, {\yz-4*\rowh}) {ARF 切换};
+\node[cell main] at ({\xz+2*\colw}, {\yz-4*\rowh}) {psum 累加};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-4*\rowh}) {-};
+\node[cell main] at ({\xz+4*\colw}, {\yz-4*\rowh}) {WRF 重载};
+
+% Row 4: round
+\node[cell row]  at ({\xz-\colw}, {\yz-5*\rowh}) {round\\\scriptsize $K^2$ 轮次};
+\node[cell main] at ({\xz+0*\colw}, {\yz-5*\rowh}) {ARF 读};
+\node[cell main] at ({\xz+1*\colw}, {\yz-5*\rowh}) {PE 取权重};
+\node[cell sub]  at ({\xz+2*\colw}, {\yz-5*\rowh}) {-};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-5*\rowh}) {-};
+\node[cell main] at ({\xz+4*\colw}, {\yz-5*\rowh}) {WRF 读};
+
+% Row 5: pos
+\node[cell row]  at ({\xz-\colw}, {\yz-6*\rowh}) {pos\\\scriptsize PE 阵列位};
+\node[cell main] at ({\xz+0*\colw}, {\yz-6*\rowh}) {ARF 读 1 拍};
+\node[cell main] at ({\xz+1*\colw}, {\yz-6*\rowh}) {PE 发射 1 拍};
+\node[cell sub]  at ({\xz+2*\colw}, {\yz-6*\rowh}) {-};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-6*\rowh}) {-};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-6*\rowh}) {-};
+
+% 左侧大括号
+\draw[decorate, decoration={brace, amplitude=4pt, mirror},
+      line width=0.6pt, draw=coAccent]
+    ({\xz-\colw-1.25}, {\yz-\rowh+0.4})
+    -- ({\xz-\colw-1.25}, {\yz-6*\rowh-0.4})
+    node[midway, left=4pt, font=\sffamily\scriptsize\bfseries, text=coAccent,
+         align=center]
+    {6 级嵌套\\外 $\to$ 内};
+
+% =============================================================================
+% Section 3: 底部 DFE / desc_fifo / sequencer 支撑层
+% =============================================================================
+\node[section title] at (-0.5, -5.0)
+    {CFG\_WRITE 通路 \ (DFE → desc\_fifo → sequencer → cfg\_regs seq\_w port)};
+
+\node[support] (dfe)  at (2.0, -6.0) {DFE\\\scriptsize desc\_fetch\_engine};
+\node[support] (fifo) at (5.0, -6.0) {desc\_fifo\\\scriptsize 128 entries};
+\node[support] (seq)  at (8.0, -6.0) {sequencer};
+\node[support] (cfgw) at (11.0, -6.0) {cfg\_regs\\\scriptsize seq\_w port};
+
+\draw[flow ctrl] (dfe.east)  -- (fifo.west);
+\draw[flow ctrl] (fifo.east) -- (seq.west);
+\draw[flow cfgw] (seq.east)  -- (cfgw.west)
+    node[edge label, midway, above=1pt, text=coAccent]{CFG\_WRITE};
+
+% cfg_regs (上) 与 cfg_regs seq_w (下) 用虚线连接表示同一物理寄存器组
+\draw[flow ctrl, dashed]
+    (cfg.east) to[bend left=20] (cfgw.north);
+
+\end{tikzpicture}
+\end{document}

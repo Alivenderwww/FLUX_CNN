@@ -1,0 +1,158 @@
+% =============================================================================
+% fig4-10-dsp-mapping.tex --- 图 4.10 DSP48E1 跨列复用映射 (§4.12)
+%
+% v5.1 修订:
+%   - 用户反馈: "排版烂"
+%   - 修订要点: 重做整体布局:
+%     左半位段打包条 (25b A 端三段: w1[24:17] + 9'b0 + w0[7:0],
+%                     三色块淡蓝/淡灰/淡蓝)
+%     -> 中央 DSP48E1 块 (淡黄)
+%     -> 右半位段解包 (43b P 端分两段: P[33:17] + P[15:0])
+%     下方阵列缩略图 (16x8 DSP 矩阵);
+%     w0/w1/act 输入在 A/B 端左侧标注
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    in box/.style={
+        draw=coAnno, line width=0.5pt, rounded corners=1pt,
+        fill=flGray, minimum width=15mm, minimum height=6mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    pack hi/.style={
+        draw=coBaseline, line width=0.7pt, rectangle,
+        fill=flBlue, minimum width=20mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    pack mid/.style={
+        draw=coAnno, line width=0.7pt, rectangle,
+        fill=flGray, minimum width=20mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize\itshape,
+    },
+    pack lo/.style={pack hi,},
+    b box/.style={
+        draw=coAnno, line width=0.7pt, rectangle,
+        fill=flYellow, minimum width=35mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    dsp box/.style={
+        draw=coAnno, line width=1.0pt, rounded corners=3pt,
+        fill=flYellow, minimum width=32mm, minimum height=20mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\small\bfseries,
+    },
+    unpack hi/.style={
+        draw=coImproved, line width=0.7pt, rectangle,
+        fill={rgb,255:red,200;green,230;blue,205},
+        minimum width=22mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    unpack lo/.style={
+        draw=coBaseline, line width=0.7pt, rectangle,
+        fill={rgb,255:red,200;green,220;blue,240},
+        minimum width=22mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    dsp cell/.style={
+        draw=coAnno, line width=0.3pt, rectangle,
+        minimum width=3.5mm, minimum height=3.5mm,
+        inner sep=0pt, fill=flBlue,
+    },
+    flow/.style={
+        -{Stealth[length=2.6mm,width=1.6mm]},
+        line width=0.9pt, draw=coAnno,
+    },
+]
+
+% =============================================================================
+% 左侧输入: w1, w0, act
+% =============================================================================
+\node[in box] (w1)  at (-7.0, 3.5) {w1[7:0]};
+\node[in box] (w0)  at (-7.0, 2.0) {w0[7:0]};
+\node[in box] (act) at (-7.0, 0.0) {act[7:0]};
+
+% =============================================================================
+% A 端 25b 三段打包条 (顶部, 自高位到低位: w1 / 9'b0 / w0)
+% =============================================================================
+\node[pack hi]  (a_hi)  at (-2.5, 3.3) {w1[24:17]};
+\node[pack mid] (a_mid) at (-0.5, 3.3) {9'b0};
+\node[pack lo]  (a_lo)  at ( 1.5, 3.3) {w0[7:0]};
+
+\node[font=\sffamily\scriptsize\bfseries, text=coBaseline, anchor=south]
+    at (-0.5, 3.8)
+    {A = \{w1, 9'b0, w0\} \ 25 b};
+
+% w1, w0 -> A 段连线
+\draw[flow] (w1.east) -- (-4.0, 3.5) -- (a_hi.north west);
+\draw[flow] (w0.east) -- (-4.0, 2.0) -| (a_lo.south);
+
+% =============================================================================
+% B 端 18b sign_ext
+% =============================================================================
+\node[b box] (b_seg) at (-0.5, 0.0) {sign\_ext(act) \ 18 b};
+\node[font=\sffamily\scriptsize\bfseries, text=coBaseline, anchor=south]
+    at (-0.5, 0.6)
+    {B = sign\_ext(act) \ 18 b};
+\draw[flow] (act.east) -- (b_seg.west);
+
+% =============================================================================
+% DSP48E1 块 (中央, A/B 输入, P 输出)
+% =============================================================================
+\node[dsp box] (dsp) at (5.5, 1.65) {DSP48E1\\25 $\times$ 18\\multiplier};
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=south]
+    at (dsp.north) {P = A $\times$ B \ 43 b};
+
+% A -> DSP, B -> DSP
+\draw[flow, line width=1.0pt] (a_lo.east) -- ++(0.6,0) |- ($(dsp.west)+(0,0.5)$);
+\draw[flow, line width=1.0pt] (b_seg.east) -- ++(0.6,0) |- ($(dsp.west)+(0,-0.5)$);
+
+% =============================================================================
+% P 端 43b 解包 (右侧, 两段: P[33:17] = w1*act / P[15:0] = w0*act)
+% =============================================================================
+\node[unpack hi] (p_hi) at (10.5, 2.5) {P[33:17]\\$\to$ w1$\times$act};
+\node[unpack lo] (p_lo) at (10.5, 0.8) {P[15:0]\\$\to$ w0$\times$act};
+
+\draw[flow] (dsp.east) -- (8.0, 2.5) -- (p_hi.west);
+\draw[flow] (dsp.east) -- (8.0, 0.8) -- (p_lo.west);
+
+% sign-correct -> INT16 output
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(p_hi.east)+(2mm,0)$)
+    {INT16 \ col 1};
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(p_lo.east)+(2mm,0)$)
+    {INT16 \ col 0};
+
+% =============================================================================
+% 下方阵列缩略图: 16 rows x 8 DSP (每 DSP 服务相邻 2 列)
+% =============================================================================
+\node[font=\sffamily\small\bfseries, text=coAnno, anchor=south]
+    at (1.5, -3.4) {16$\times$8 DSP 阵列 (1 DSP / 2 INT8 cols)};
+
+\foreach \r in {0,1,...,15} {
+    \foreach \c in {0,1,...,7} {
+        \node[dsp cell] at (-3.0+\c*0.42, -3.7-\r*0.30) {};
+    }
+}
+
+\node[font=\sffamily\scriptsize, text=coAnno, anchor=west]
+    at (1.0, -5.5)
+    {单核 128 DSP \ \ $|$ \ \ N=4 配置 512 DSP};
+
+% 行 / 列方向标注
+\node[font=\sffamily\scriptsize, text=coAnno, anchor=east]
+    at (-3.2, -5.2) {16 rows};
+\node[font=\sffamily\scriptsize, text=coAnno, anchor=south]
+    at (-1.5, -3.5) {8 DSP cols};
+
+\end{tikzpicture}
+\end{document}

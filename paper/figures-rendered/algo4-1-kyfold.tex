@@ -1,0 +1,59 @@
+% =============================================================================
+% algo4-1-kyfold.tex --- 算法 4.1 Y 维折叠（Ky-fold）编译器变换
+%
+% 渲染方式（Tectonic）:
+%   tectonic algo4-1-kyfold.tex
+%   pdftoppm -png -r 300 algo4-1-kyfold.pdf algo4-1-kyfold
+%
+% 数据来源:
+%   toolchain/hw_files.py L177-208 (compute_fold_params + fold_weights)
+%   paper.md §4.8 编译器优化：Y 维折叠
+%   核心思想: C_in < 16 时把卷积核 Y 维循环折到 cin 方向, 用 cin_fake = groups × C_in
+%             填满 16 行 PE; 同时输入侧做 y-shift 复制, 权重侧补零.
+% =============================================================================
+\documentclass[border=4pt,varwidth=18cm]{standalone}
+
+\usepackage{amsmath}
+\usepackage{xeCJK}
+% 中文：Microsoft YaHei（保持原配置）；英文：Times New Roman
+\setCJKmainfont{Microsoft YaHei}
+\setCJKsansfont{Microsoft YaHei}
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+
+\usepackage[linesnumbered,vlined,boxruled]{algorithm2e}
+\DontPrintSemicolon
+
+\begin{document}
+\begin{algorithm}[H]
+{\bfseries 输入：} 原卷积层参数 $(K, C_\text{in}, C_\text{out})$；阵列宽度 HW\_PE = 16；权重 $W[K, K, C_\text{out}, C_\text{in}]$；输入 $I[H_\text{in}, W_\text{in}, C_\text{in}]$\;
+{\bfseries 输出：} 折叠后等价层 $(K_\text{eff}, C_\text{in}^\text{fake}, C_\text{out})$；权重 $W'$；输入 $I'$\;
+\BlankLine
+适用条件：$C_\text{in} < 16$ 且 $K > 1$\;
+\If{$C_\text{in} \geq$ HW\_PE \textbf{或} $K \leq 1$}{
+  返回原层，无需折叠\;
+}
+\BlankLine
+$\text{groups} \leftarrow \lfloor$ HW\_PE $/\, C_\text{in} \rfloor$，每行 PE 容纳几个 $k_y$ 组\;
+$k_{y/g} \leftarrow \lceil K / \text{groups} \rceil$，每组覆盖几行 $k_y$\;
+$C_\text{in}^\text{fake} \leftarrow \text{groups} \cdot C_\text{in}$，虚 cin 充满 16 行 PE\;
+$\text{pad}_{k_y} \leftarrow \text{groups} \cdot k_{y/g} - K$，末组补零行数\;
+\BlankLine
+权重重排：分配 $W'[k_{y/g}, K, C_\text{out}, C_\text{in}^\text{fake}] = 0$\;
+\For{$g \leftarrow 0$ \KwTo $\text{groups} - 1$}{
+  \For{$k_y^\text{loc} \leftarrow 0$ \KwTo $k_{y/g} - 1$}{
+    $k_y \leftarrow g \cdot k_{y/g} + k_y^\text{loc}$\;
+    \If{$k_y < K$}{
+      $W'[k_y^\text{loc}, :, :, g \cdot C_\text{in} : (g+1) C_\text{in}] \leftarrow W[k_y, :, :, :]$\;
+    }
+  }
+}
+\BlankLine
+输入重排：把不同 $y$ 偏移复制到不同伪 cin 通道\;
+\For{$g \leftarrow 0$ \KwTo $\text{groups} - 1$}{
+  $I'[:, :, g \cdot C_\text{in} : (g+1) C_\text{in}] \leftarrow \text{shift}_y(I, g \cdot k_{y/g})$\;
+}
+\BlankLine
+{\bfseries 返回：} $(K_\text{eff} = k_{y/g}, C_\text{in}^\text{fake}, W', I')$，硬件按 $K_\text{eff}$ 跑标准卷积\;
+\end{algorithm}
+\end{document}

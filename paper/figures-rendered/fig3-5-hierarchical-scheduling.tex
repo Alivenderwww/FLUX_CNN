@@ -1,0 +1,150 @@
+% =============================================================================
+% fig3-5-hierarchical-scheduling.tex --- 图 3.5 分层调度示意 (§3.4)
+%
+% v5.1 修订:
+%   - 6 层 FSM 表现改为 counter × 模块矩阵 (替代俄罗斯套娃)
+%   - 上方 Task Descriptor 链 (macro-level)
+%   - 节点文字一两个词
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    td box/.style={
+        draw=coAnno, line width=0.6pt, rounded corners=1pt,
+        fill=flBlue, minimum width=14mm, minimum height=7mm,
+        align=center, inner sep=2pt,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    td end/.style={td box, fill=flYellow,},
+    td flow/.style={
+        -{Stealth[length=2.5mm,width=1.8mm]},
+        line width=0.8pt, draw=coAnno,
+    },
+    cell/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=22mm, minimum height=8mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize,
+    },
+    cell head/.style={
+        cell, fill=flGreen,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    cell row/.style={
+        cell, fill=flYellow,
+        font=\sffamily\scriptsize\bfseries,
+    },
+    cell main/.style={cell, fill=flBlue, font=\sffamily\scriptsize,},
+    cell sub/.style={cell, fill=white, font=\sffamily\scriptsize, text=coGuide,},
+    section title/.style={
+        font=\sffamily\small\bfseries, text=coAnno, anchor=west,
+    },
+]
+
+% =============================================================================
+% Section 1: Macro-level Task Descriptor List (顶部)
+% =============================================================================
+\node[section title] at (-0.5, 5.6)
+    {Macro：Task Descriptor List};
+
+\def\tdy{4.6}
+\node[td box] (td0) at (1.0, \tdy) {IDMA};
+\node[td box] (td1) at (3.0, \tdy) {WDMA};
+\node[td box] (td2) at (5.0, \tdy) {CFG};
+\node[td box] (td3) at (7.0, \tdy) {CONV};
+\node[td box] (td4) at (9.0, \tdy) {ODMA};
+\node[td end] (td5) at (11.0, \tdy) {BARRIER};
+\node[td end] (td6) at (13.0, \tdy) {END};
+\foreach \i/\j in {0/1, 1/2, 2/3, 3/4, 4/5, 5/6}{
+    \draw[td flow] (td\i.east) -- (td\j.west);
+}
+
+% =============================================================================
+% Section 2: Micro-level counter × 模块矩阵
+% =============================================================================
+\node[section title] at (-0.5, 3.6)
+    {Micro：6 counter $\times$ 5 modules};
+
+\def\colw{2.2}
+\def\rowh{0.8}
+\def\xz{1.0}
+\def\yz{2.6}
+
+% ---- 列标 ----
+\foreach \c/\mod in {1/line\_buffer, 2/mac\_array, 3/parf\_accum, 4/ofb\_writer, 5/wgt\_buffer}{
+    \node[cell head] at ({\xz+\c*\colw}, \yz) {\mod};
+}
+
+% ---- Row 0: cs ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-\rowh}) {cs\\\scriptsize cout slice};
+\node[cell sub]  at ({\xz+1*\colw}, {\yz-\rowh}) {-};
+\node[cell main] at ({\xz+2*\colw}, {\yz-\rowh}) {WRF 切片};
+\node[cell main] at ({\xz+3*\colw}, {\yz-\rowh}) {累加结束};
+\node[cell main] at ({\xz+4*\colw}, {\yz-\rowh}) {bias 切换};
+\node[cell main] at ({\xz+5*\colw}, {\yz-\rowh}) {WB load};
+
+% ---- Row 1: yout ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-2*\rowh}) {yout\\\scriptsize 输出行};
+\node[cell main] at ({\xz+1*\colw}, {\yz-2*\rowh}) {ring 行步进};
+\node[cell sub]  at ({\xz+2*\colw}, {\yz-2*\rowh}) {-};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-2*\rowh}) {-};
+\node[cell main] at ({\xz+4*\colw}, {\yz-2*\rowh}) {OFB 行步进};
+\node[cell sub]  at ({\xz+5*\colw}, {\yz-2*\rowh}) {-};
+
+% ---- Row 2: tile ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-3*\rowh}) {tile\\\scriptsize $W$ 维 tile};
+\node[cell main] at ({\xz+1*\colw}, {\yz-3*\rowh}) {tile addr};
+\node[cell sub]  at ({\xz+2*\colw}, {\yz-3*\rowh}) {-};
+\node[cell main] at ({\xz+3*\colw}, {\yz-3*\rowh}) {cs 维发射};
+\node[cell main] at ({\xz+4*\colw}, {\yz-3*\rowh}) {写 OFM};
+\node[cell sub]  at ({\xz+5*\colw}, {\yz-3*\rowh}) {-};
+
+% ---- Row 3: cins ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-4*\rowh}) {cins\\\scriptsize cin slice};
+\node[cell main] at ({\xz+1*\colw}, {\yz-4*\rowh}) {cin 步进};
+\node[cell main] at ({\xz+2*\colw}, {\yz-4*\rowh}) {ARF 切换};
+\node[cell main] at ({\xz+3*\colw}, {\yz-4*\rowh}) {psum 累加};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-4*\rowh}) {-};
+\node[cell main] at ({\xz+5*\colw}, {\yz-4*\rowh}) {WRF 重载};
+
+% ---- Row 4: round (K²) ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-5*\rowh}) {round\\\scriptsize $K^2$ 轮次};
+\node[cell main] at ({\xz+1*\colw}, {\yz-5*\rowh}) {ARF 读};
+\node[cell main] at ({\xz+2*\colw}, {\yz-5*\rowh}) {PE 取权重};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-5*\rowh}) {-};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-5*\rowh}) {-};
+\node[cell main] at ({\xz+5*\colw}, {\yz-5*\rowh}) {WRF 读};
+
+% ---- Row 5: pos (iss_pos) ----
+\node[cell row]  at ({\xz+0*\colw}, {\yz-6*\rowh}) {pos\\\scriptsize PE 阵列位};
+\node[cell main] at ({\xz+1*\colw}, {\yz-6*\rowh}) {ARF 读 1 拍};
+\node[cell main] at ({\xz+2*\colw}, {\yz-6*\rowh}) {PE 发射 1 拍};
+\node[cell sub]  at ({\xz+3*\colw}, {\yz-6*\rowh}) {-};
+\node[cell sub]  at ({\xz+4*\colw}, {\yz-6*\rowh}) {-};
+\node[cell sub]  at ({\xz+5*\colw}, {\yz-6*\rowh}) {-};
+
+% ---- 矩阵外左侧大括号: 嵌套层级 ----
+\draw[decorate, decoration={brace, amplitude=4pt, mirror},
+      line width=0.6pt, draw=coAccent]
+    ({\xz-1.25}, {\yz-\rowh+0.4})
+    -- ({\xz-1.25}, {\yz-6*\rowh-0.4})
+    node[midway, left=4pt, font=\sffamily\scriptsize\bfseries, text=coAccent,
+         align=center]
+    {6 级嵌套};
+
+% =============================================================================
+% Section 3: 图例
+% =============================================================================
+\node[legend box, anchor=west, align=center] at (3.0, -3.2) {%
+\begin{tabular}{@{}l@{\ \ }l@{\quad}l@{\ \ }l@{\quad}l@{\ \ }l@{}}
+\tikz[baseline=-0.6ex]\node[cell main, minimum width=8mm, minimum height=4mm, align=center]{}; & 主驱动事件 &
+\tikz[baseline=-0.6ex]\node[cell sub,  minimum width=8mm, minimum height=4mm, align=center]{-}; & 不直接驱动 &
+\tikz[baseline=-0.6ex]\node[cell head, minimum width=8mm, minimum height=4mm, align=center]{}; & 5 流水级模块 \\
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

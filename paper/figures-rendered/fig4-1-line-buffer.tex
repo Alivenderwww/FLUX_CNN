@@ -1,0 +1,197 @@
+% =============================================================================
+% fig4-1-line-buffer.tex --- 图 4.1 行缓存模块结构图 (§4.2)
+%
+% v5.1 修订:
+%   - 用户反馈: "信息密度低、框太大"
+%   - 修订要点: 缩小总框; 内部细节:
+%     IFB ring (椭圆段画环) + ARF FILL/CONSUME 两侧并行 +
+%     6 级 counter (kx/ky/cins/tile/yout/cs) 标在 ring 旁 +
+%     wptr/rptr 双指针 + valid-ready 握手箭头
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    sub box/.style={
+        draw=coAnno, line width=0.6pt, rounded corners=2pt,
+        align=center, inner sep=2pt, font=\sffamily\footnotesize,
+    },
+    ring seg/.style={
+        draw=coBaseline, line width=0.8pt, fill=flBlue,
+        minimum width=10mm, minimum height=6mm,
+        rounded corners=2pt, inner sep=0pt,
+        font=\sffamily\scriptsize,
+    },
+    arf cell/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=3.5mm, minimum height=3.5mm,
+        inner sep=0pt, fill=flYellow,
+    },
+    cnt box/.style={sub box, fill=flGreen,
+        minimum width=14mm, minimum height=6mm,
+        font=\sffamily\scriptsize\bfseries,},
+    flow tag/.style={
+        font=\sffamily\scriptsize, text=coAnno,
+        fill=white, inner sep=1pt,
+    },
+    backp/.style={
+        -{Stealth[length=2.8mm,width=1.8mm]},
+        line width=1.0pt, draw=coAccent, dashed,
+    },
+]
+
+% =============================================================================
+% 主框 line_buffer
+% =============================================================================
+\node[draw=coAnno, line width=0.9pt, rounded corners=3pt,
+      fill=white, minimum width=140mm, minimum height=78mm,
+      anchor=south west] (main) at (0, 0) {};
+\node[font=\sffamily\small\bfseries, text=coAnno, anchor=north west]
+    at ($(main.north west)+(2mm,-2mm)$)
+    {line\_buffer};
+
+% =============================================================================
+% IFB ring buffer (左侧, 6 段椭圆环)
+% =============================================================================
+\node[font=\sffamily\footnotesize\bfseries, text=coAnno]
+    at (3.0, 7.0) {IFB ring \ 8192 word};
+
+\def\cx{3.0}
+\def\cy{5.2}
+\def\ringR{1.4}
+\foreach \i/\lab in {0/row 0, 1/row 1, 2/row 2, 3/row 3, 4/row 4, 5/row 5} {
+    \node[ring seg] at ({\cx + \ringR*cos(90-\i*60)},
+                        {\cy + \ringR*sin(90-\i*60)}) {\lab};
+}
+
+% wptr / rptr 指针
+\draw[-{Stealth[length=2.4mm,width=1.6mm]}, line width=1.0pt, draw=coImproved]
+    ({\cx + (\ringR+0.6)*cos(60)}, {\cy + (\ringR+0.6)*sin(60)})
+    -- ({\cx + (\ringR+0.1)*cos(60)}, {\cy + (\ringR+0.1)*sin(60)});
+\node[font=\sffamily\scriptsize\bfseries, text=coImproved]
+    at ({\cx + (\ringR+1.0)*cos(60)}, {\cy + (\ringR+1.0)*sin(60)})
+    {wptr};
+
+\draw[-{Stealth[length=2.4mm,width=1.6mm]}, line width=1.0pt, draw=coAccent]
+    ({\cx + (\ringR+0.6)*cos(-60)}, {\cy + (\ringR+0.6)*sin(-60)})
+    -- ({\cx + (\ringR+0.1)*cos(-60)}, {\cy + (\ringR+0.1)*sin(-60)});
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent]
+    at ({\cx + (\ringR+1.0)*cos(-60)}, {\cy + (\ringR+1.0)*sin(-60)})
+    {rptr};
+
+% 容量约束
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, align=center]
+    at (\cx, 2.5) {strip\_rows $\times$ W\_in $\le$ 8192};
+
+% =============================================================================
+% 上游接口 (顶部): from idma_ctrl
+% =============================================================================
+\node[sub box, fill=flGray] (idma)
+    at (3.0, 8.4) {from idma\_ctrl};
+\draw[-{Stealth[length=2.8mm,width=1.8mm]}, line width=1.0pt]
+    (idma.south) -- ($(idma.south)+(0,-0.3)$)
+    -| ({\cx + \ringR*cos(60)}, {\cy + \ringR*sin(60)+0.2});
+\node[flow tag] at (3.6, 8.05) {int8 row \ v/r};
+
+% =============================================================================
+% ARF FILL / CONSUME 两侧并行 (中间)
+% =============================================================================
+\def\arfx{7.0}
+
+\node[font=\sffamily\footnotesize\bfseries, text=coAnno]
+    at (\arfx, 7.0) {ARF \ 32 entries};
+
+% FILL side (左半)
+\node[font=\sffamily\scriptsize\bfseries, text=coImproved]
+    at (\arfx-0.8, 6.3) {FILL $\uparrow$};
+\foreach \r in {0,1,2,3,4,5,6,7} {
+    \node[arf cell] at (\arfx-0.8, 6.0-\r*0.42) {};
+}
+
+% CONSUME side (右半)
+\node[font=\sffamily\scriptsize\bfseries, text=coAccent]
+    at (\arfx+0.8, 6.3) {CONSUME $\downarrow$};
+\foreach \r in {0,1,2,3,4,5,6,7} {
+    \node[arf cell, fill=flBlue] at (\arfx+0.8, 6.0-\r*0.42) {};
+}
+
+% ring -> ARF FILL 数据通路 (橙色)
+\draw[-{Stealth[length=2.6mm,width=1.6mm]}, line width=0.9pt, draw=coBaseline]
+    ({\cx + \ringR + 0.2}, \cy) -- (\arfx-1.2, 6.0)
+    node[flow tag, midway, sloped, above=0pt] {K$\times$K slice};
+
+% ARF -> output (act vector to mac_array)
+\draw[-{Stealth[length=3mm,width=2mm]}, line width=1.2pt, draw=coBaseline]
+    (\arfx+0.8, 6.0-7*0.42-0.2) -- (\arfx+0.8, 1.6)
+    node[flow tag, midway, fill=white] {16-elem act vec \ v/r};
+\node[sub box, fill=flBlue, anchor=north]
+    (mac) at (\arfx+0.8, 1.6) {to mac\_array};
+
+% =============================================================================
+% 6 级 counter (右侧, 自外到内)
+% =============================================================================
+\def\cntx{11.5}
+\def\cnty{6.8}
+\node[font=\sffamily\footnotesize\bfseries, text=coAnno]
+    at (\cntx, \cnty+0.6) {6-level counters};
+
+\foreach \i/\name/\sub in {
+    0/cs/cout slice,
+    1/yout/output row,
+    2/tile/W tile,
+    3/cins/cin slice,
+    4/ky/$K_y$,
+    5/kx/$K_x$
+}{
+    \node[cnt box, anchor=north] (cn\i)
+        at (\cntx, \cnty-\i*0.85)
+        {\name \ \scriptsize\mdseries(\sub)};
+}
+
+% counter 间用细虚线连接 (嵌套层级)
+\foreach \i in {0,1,2,3,4} {
+    \pgfmathtruncatemacro{\j}{\i+1}
+    \draw[line width=0.4pt, draw=coGuide, dotted]
+        (cn\i.south) -- (cn\j.north);
+}
+
+% 嵌套大括号
+\draw[decorate, decoration={brace, amplitude=4pt}, line width=0.6pt, draw=coAccent]
+    ($(cn0.north east)+(2mm,0)$) -- ($(cn5.south east)+(2mm,0)$)
+    node[midway, right=4pt, font=\sffamily\scriptsize\bfseries,
+         text=coAccent, align=center]
+    {外 $\to$ 内};
+
+% =============================================================================
+% cfg_regs 输入 (底部)
+% =============================================================================
+\node[sub box, fill=flGray]
+    (cfg) at (11.5, 1.0) {cfg\_regs};
+\draw[-{Stealth[length=2.4mm,width=1.6mm]}, line width=0.6pt, dashed,
+      draw=coAnno]
+    (cfg.north) -- (cn5.south);
+\node[flow tag, anchor=south]
+    at ($(cfg.north)+(0,0.5)$) {H\_in, W\_in, K, stride, strip\_rows};
+
+% =============================================================================
+% row_credit 反压 (红虚, 从 ring 回到 idma_ctrl)
+% =============================================================================
+\draw[backp]
+    ({\cx - \ringR - 0.2}, \cy)
+    .. controls ($(\cx - 2.0, \cy)$) and ($(\cx - 2.0, 8.0)$) ..
+    ($(idma.west)+(0,0.1)$)
+    node[flow tag, midway, text=coAccent, fill=white,
+         font=\sffamily\scriptsize\bfseries]
+    {row\_credit (release row)};
+
+% =============================================================================
+% Forward-pressure rule (底部居中小字)
+% =============================================================================
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, align=center]
+    at (7.0, 0.4)
+    {Forward-pressure: rows\_available $\ge$ y\_out $\times$ stride + $K_y$ $\to$ emit};
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,198 @@
+% =============================================================================
+% fig4-7-dma-subsystem.tex --- 图 4.7 DMA 子系统结构 (§4.10)
+%
+% v5.1 修订: 与 fig3-3 差异化:
+%   - fig3-3 = 对外接口黑盒视角 (DMA 子系统 1 master + 1 slave)
+%   - fig4-7 = 内部 cmd / data 双通道展开视角
+%               * axi_dm IP 展开为 MM2S cmd FIFO + MM2S data
+%                                 + S2MM cmd FIFO + S2MM data + sts FIFO
+%               * mm2s_arb 居 axi_dm 上方 (3 ctrls 汇聚)
+%               * axi_m_mux 3-to-1 聚合 + DFE 旁路 (旁路从最右侧绕)
+%   - 节点文字一两个词, 通道方向 / 仲裁策略放节点旁小字标注 (无括号)
+%
+% v5.2 字体优化: 全局放大字号; sts 双输入分线; sts→ctrls 标签移出 IP shell
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\small},
+    dma box/.style={
+        main box, fill=flBlue,
+        minimum width=26mm, minimum height=12mm,
+        font=\sffamily\large\bfseries,
+    },
+    dfe box/.style={
+        main box, fill=flGreen,
+        minimum width=26mm, minimum height=12mm,
+        font=\sffamily\large\bfseries,
+    },
+    arb box/.style={
+        main box, fill=flGreen,
+        minimum width=36mm, minimum height=13mm,
+        font=\sffamily\large\bfseries,
+    },
+    axidm shell/.style={
+        draw=coAnno, line width=1.2pt, rounded corners=3pt,
+        fill=flYellow!50, minimum width=150mm, minimum height=46mm,
+    },
+    sub block/.style={
+        draw=coAnno, line width=0.6pt, rectangle,
+        fill=white, minimum width=30mm, minimum height=11mm,
+        align=center, font=\sffamily\small\bfseries,
+        inner sep=2pt,
+    },
+    mux box/.style={
+        main box, fill=flBlue,
+        minimum width=140mm, minimum height=13mm,
+        font=\sffamily\large\bfseries,
+    },
+    master box/.style={
+        main box, fill=flGray,
+        minimum width=60mm, minimum height=13mm,
+        font=\sffamily\large\bfseries,
+    },
+    section title/.style={
+        font=\sffamily\large\bfseries, text=coAnno, anchor=west,
+    },
+    big tiny/.style={
+        font=\sffamily\footnotesize, text=coAnno, align=center,
+    },
+    big edge/.style={
+        font=\sffamily\footnotesize, text=coAnno,
+        fill=white, inner sep=1.5pt, align=center,
+    },
+    flow cmd/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.1pt, draw=coBaseline,
+    },
+    flow data big/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.1pt, draw=coBaseline,
+    },
+    flow sts/.style={
+        -{Stealth[length=2.8mm,width=1.8mm]},
+        line width=1.0pt, draw=coThird, dashed,
+    },
+    flow accent big/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.1pt, draw=coAccent, dashed,
+    },
+    bus big/.style={
+        -{Stealth[length=3.5mm,width=2.4mm]},
+        line width=1.8pt, draw=coAnno,
+    },
+]
+
+% =============================================================================
+% Layer 1: 4 DMA 控制器 + DFE (顶部)
+% =============================================================================
+\node[section title] at (-8.5, 7.4) {DMA 控制器};
+
+\node[dma box] (idma) at (-6.0, 6.0) {idma\_ctrl};
+\node[dma box] (wdma) at (-3.0, 6.0) {wdma\_ctrl};
+\node[dma box] (rdma) at ( 0.0, 6.0) {rdma\_ctrl};
+\node[dma box] (odma) at ( 4.0, 6.0) {odma\_ctrl};
+\node[dfe box] (dfe)  at ( 7.5, 6.0) {DFE};
+
+\node[big tiny, anchor=south] at (idma.north) {DDR$\to$IFB};
+\node[big tiny, anchor=south] at (wdma.north) {DDR$\to$WB};
+\node[big tiny, anchor=south] at (rdma.north) {DDR$\to$bias/sc};
+\node[big tiny, anchor=south] at (odma.north) {OFB$\to$DDR};
+\node[big tiny, anchor=south] at (dfe.north)  {desc FIFO 128};
+
+% =============================================================================
+% Layer 2: mm2s_arb (在 idma/wdma/rdma 下方居中)
+% =============================================================================
+\node[arb box] (arb) at (-3.0, 3.5) {mm2s\_arb};
+\node[big tiny, anchor=west] at ($(arb.east)+(0.15,0)$)
+    {round-robin\\3-to-1};
+
+% 3 路 cmd → mm2s_arb
+\draw[flow cmd] (idma.south) -- ($(arb.north)+(-1.5,0)$);
+\draw[flow cmd] (wdma.south) -- (arb.north);
+\draw[flow cmd] (rdma.south) -- ($(arb.north)+(1.5,0)$);
+
+% =============================================================================
+% Layer 3: axi_dm IP shell + 5 sub blocks
+% =============================================================================
+\node[section title] at (-8.5, 2.5) {axi\_dm IP \ Xilinx};
+
+\node[axidm shell] (axidm) at (0, -0.2) {};
+
+% sub blocks: 上排 cmd FIFO 2 个 + sts 右; 下排 data 2 个
+\node[sub block] (m_cmd) at (-5.0, 1.0) {MM2S cmd FIFO};
+\node[sub block] (s_cmd) at ( 0.5, 1.0) {S2MM cmd FIFO};
+\node[sub block, minimum width=24mm] (sts) at ( 6.0, -0.2) {sts FIFO};
+\node[sub block] (m_dat) at (-5.0, -1.4) {MM2S data};
+\node[sub block] (s_dat) at ( 0.5, -1.4) {S2MM data};
+
+% IP 内部连线: cmd FIFO → data path (同侧)
+\draw[flow cmd] (m_cmd.south) -- (m_dat.north);
+\draw[flow cmd] (s_cmd.south) -- (s_dat.north);
+
+% sts FIFO 回环: 双输入走 axi_dm shell 内底部, y 错开避免重叠
+% m_dat → sts.south_west: 深绕 y=-2.2
+\draw[flow sts] (m_dat.east) -- (-3.1, -1.4) -- (-3.1, -2.2)
+                              -- (5.6, -2.2) -- (5.6, -0.75);
+% s_dat → sts.south_east: 浅绕 y=-1.8
+\draw[flow sts] (s_dat.east) -- (2.4, -1.4) -- (2.4, -1.8)
+                              -- (6.4, -1.8) -- (6.4, -0.75);
+
+% mm2s_arb → MM2S cmd FIFO (右下斜)
+\draw[flow cmd] (arb.south) -- (m_cmd.north)
+    node[big edge, pos=0.3, right=2pt] {shared MM2S};
+
+% odma_ctrl → S2MM cmd FIFO (直下)
+\draw[flow cmd] (odma.south) -- ++(0,-2.0) -| (s_cmd.north)
+    node[big edge, pos=0.15, right=2pt] {S2MM excl.};
+
+% =============================================================================
+% Layer 4: axi_m_mux (3-to-1 聚合, 底部)
+% =============================================================================
+\node[mux box] (mux) at (0, -4.0) {axi\_m\_mux};
+\node[big tiny, anchor=west] at ($(mux.east)+(0.15,0)$) {3-to-1};
+
+% MM2S data → mux 左
+\draw[flow data big] (m_dat.south) -- ++(0,-0.6) -| ($(mux.north)+(-4.5,0)$)
+    node[big edge, pos=0.92, left=2pt] {MM2S};
+% S2MM data → mux 中
+\draw[flow data big] (s_dat.south) -- ++(0,-0.4) -| ($(mux.north)+(0,0)$)
+    node[big edge, pos=0.9, right=2pt] {S2MM};
+% DFE master → mux 右 (从最右侧绕)
+\draw[flow accent big] (dfe.south) -- ++(0,-9.0) -| ($(mux.north)+(4.5,0)$)
+    node[big edge, pos=0.94, right=2pt, text=coAccent] {DFE};
+
+% =============================================================================
+% Layer 5: 对外 AXI4 Master → DDR
+% =============================================================================
+\node[master box] (mst) at (0, -5.8) {AXI4 Master $\to$ DDR};
+\node[big tiny, anchor=north] at (mst.south) {128 b, via SmartConnect};
+
+\draw[bus big] (mux.south) -- (mst.north);
+
+% =============================================================================
+% sts FIFO → DMA ctrls 完成回报 (虚线从 sts.north 直上, 拐进 odma.east)
+% 标签放 sts 与 odma 之间空白处, 避开 axi_dm shell 顶部边框与 IP 标题
+% =============================================================================
+\draw[flow sts] (sts.north) |- (odma.east);
+\node[big edge, anchor=west, text=coThird] at (6.2, 3.0)
+    {sts $\to$ ctrls};
+
+% =============================================================================
+% 图例 (右下)
+% =============================================================================
+\node[legend box, anchor=south east, font=\sffamily\footnotesize]
+    at (10.5, -7.4) {%
+\begin{tabular}{@{}l@{\ \ }l@{}}
+\tikz[baseline=-0.6ex]\draw[flow cmd] (0,0) -- (6mm,0); & cmd 通道 \\[1pt]
+\tikz[baseline=-0.6ex]\draw[flow data big] (0,0) -- (6mm,0); & data 通道 \\[1pt]
+\tikz[baseline=-0.6ex]\draw[flow sts] (0,0) -- (6mm,0); & sts 回报 \\[1pt]
+\tikz[baseline=-0.6ex]\draw[flow accent big] (0,0) -- (6mm,0); & DFE 旁路 \\[1pt]
+\tikz[baseline=-0.6ex]\draw[bus big] (0,0) -- (6mm,0); & 对外 AXI4 master \\
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

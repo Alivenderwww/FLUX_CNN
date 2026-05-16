@@ -1,0 +1,168 @@
+% =============================================================================
+% fig3-3-dma-overview.tex --- 图 3.3 DMA 子系统结构 (§3.3)
+%
+% v5.1 修订: DMA 子系统对外接口黑盒视角:
+%   - 上方:  Core 主流水 4 接口 (IFB wr / WB wr / OFB rd / bias-sc) + axi_lite_csr
+%   - 中上:  4 DMA 控制器 + DFE 旁路 + sequencer
+%   - 中下:  mm2s_arb (3-to-1) + axi_dm IP (黑盒, MM2S / S2MM 双通道)
+%   - 下方:  axi_m_mux 3-to-1 聚合 + AXI4 Master 对外
+%   - 节点文字一两个词, 参数 / 通道方向放节点旁小字标注 (无括号)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    band/.style={
+        draw=coAnno, line width=0.5pt, rounded corners=2pt,
+        fill=flGray, minimum width=110mm, minimum height=10mm,
+        align=center, font=\sffamily\small\bfseries,
+    },
+    iface/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        fill=white, minimum width=20mm, minimum height=7mm,
+        align=center, font=\sffamily\scriptsize,
+    },
+    csr box/.style={
+        main box, fill=flYellow,
+        minimum width=28mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    dfe box/.style={
+        main box, fill=flGreen,
+        minimum width=22mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    dma box/.style={
+        main box, fill=flBlue,
+        minimum width=22mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    arb box/.style={
+        main box, fill=flGreen,
+        minimum width=30mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    axidm box/.style={
+        main box, fill=flYellow,
+        minimum width=80mm, minimum height=14mm,
+        font=\sffamily\small\bfseries,
+        line width=1pt,
+    },
+    mux box/.style={
+        main box, fill=flBlue,
+        minimum width=70mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    master box/.style={
+        main box, fill=flGray,
+        minimum width=40mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    section title/.style={
+        font=\sffamily\small\bfseries, text=coAnno, anchor=west,
+    },
+]
+
+% =============================================================================
+% Layer 1: Core 主流水接口带 + axi_lite_csr (顶部)
+% =============================================================================
+\node[section title] at (-8.5, 7.4) {Accelerator Core 接口};
+
+\node[band] (band) at (-1.5, 6.2) {};
+\node[label tiny, anchor=west] at ($(band.west)+(0.3,0.5)$) {主流水 5 模块 + cfg\_regs};
+
+% 4 接口顺序与下方 DMA 控制器对齐: idma/wdma/rdma/odma
+\node[iface] (ifb) at (-5.6, 6.2) {IFB wr};
+\node[iface] (wbf) at (-2.5, 6.2) {WB wr};
+\node[iface] (bia) at ( 0.6, 6.2) {bias/sc};
+\node[iface] (ofb) at ( 3.7, 6.2) {OFB rd};
+
+% axi_lite_csr 右上独立
+\node[csr box] (csr) at (6.6, 6.2) {axi\_lite\_csr};
+\node[label tiny, anchor=south] at (csr.north) {4 start regs};
+
+\draw[flow] ($(csr.east)+(1.2,0)$) -- (csr.east)
+    node[edge label, pos=0.5, above=1pt] {AXI-Lite 32 b};
+
+% =============================================================================
+% Layer 2: 4 DMA 控制器 + DFE 旁路
+% =============================================================================
+\node[dfe box] (dfe) at (-7.8, 4.0) {DFE};
+\node[label tiny, anchor=south] at (dfe.north) {desc FIFO 128};
+
+\node[dma box] (idma) at (-5.6, 4.0) {idma\_ctrl};
+\node[dma box] (wdma) at (-2.5, 4.0) {wdma\_ctrl};
+\node[dma box] (rdma) at ( 0.6, 4.0) {rdma\_ctrl};
+\node[dma box] (odma) at ( 3.7, 4.0) {odma\_ctrl};
+
+% Core 4 接口 → 4 DMA
+\draw[flow data]   (ifb.south) -- (idma.north);
+\draw[flow weight] (wbf.south) -- (wdma.north);
+\draw[flow data]   (ofb.south) -- (odma.north);
+\draw[flow]        (bia.south) -- (rdma.north);
+
+% csr → DFE start_dfe
+\draw[flow dashed] (csr.south) -- ++(0,-0.4) -| ($(dfe.north)+(0,0)$)
+    node[edge label, pos=0.85, above=1pt] {start};
+
+% =============================================================================
+% Layer 3: mm2s_arb (3-to-1)
+% =============================================================================
+\node[arb box] (arb) at (-1.5, 2.0) {mm2s\_arb};
+\node[label tiny, anchor=south] at (arb.north) {round-robin 3-to-1};
+
+\draw[flow] (idma.south) -- ($(arb.north)+(-1.0,0)$);
+\draw[flow] (wdma.south) -- (arb.north);
+\draw[flow] (rdma.south) -- ($(arb.north)+(1.0,0)$);
+
+% =============================================================================
+% Layer 4: axi_dm IP (黑盒, MM2S + S2MM 双通道)
+% =============================================================================
+\node[axidm box] (axidm) at (-1.5, -0.3) {axi\_dm IP \quad Xilinx};
+\node[label tiny, anchor=north] at ($(axidm.north)+(-2.5,0)$) {MM2S ch};
+\node[label tiny, anchor=north] at ($(axidm.north)+( 2.5,0)$) {S2MM ch};
+
+\draw[flow] (arb.south) -- ($(axidm.north)+(-2.5,0)$)
+    node[edge label, pos=0.5, right=1pt] {MM2S shared};
+\draw[flow] (odma.south) -- ++(0,-1.5) -| ($(axidm.north)+(2.5,0)$)
+    node[edge label, pos=0.9, right=1pt] {S2MM excl.};
+
+% =============================================================================
+% Layer 5: axi_m_mux (3-to-1 聚合)
+% =============================================================================
+\node[mux box] (mux) at (-1.5, -2.8) {axi\_m\_mux};
+\node[label tiny, anchor=south] at (mux.north) {3-to-1 aggregator};
+
+\draw[flow data] ($(axidm.south)+(-2.5,0)$) -- ($(mux.north)+(-2.5,0)$);
+\draw[flow data] ($(axidm.south)+( 2.5,0)$) -- ($(mux.north)+( 2.5,0)$);
+
+% DFE master → axi_m_mux (旁路)
+\draw[flow accent] (dfe.south) -- ++(0,-0.6) -|
+    ($(mux.west)+(-0.3,0.3)$) -- ($(mux.west)+(0,0.3)$)
+    node[edge label, pos=0.95, above=1pt, text=coAccent] {DFE};
+
+% =============================================================================
+% Layer 6: 对外 AXI4 Master → DDR
+% =============================================================================
+\node[master box] (mst) at (-1.5, -4.7) {AXI4 Master $\to$ DDR};
+\node[label tiny, anchor=north] at (mst.south) {128 b, via SmartConnect};
+
+\draw[bus] (mux.south) -- (mst.north);
+
+% =============================================================================
+% 图例 (右下)
+% =============================================================================
+\node[legend box, anchor=south east] at (8.5, -5.7) {%
+\begin{tabular}{@{}l@{\ \ }l@{}}
+\tikz\draw[flow data] (0,0) -- (5mm,0); & MM2S 数据 \\
+\tikz\draw[flow weight] (0,0) -- (5mm,0); & 权重 \\
+\tikz\draw[flow] (0,0) -- (5mm,0); & 控制 / S2MM \\
+\tikz\draw[flow accent] (0,0) -- (5mm,0); & DFE 旁路 \\
+\tikz\draw[bus] (0,0) -- (5mm,0); & 对外 AXI4 master \\
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

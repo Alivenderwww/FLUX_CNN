@@ -1,0 +1,143 @@
+% =============================================================================
+% fig3-1-system-arch.tex --- 图 3.1 加速器系统总体架构 (§3.3)
+%
+% v5.1 修订: 按 RTL/multicore_top_smc.sv 顶层模块完整复刻:
+%   - Host CPU + axi_lite_1to4 (CSR 分发)
+%   - N × core_top (不展开内部)
+%   - SmartConnect (4×4 AXI 互联)
+%   - Off-chip DDR
+%   - 跨核 SRAM push (虚线): core[i].odma → core[j].ifb_axi_slv
+%   - 节点文字一两个词, 位宽 / 通道数等放箭头标注
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    host box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flGray, minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt, font=\sffamily\small\bfseries,
+    },
+    csr box/.style={
+        draw=coAnno, line width=0.7pt, rounded corners=2pt,
+        fill=flGreen, minimum width=78mm, minimum height=8mm,
+        align=center, inner sep=2pt, font=\sffamily\small\bfseries,
+    },
+    core box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flBlue, minimum width=22mm, minimum height=14mm,
+        align=center, inner sep=2pt, font=\sffamily\small\bfseries,
+    },
+    smc box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flYellow, minimum width=96mm, minimum height=9mm,
+        align=center, inner sep=2pt, font=\sffamily\small\bfseries,
+    },
+    ddr box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flGray, minimum width=28mm, minimum height=10mm,
+        align=center, inner sep=2pt, font=\sffamily\small\bfseries,
+    },
+    bus thin/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=0.8pt, draw=coAnno,
+    },
+    bus thick/.style={
+        -{Stealth[length=3.5mm,width=2.4mm]},
+        line width=1.4pt, draw=coBaseline,
+    },
+    push dash/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.0pt, draw=coAccent, dashed,
+    },
+    flow note/.style={
+        font=\sffamily\scriptsize, text=coAnno,
+        fill=white, inner sep=1.5pt,
+    },
+]
+
+% =============================================================================
+% Layer 1: Host CPU
+% =============================================================================
+\node[host box] (host) at (-3.5, 5.5) {Host CPU};
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(host.east)+(0.3,0)$) {ARM / RISC-V，启动期写 4 reg + start\_dfe};
+
+% =============================================================================
+% Layer 2: axi_lite_1to4 CSR 分发
+% =============================================================================
+\node[csr box] (csr) at (0, 4.0) {axi\_lite\_1to4};
+
+\draw[bus thin] (host.south) |- ($(csr.west)+(-0.5,0)$) -- (csr.west);
+\node[flow note] at (-2.0, 4.45) {AXI-Lite 32 b};
+
+% =============================================================================
+% Layer 3: 4 × core_top
+% =============================================================================
+\foreach \i/\x in {0/-3.6, 1/-1.2, 2/1.2, 3/3.6}{
+    \node[core box] (c\i) at (\x, 1.8)
+        {Core[\i]\\\scriptsize\mdseries core\_top};
+    \draw[bus thin]
+        ($(csr.south)+({\x*0.95},0)$) -- ($(c\i.north)+(0,0)$);
+}
+
+% Core[0] 子模块清单 (标在 Core[0] 下方)
+\node[font=\sffamily\scriptsize, text=coAnno, anchor=north, align=center]
+    at ($(c0.south)+(0,-0.05)$)
+    {cfg\_regs / sequencer\\line\_buf / mac\_array\\parf\_accum / ofb\_writer\\wgt\_buffer\\(i/w/o/r)dma\_ctrl\\mm2s\_arb / axi\_dm\\axi\_m\_mux / ifb\_axi\_slv};
+\foreach \i in {1,2,3}{
+    \node[font=\sffamily\scriptsize\itshape, text=coGuide, anchor=north]
+        at ($(c\i.south)+(0,-0.05)$)
+        {(同 Core[0])};
+}
+
+% =============================================================================
+% Layer 4: SmartConnect 4×4
+% =============================================================================
+\node[smc box] (smc) at (0, -1.6) {SmartConnect \ 4-Master $\times$ 4-Slave};
+
+\foreach \i/\x in {0/-3.6, 1/-1.2, 2/1.2, 3/3.6}{
+    \draw[bus thick]
+        ($(c\i.south)+(0,-2.1)$) -- ($(smc.north)+({\x*0.95},0)$);
+}
+\node[flow note] at (4.5, 0.5) {AXI4 \ 128 b};
+
+% =============================================================================
+% 跨核 SRAM push (红虚): SmartConnect 反向写入 core.ifb_axi_slv
+% =============================================================================
+\foreach \i/\x in {0/-3.6, 1/-1.2, 2/1.2, 3/3.6}{
+    \draw[push dash]
+        ($(smc.north)+({\x*0.95+0.3},0)$) to[bend right=12]
+        ($(c\i.east)+(0,-0.1)$);
+}
+\node[font=\sffamily\scriptsize, text=coAccent, anchor=west, align=left]
+    at (4.8, -0.6)
+    {跨核 SRAM\\push (红虚)};
+
+% =============================================================================
+% Layer 5: Off-chip DDR
+% =============================================================================
+\node[ddr box] (ddr) at (0, -4.0) {Off-chip DDR};
+
+\draw[bus thick] (smc.south) -- (ddr.north);
+\node[flow note] at (1.6, -2.8) {AXI4 \ 128 b};
+
+% =============================================================================
+% 图例 (右侧)
+% =============================================================================
+\node[legend box, anchor=north west] at (5.0, 2.4) {%
+\begin{tabular}{@{}l@{\ \ }l@{}}
+\tikz\draw[bus thick] (0,0) -- (5mm,0); & AXI4 主数据流 \\[2pt]
+\tikz\draw[bus thin]  (0,0) -- (5mm,0); & AXI-Lite 控制流 \\[2pt]
+\tikz\draw[push dash] (0,0) -- (5mm,0); & 跨核 SRAM push \\[4pt]
+\multicolumn{2}{@{}l}{Address map：} \\
+\multicolumn{2}{@{}l}{Core[$i$].IFB} \\
+\multicolumn{2}{@{}l}{\ = 0x8000\_0000} \\
+\multicolumn{2}{@{}l}{\ \ + $i \times$ 0x1000\_0000}
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,156 @@
+% =============================================================================
+% fig4-11-s2d-transform.tex --- 图 4.11 空间到深度 (S2D) 重排 (§4.9)
+%
+% 设计稿: paper/workspace/figures/fig4-11-s2d-transform.md
+% 组合图: 左半嵌入 algo4-2-s2d.png (伪代码),
+%        右半三阶段: 4x4 输入分相位染色 -> 4 个 2x2 子张量 -> stride=1 cin*4.
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+\usepackage{graphicx}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    px/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=7mm, minimum height=7mm, inner sep=0pt,
+    },
+    px tl/.style={px, fill=flBlue},
+    px tr/.style={px, fill=flYellow},
+    px bl/.style={px, fill=flGreen},
+    px br/.style={px, fill=coFourth!22},
+    stage title/.style={
+        font=\sffamily\small\bfseries, text=coAnno,
+        align=center, anchor=south,
+    },
+    stage arrow/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.4pt,
+        draw=coAnno,
+    },
+    arrow note/.style={
+        font=\sffamily\scriptsize\itshape, text=coAnno,
+        fill=white, inner sep=1.5pt, align=left,
+    },
+    formula box/.style={
+        draw=coAnno, line width=0.4pt, fill=white, rounded corners=1pt,
+        inner sep=3pt, align=left, font=\sffamily\scriptsize,
+    },
+]
+
+% =============================================================================
+% 左半 (0..95mm): algo4-2-s2d.png 伪代码
+% =============================================================================
+\node[anchor=north west] (algo) at (0, 12.5)
+    {\includegraphics[width=90mm]{png/algo4-2-s2d.png}};
+\node[font=\sffamily\scriptsize\bfseries, text=coAnno, anchor=north, align=center]
+    at ($(algo.south)+(0,-1mm)$)
+    {算法 4.2 S2D 编译器重排\\Algorithm 4.2 S2D compiler rearrangement};
+
+% =============================================================================
+% 右半: 三阶段自上而下
+% 起点 x ~= 10.5
+% =============================================================================
+\def\cx{14.5}
+
+% ---- 阶段 1: 原始 4x4 输入, stride=2 4 相位染色 ----
+\node[stage title] at (\cx-1.6, 12.0)
+    {阶段 1：原始输入 $X$\\\scriptsize\itshape stride=2};
+
+% 4x4 grid, 每格 7mm = 0.7cm
+% 行 r=0..3, 列 c=0..3
+% 相位: tl = (r%2=0,c%2=0), tr=(0,1), bl=(1,0), br=(1,1)
+\foreach \r in {0,1,2,3} {
+  \foreach \c in {0,1,2,3} {
+    \pgfmathtruncatemacro{\rp}{int(mod(\r,2))}
+    \pgfmathtruncatemacro{\cp}{int(mod(\c,2))}
+    \ifnum\rp=0
+      \ifnum\cp=0
+        \def\sty{px tl}
+      \else
+        \def\sty{px tr}
+      \fi
+    \else
+      \ifnum\cp=0
+        \def\sty{px bl}
+      \else
+        \def\sty{px br}
+      \fi
+    \fi
+    \node[\sty] at ({\cx-1.05+\c*0.7},{11.2-\r*0.7}) {};
+  }
+}
+
+% 4 相位图例 (阶段 1 旁)
+\node[font=\sffamily\scriptsize, text=coAnno, anchor=west, align=left]
+    at ({\cx+1.6}, 10.2)
+    {phase\\(0,0) \tikz\node[px tl, minimum size=2.5mm]{};\\
+     (0,1) \tikz\node[px tr, minimum size=2.5mm]{};\\
+     (1,0) \tikz\node[px bl, minimum size=2.5mm]{};\\
+     (1,1) \tikz\node[px br, minimum size=2.5mm]{};};
+
+% 阶段 1 -> 阶段 2 箭头
+\draw[stage arrow] (\cx, 8.2) -- (\cx, 7.7);
+\node[arrow note] at ({\cx+1.8}, 7.95) {S2D rearrange\\no data copy};
+
+% ---- 阶段 2: 4 相位抽取, 4 个 2x2 子张量并排 ----
+\node[stage title] at (\cx-1.6, 7.4)
+    {阶段 2：分相位抽取};
+
+% 4 子张量, 中心位置 cx-2.7 / cx-0.9 / cx+0.9 / cx+2.7
+\newcommand{\subtensor}[3]{%
+    \node[#3] at ({\cx+#1-0.35}, 6.35) {};
+    \node[#3] at ({\cx+#1+0.35}, 6.35) {};
+    \node[#3] at ({\cx+#1-0.35}, 5.65) {};
+    \node[#3] at ({\cx+#1+0.35}, 5.65) {};
+    \node[font=\sffamily\scriptsize, text=coAnno, anchor=north, align=center]
+        at ({\cx+#1}, 5.2) {phase\\#2};
+}
+\subtensor{-2.7}{(0,0)}{px tl}
+\subtensor{-0.9}{(0,1)}{px tr}
+\subtensor{0.9}{(1,0)}{px bl}
+\subtensor{2.7}{(1,1)}{px br}
+
+% 阶段 2 -> 阶段 3 箭头
+\draw[stage arrow] (\cx, 4.4) -- (\cx, 4.0);
+\node[arrow note] at ({\cx+1.4}, 4.2) {\,channel concat\,};
+
+% ---- 阶段 3: 等效输入 X' (stride=1, cin_new = 4*Cin) ----
+\node[stage title] at (\cx-1.6, 3.6)
+    {阶段 3：等效输入 $X'$\\\scriptsize\itshape stride=1};
+
+% 2x2 大方块, 每格内含 4 条窄条 (4 相位拼接)
+% 大方块边长 14mm, 中心 cx, 顶 2.7
+\foreach \rr in {0,1} {
+  \foreach \cc in {0,1} {
+    % 4 窄条, 每条 7mm 宽 / 14mm 高 -> 每条 3.5mm 宽
+    \pgfmathsetmacro{\xb}{\cx + (\cc-0.5)*1.4 - 0.7}
+    \pgfmathsetmacro{\yb}{2.6 - \rr*1.4}
+    \node[px tl, minimum width=3.5mm, minimum height=14mm, anchor=south west]
+        at ({\xb},{\yb-0.7}) {};
+    \node[px tr, minimum width=3.5mm, minimum height=14mm, anchor=south west]
+        at ({\xb+0.35},{\yb-0.7}) {};
+    \node[px bl, minimum width=3.5mm, minimum height=14mm, anchor=south west]
+        at ({\xb+0.70},{\yb-0.7}) {};
+    \node[px br, minimum width=3.5mm, minimum height=14mm, anchor=south west]
+        at ({\xb+1.05},{\yb-0.7}) {};
+  }
+}
+
+% 参数标注 (阶段 3 右侧)
+\node[formula box, anchor=west] at ({\cx+1.7}, 1.9) {%
+$K_{new} = \lceil K/\mathrm{stride}\rceil$ \\[1pt]
+$\mathrm{stride}_{new} = 1$ \\[1pt]
+$C_{in,new} = \mathrm{stride}^2 \cdot C_{in} = 4\,C_{in}$ \\[3pt]
+\itshape 示例 \ stride=2, $K{=}3$
+};
+
+% ---- 底部注释 ----
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, align=center, anchor=north]
+    at (\cx, 0.1)
+    {DDR 友好：输入仅按相位重排索引，不需要复制 \\
+     DDR-friendly: input data only re-indexed by phase, NOT duplicated};
+
+\end{tikzpicture}
+\end{document}

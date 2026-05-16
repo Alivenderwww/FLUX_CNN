@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
-from _style import setup_style, save_figure, COLOR_ANNO, COLOR_FIRE, COLOR_IMPROVED
+from _style import setup_style, save_figure, COLOR_ANNO, COLOR_FIRE, COLOR_IDLE, COLOR_IMPROVED
 
 setup_style()
 
@@ -36,10 +36,10 @@ TYPE_BG = {
     "fc":    "#f0f0f0",  # 浅灰：全连接
 }
 TYPE_LABEL = {
-    "patch": "Patch（IDMA preload）",
+    "patch": "Patch",
     "k3":    "$K=3$ 主路径",
-    "ds":    "降采样 $K=1$（访存受限）",
-    "fc":    "全连接（计算量小）",
+    "ds":    "降采样 $K=1$",
+    "fc":    "全连接",
 }
 
 x = np.arange(len(layers))
@@ -60,7 +60,7 @@ for i, t in enumerate(layer_types + [None]):
 
 # 第 2 步：堆叠柱（触发 + 空闲）
 b1 = ax1.bar(x, fire_max, 0.62, color=COLOR_FIRE, label="触发周期", zorder=3)
-b2 = ax1.bar(x, idle, 0.62, color="#d49a4d", bottom=fire_max, label="空闲周期", zorder=3)
+b2 = ax1.bar(x, idle, 0.62, color=COLOR_IDLE, bottom=fire_max, label="空闲周期", zorder=3)
 
 # 第 3 步：PE 利用率折线（右 Y 轴）
 l1, = ax2.plot(x, util, marker="D", color=COLOR_IMPROVED, label="PE 利用率",
@@ -68,9 +68,16 @@ l1, = ax2.plot(x, util, marker="D", color=COLOR_IMPROVED, label="PE 利用率",
                markerfacecolor="white", markeredgewidth=1.6)
 
 # PE 利用率数字
+# L3 (idx=3, util=19%) 和 L6 (idx=6, util=16%) 是低谷，两侧折线高耸会遮挡顶部标注，
+# 改为标在节点右侧
+SIDE_LABEL = {3, 6}
 for xi, u in zip(x, util):
-    ax2.text(xi, u + 4, f"{u:.0f}%", ha="center", va="bottom",
-             fontsize=8, color=COLOR_IMPROVED, fontweight="bold")
+    if xi in SIDE_LABEL:
+        ax2.text(xi + 0.32, u, f"{u:.0f}%", ha="left", va="center",
+                 fontsize=8, color=COLOR_IMPROVED, fontweight="bold")
+    else:
+        ax2.text(xi, u + 4, f"{u:.0f}%", ha="center", va="bottom",
+                 fontsize=8, color=COLOR_IMPROVED, fontweight="bold")
 
 # 触发数注记（柱中部白字）
 for xi, fm in zip(x, fire_max):
@@ -94,28 +101,33 @@ ax2.set_ylim(0, 110)
 ax2.tick_params(axis="y", labelcolor=COLOR_IMPROVED)
 ax1.grid(True, axis="y", linestyle=":", linewidth=0.5, alpha=0.4, zorder=0)
 
-# 顶部层类型注记（每个色块标一次）
+# 顶部层类型注记（每个色块标一次）— 不加 bbox，文字限柱宽换行
+import textwrap as _tw
 prev_type = None
 seg_start = 0
 ymax = max(wall_cy) * 1.15
 for i, t in enumerate(layer_types + [None]):
     if t != prev_type and prev_type is not None:
+        seg_n = i - seg_start
         mid = (seg_start + i - 1) / 2
-        ax1.text(mid, ymax * 0.97, TYPE_LABEL[prev_type],
-                 ha="center", va="top", fontsize=9, color=COLOR_ANNO,
-                 bbox=dict(boxstyle="round,pad=0.18",
-                            facecolor=TYPE_BG[prev_type],
-                            edgecolor=COLOR_ANNO, linewidth=0.5))
+        # 段越窄文字越短：单层段强行换行
+        label = TYPE_LABEL[prev_type]
+        if seg_n == 1:
+            # 单层段：拆成 "$K=3$\n主路径" 形式
+            label = label.replace(" ", "\n", 1)
+        ax1.text(mid, ymax * 0.97, label,
+                 ha="center", va="top", fontsize=9.5, color=COLOR_ANNO,
+                 fontweight="bold")
         seg_start = i
     if t != prev_type:
         seg_start = i
     prev_type = t
 
-# 双图例（柱 + 折线）
+# 双图例（柱 + 折线）— 移到右上偏下位置
 h1, l1_lbl = ax1.get_legend_handles_labels()
 h2, l2_lbl = ax2.get_legend_handles_labels()
-ax1.legend(h1 + h2, l1_lbl + l2_lbl, loc="center left",
-           bbox_to_anchor=(0.01, 0.55), framealpha=0.95, ncol=1)
+ax1.legend(h1 + h2, l1_lbl + l2_lbl, loc="upper right",
+           bbox_to_anchor=(0.995, 0.78), framealpha=0.95, ncol=1, fontsize=9)
 
 plt.tight_layout()
 save_figure(fig, "fig5-12-resnet11-layers", Path(__file__).parent)

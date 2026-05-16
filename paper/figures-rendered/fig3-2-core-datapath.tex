@@ -1,0 +1,160 @@
+% =============================================================================
+% fig3-2-core-datapath.tex --- 图 3.2 加速核内数据通路 (§3.3)
+%
+% v5.1 修订: 按 RTL/core_top.sv 复刻:
+%   - 上层:  4 DMA 控制器 + ifb_axi_slv 共 5 外部接口
+%   - 中层:  主流水 line_buffer -> mac_array -> parf_accum -> ofb_writer
+%            wgt_buffer 侧路 (mac_array 上方)
+%   - 下层:  sequencer + cfg_regs 横条 (cfg broadcast 到主流水)
+%   - 节点文字一两个词, 位宽 / 类型 / 端口方向放节点旁小字标注
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    dma box/.style={
+        main box, fill=flGreen,
+        minimum width=22mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    slv box/.style={
+        main box, fill=flGray,
+        minimum width=22mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    pipe box/.style={
+        main box, fill=flBlue,
+        minimum width=26mm, minimum height=14mm,
+        font=\sffamily\small\bfseries,
+        line width=0.8pt,
+    },
+    side box/.style={
+        main box, fill=flYellow,
+        minimum width=24mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    seq box/.style={
+        main box, fill=flYellow,
+        minimum width=24mm, minimum height=10mm,
+        font=\sffamily\small\bfseries,
+    },
+    cfg bar/.style={
+        draw=coAnno, line width=0.7pt, rounded corners=2pt,
+        fill=flGray, minimum width=120mm, minimum height=10mm,
+        align=center, font=\sffamily\small\bfseries,
+    },
+    section title/.style={
+        font=\sffamily\small\bfseries, text=coAnno, anchor=west,
+    },
+]
+
+% =============================================================================
+% Layer 1: DMA 控制器行 + ifb_axi_slv (顶部)
+% =============================================================================
+\node[section title] at (-7.5, 6.7) {外部 DMA / AXI 接口};
+
+\node[slv box] (ifbs) at (-6.5, 5.5) {ifb\_axi\_slv};
+\node[dma box] (idma) at (-3.8, 5.5) {idma\_ctrl};
+\node[dma box] (wdma) at (-1.0, 5.5) {wdma\_ctrl};
+\node[dma box] (rdma) at ( 1.8, 5.5) {rdma\_ctrl};
+\node[dma box] (odma) at ( 4.6, 5.5) {odma\_ctrl};
+
+% 端口方向小字 (节点上方)
+\node[label tiny, anchor=south] at (ifbs.north) {x-core push};
+\node[label tiny, anchor=south] at (idma.north) {DDR $\to$ IFB};
+\node[label tiny, anchor=south] at (wdma.north) {DDR $\to$ WB};
+\node[label tiny, anchor=south] at (rdma.north) {DDR $\to$ bias/sc};
+\node[label tiny, anchor=south] at (odma.north) {OFB $\to$ DDR};
+
+% =============================================================================
+% Layer 2: wgt_buffer 侧路 (mac_array 上方)
+% =============================================================================
+\node[side box] (wb) at (-1.75, 3.4) {wgt\_buffer};
+\node[label tiny, anchor=west] at ($(wb.east)+(0.15,0)$) {WB 1024 $\to$ WRF 32};
+
+% =============================================================================
+% Layer 3: 主流水 4 模块 (横排)
+% =============================================================================
+\node[section title] at (-7.5, 2.3) {Core 主流水};
+
+\node[pipe box] (lb)   at (-5.25, 1.3) {line\_buffer};
+\node[pipe box] (mac)  at (-1.75, 1.3) {mac\_array};
+\node[pipe box] (parf) at ( 1.75, 1.3) {parf\_accum};
+\node[pipe box] (ofb)  at ( 5.25, 1.3) {ofb\_writer};
+
+% 主流水内部数据流箭头
+\draw[flow data] (lb.east) -- (mac.west)
+    node[edge label, midway, above=1pt] {K$\times$K win};
+\draw[flow psum] (mac.east) -- (parf.west)
+    node[edge label, midway, above=1pt] {16$\times$psum};
+\draw[flow psum] (parf.east) -- (ofb.west)
+    node[edge label, midway, above=1pt] {accum-done};
+
+% 主流水容量 / 类型小字 (节点下方)
+\node[label tiny, anchor=north] at (lb.south)   {IFB 8192 + ARF 32};
+\node[label tiny, anchor=north] at (mac.south)  {16$\times$16 PE = 256 MAC};
+\node[label tiny, anchor=north] at (parf.south) {PARF 32$\times$16};
+\node[label tiny, anchor=north] at (ofb.south)  {SDP $\to$ OFB 2048};
+
+% =============================================================================
+% Layer 4: DMA → 主流水 / wgt_buffer 的数据流连线
+% =============================================================================
+% ifb_axi_slv → line_buffer (跨核 push, 强调红虚)
+\draw[flow accent] (ifbs.south) -- ($(lb.north)+(-0.6,0)$)
+    node[edge label, pos=0.75, left=1pt, text=coAccent] {push};
+% idma_ctrl → line_buffer (DDR 拉)
+\draw[flow data] (idma.south) -- ($(lb.north)+(0.6,0)$);
+% wdma_ctrl → wgt_buffer
+\draw[flow weight] (wdma.south) -- (wb.north);
+% wgt_buffer → mac_array
+\draw[flow weight] (wb.south) -- (mac.north)
+    node[edge label, midway, right=1pt] {16$\times$INT8};
+% rdma_ctrl → ofb_writer (bias / shortcut 注入)
+\draw[flow] (rdma.south) -- ++(0,-2.4) -| ($(ofb.north)+(-0.6,0)$)
+    node[edge label, pos=0.9, left=1pt] {bias/sc};
+% ofb_writer → odma_ctrl (S2MM 上行)
+\draw[flow data] (ofb.north) -- ($(ofb.north)+(0,0.6)$) -| (odma.south)
+    node[edge label, pos=0.8, right=1pt] {row};
+
+% =============================================================================
+% Layer 5: sequencer + cfg_regs (底部控制层)
+% =============================================================================
+\node[section title] at (-7.5, -0.6) {Cfg / Sequencer};
+
+\node[seq box] (seq) at (7.5, -2.6) {sequencer};
+\node[label tiny, anchor=north] at (seq.south) {desc $\to$ CFG\_WRITE};
+\node[cfg bar] (cfg) at (-0.25, -2.6) {cfg\_regs};
+\node[label tiny, anchor=south] at (cfg.north) {50+ regs};
+
+% sequencer → cfg_regs (CFG_WRITE, 强调红)
+\draw[flow accent] (seq.west) -- (cfg.east)
+    node[edge label, midway, above=1pt, text=coAccent] {CFG\_WRITE};
+
+% Host AXI-Lite 入 cfg_regs (左侧)
+\draw[flow] (-8.0, -2.6) -- (cfg.west)
+    node[edge label, pos=0.4, above=1pt] {Host AXI-Lite};
+
+% cfg → 主流水 4 模块 (向上虚线 broadcast)
+\foreach \n in {lb, mac, parf, ofb}{
+    \draw[flow dashed] (cfg.north -| \n.south) -- ($(\n.south)+(0,-0.6)$);
+}
+% 第 5 条 broadcast 到 wgt_buffer (经 mac 路径间接, 简化省略)
+
+% =============================================================================
+% 图例 (右上, 不占主流水空间)
+% =============================================================================
+\node[legend box, anchor=north east] at (8.5, 6.5) {%
+\begin{tabular}{@{}l@{\ \ }l@{}}
+\tikz\draw[flow data] (0,0) -- (5mm,0); & activation \\
+\tikz\draw[flow weight] (0,0) -- (5mm,0); & weight \\
+\tikz\draw[flow psum] (0,0) -- (5mm,0); & psum \\
+\tikz\draw[flow] (0,0) -- (5mm,0); & control \\
+\tikz\draw[flow dashed] (0,0) -- (5mm,0); & cfg broadcast \\
+\tikz\draw[flow accent] (0,0) -- (5mm,0); & push / CFG\_WRITE \\
+\end{tabular}%
+};
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,47 @@
+% =============================================================================
+% algo3-1-fsm.tex --- 算法 3.1 核内 6 级嵌套自循环 FSM 主循环
+% 渲染: 用 paper/figures-rendered/render_algorithms.py 或直接 xelatex
+% 命名: cs / yout / tile / cins / round / pos —— 与 paper.md §3.4 一致
+% =============================================================================
+\documentclass[border=4pt,varwidth=18cm]{standalone}
+
+\usepackage{amsmath}
+\usepackage{xeCJK}
+% 中文：Microsoft YaHei（保持原配置）；英文：Times New Roman
+\setCJKmainfont{Microsoft YaHei}
+\setCJKsansfont{Microsoft YaHei}
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+
+\usepackage{xcolor}
+\definecolor{kw}{HTML}{1f4e79}
+\definecolor{cmtcol}{HTML}{404040}
+
+\usepackage[linesnumbered,vlined,boxruled]{algorithm2e}
+\DontPrintSemicolon
+
+\begin{document}
+\begin{algorithm}[H]
+{\bfseries 输入：} 核内配置寄存器 cfg\_regs（含 $K$、stride、$C_\text{in}$、$C_\text{out}$、$H_\text{out}$、$W_\text{out}$、$n_\text{cs}$、$n_\text{tile}$、$n_\text{cins}$ 等字段，host 通过 AXI-Lite 一次性写入）\;
+{\bfseries 输出：} 输出特征缓冲 OFB 写完成信号 ofm\_done\;
+\BlankLine
+初始化全部 counter 归零，FSM 进入运行态\;
+\For{$cs \leftarrow 0$ \KwTo $n_\text{cs} - 1$}{%
+  \For{$y_\text{out} \leftarrow 0$ \KwTo $H_\text{out} - 1$}{%
+    \For{$tile \leftarrow 0$ \KwTo $n_\text{tile} - 1$}{%
+      \For{$cins \leftarrow 0$ \KwTo $n_\text{cins} - 1$}{%
+        \For{$round \leftarrow 0$ \KwTo $K^2 - 1$}{%
+          \For{$pos \leftarrow 0$ \KwTo $\text{tile\_w} - 1$}{%
+            发射 1 拍 MAC：$16 \times 16$ PE 阵列从 ARF / WRF 取数全并行计算\;
+          }
+        }
+        cin\_slice 累加完成，部分和写入 PARF$[cs, tile]$\;
+      }
+      触发 SDP 后处理：偏置加 $\rightarrow$ 量化移位 $\rightarrow$ 饱和到 INT8 $\rightarrow$ 写 OFB\;
+    }
+  }
+}
+\BlankLine
+{\bfseries 返回：} ofm\_done\;
+\end{algorithm}
+\end{document}

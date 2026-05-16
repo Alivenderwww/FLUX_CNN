@@ -1,0 +1,184 @@
+% =============================================================================
+% fig4-5-wgt-buffer.tex --- 图 4.5 权重缓存模块 (§4.6)
+%
+% v5.1 修订:
+%   - 用户反馈: "右上/右下空白"
+%   - 修订要点: 紧凑化; WB (左) + WRF (中) + MAC array 接口 (右);
+%               中间填充处放 WB->WRF round-chunk 分块示意 (多块 WRF 切片轮转)
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    blk box/.style={
+        draw=coAnno, line width=0.8pt, rounded corners=2pt,
+        fill=flBlue, align=center, inner sep=3pt,
+        font=\sffamily\small\bfseries,
+    },
+    sram cell/.style={
+        draw=coAnno, line width=0.3pt, rectangle,
+        minimum width=2.8mm, minimum height=2.8mm,
+        inner sep=0pt, fill=flGray,
+    },
+    wrf col/.style={
+        draw=coAnno, line width=0.4pt, rectangle,
+        minimum width=3.0mm, minimum height=11mm,
+        inner sep=0pt, fill=flYellow,
+    },
+    chunk box/.style={
+        draw=coAccent, line width=0.6pt, rounded corners=1pt,
+        fill={rgb,255:red,255;green,235;blue,235},
+        minimum width=14mm, minimum height=5mm,
+        inner sep=0pt, align=center,
+        font=\sffamily\scriptsize,
+    },
+    side note/.style={
+        font=\sffamily\scriptsize, text=coAnno, align=left,
+    },
+    cnt box/.style={
+        draw=coAnno, line width=0.5pt, rounded corners=1pt,
+        fill=flGreen, align=center, inner sep=2pt,
+        font=\sffamily\scriptsize,
+    },
+    flow/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.0pt, draw=coAnno,
+    },
+    flow data/.style={
+        -{Stealth[length=3mm,width=2mm]},
+        line width=1.1pt, draw=coBaseline,
+    },
+]
+
+% =============================================================================
+% 输入 from wdma_ctrl (顶部)
+% =============================================================================
+\node[blk box, fill=flGray] (wdma) at (0, 5.5) {from wdma\_ctrl};
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=west]
+    at ($(wdma.east)+(1mm,0)$)
+    {MM2S, full layer};
+
+% =============================================================================
+% WB SRAM (左侧大方块)
+% =============================================================================
+\node[blk box, minimum width=42mm, minimum height=46mm,
+      fill=white] (wb) at (0, 2.0) {};
+\node[font=\sffamily\small\bfseries, anchor=north]
+    at ($(wb.north)+(0,-1mm)$)
+    {WB SRAM};
+\node[font=\sffamily\scriptsize, anchor=north]
+    at ($(wb.north)+(0,-5mm)$)
+    {1024 word};
+
+% 内部 8x12 cell 阵列
+\foreach \r in {0,1,...,7} {
+    \foreach \c in {0,1,...,11} {
+        \node[sram cell] at (-1.65+\c*0.30, 1.6-\r*0.30) {};
+    }
+}
+\node[font=\sffamily\scriptsize\itshape, anchor=south]
+    at ($(wb.south)+(0,1mm)$)
+    {entire layer's weights};
+
+\draw[flow data] (wdma.south) -- (wb.north);
+
+% =============================================================================
+% 中间: WB -> WRF round-chunk 分块示意 (4 chunks 轮转)
+% =============================================================================
+\node[font=\sffamily\scriptsize\bfseries, text=coAnno]
+    at (4.5, 4.6) {round-chunk 轮转};
+
+\foreach \i/\lbl in {0/chunk 0, 1/chunk 1, 2/chunk 2, 3/chunk 3} {
+    \node[chunk box] at (4.5, 4.0-\i*0.7) {\lbl};
+}
+
+% 红色箭头表示轮转: chunk0 -> WRF 装载
+\draw[-{Stealth[length=2.4mm,width=1.6mm]}, line width=0.9pt, draw=coAccent]
+    (3.7, 4.0) -- (3.1, 3.0);
+\node[font=\sffamily\scriptsize\itshape, text=coAccent, anchor=west]
+    at (3.0, 4.3) {1 cout\_slice};
+
+\draw[flow data] (wb.east) -- ++(0.5, 0) |- (4.5+0.7, 4.0);
+
+% =============================================================================
+% WRF (中右, 32 entries x 16 cols)
+% =============================================================================
+\node[blk box, minimum width=58mm, minimum height=28mm,
+      fill=white] (wrf) at (9.5, 1.8) {};
+\node[font=\sffamily\small\bfseries, anchor=north]
+    at ($(wrf.north)+(0,-1mm)$)
+    {WRF};
+\node[font=\sffamily\scriptsize, anchor=north]
+    at ($(wrf.north)+(0,-5mm)$)
+    {32 entries $\times$ 16 cols};
+
+% 16 列竖条
+\foreach \c in {0,1,...,15} {
+    \node[wrf col] at (7.2+\c*0.32, 1.5) {};
+}
+
+\node[font=\sffamily\scriptsize\itshape, anchor=south]
+    at ($(wrf.south)+(0,1mm)$)
+    {1 cout\_slice, reused};
+
+% chunk -> WRF 装载箭头
+\draw[flow data] (5.4, 2.6) -- (7.0, 2.6);
+
+% =============================================================================
+% MAC array 接口 (右侧, 16 cols 广播)
+% =============================================================================
+\node[blk box, minimum width=22mm, minimum height=36mm,
+      fill=flGray] (mac) at (14.5, 2.0) {};
+\node[font=\sffamily\small\bfseries, anchor=north]
+    at ($(mac.north)+(0,-1mm)$)
+    {MAC array};
+\node[font=\sffamily\scriptsize, anchor=north]
+    at ($(mac.north)+(0,-5mm)$)
+    {16$\times$16 PE};
+
+% 4x4 简化 PE 网格 (示意)
+\foreach \r in {0,1,2,3} {
+    \foreach \c in {0,1,2,3} {
+        \node[draw=coAnno, line width=0.3pt, rectangle,
+              minimum width=3mm, minimum height=3mm,
+              inner sep=0pt, fill=flBlue]
+            at (13.8+\c*0.36, 1.7-\r*0.36) {};
+    }
+}
+
+% WRF -> MAC 16 cols broadcast
+\draw[flow data, line width=1.3pt]
+    (wrf.east) -- (mac.west);
+\node[font=\sffamily\scriptsize\bfseries, text=coBaseline,
+      fill=white, inner sep=1pt]
+    at (12.8, 2.4) {weight bcast \ 16 cols};
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, fill=white, inner sep=1pt]
+    at (12.8, 1.0) {no back-pressure};
+
+% =============================================================================
+% local counters (左下)
+% =============================================================================
+\node[cnt box] (cn) at (0, -1.6)
+    {local counters\\(c\_out, c\_in, $K_x$, $K_y$)};
+\draw[-{Stealth[length=2.4mm,width=1.6mm]}, line width=0.5pt, dashed,
+      draw=coAnno]
+    (cn.east) -- ++(1.2, 0)
+    node[font=\sffamily\scriptsize\itshape, anchor=west, text=coAnno]
+        {cfg: $K$, $C_{in}$, cout\_slice};
+
+% =============================================================================
+% 加载频次注 (右下, 填空白)
+% =============================================================================
+\node[font=\sffamily\scriptsize, text=coAnno, align=left, anchor=west,
+      draw=coAnno, line width=0.4pt, rounded corners=1pt, fill=flGreen,
+      inner sep=3pt]
+    at (8.0, -1.6)
+    {\textbf{加载频次}\\
+     WB: 1$\times$ per layer\\
+     WRF: 1$\times$ per cout\_slice\\
+     weights reused inside slice};
+
+\end{tikzpicture}
+\end{document}

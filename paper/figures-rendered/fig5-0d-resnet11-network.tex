@@ -1,0 +1,153 @@
+% =============================================================================
+% fig5-0d-resnet11-network.tex --- 图 5.0d ResNet11 网络结构 (§5.3.4)
+%
+% 设计稿: paper/workspace/figures/fig5-0d-resnet11-network.md
+% 论证作用: 11 层 ResNet11 横向拓扑, 4 色编码 (Patch/Main/Downsample/FC),
+%           3 条残差短路虚线弧. 6+5 两行布局.
+% =============================================================================
+\documentclass[border=4pt]{standalone}
+\input{_tikz-style.tex}
+
+\begin{document}
+\begin{tikzpicture}[
+    every node/.style={font=\sffamily\footnotesize},
+    layer box/.style={
+        draw=coAnno, line width=0.6pt, rectangle, rounded corners=1pt,
+        minimum width=22mm, minimum height=18mm,
+        align=center, font=\sffamily\scriptsize\bfseries,
+        inner sep=1pt,
+    },
+    L input/.style={layer box, fill=flGray, text=coAnno},
+    L patch/.style={layer box, fill=coThird, text=white},
+    L main/.style={layer box, fill=coBaseline, text=white},
+    L ds/.style={layer box, fill=coImproved, text=white},
+    L fc/.style={layer box, fill=coAnno, text=white},
+    arrow/.style={
+        -{Stealth[length=2mm,width=1.4mm]},
+        line width=0.6pt, draw=coAnno,
+    },
+    residual/.style={
+        -{Stealth[length=2.4mm,width=1.6mm]},
+        line width=1.2pt, draw=coAccent, dashed,
+    },
+    merge plus/.style={
+        draw=coAccent, line width=1pt, circle,
+        fill=white, inner sep=0pt, minimum size=4mm,
+        font=\sffamily\scriptsize\bfseries, text=coAccent,
+    },
+    res lbl/.style={
+        font=\sffamily\scriptsize\itshape\bfseries,
+        text=coAccent, fill=white, inner sep=1pt,
+    },
+]
+
+% =============================================================================
+% 顶部标题
+% =============================================================================
+\node[font=\sffamily\small\bfseries, text=coAnno, anchor=north west]
+    at (-0.3, 6.6) {ResNet11 网络结构 / ResNet11 network architecture};
+
+% =============================================================================
+% 第 1 行: Input -> Patch -> Main1 -> Main2 -> DS1 -> Main3
+% y = 4.0, x from 0.0 step 2.6
+% =============================================================================
+\def\rowy{4.0}
+\node[L input] (n0) at (0.0, \rowy) {Input\\---\\$4{\to}4$\\540$\times$960};
+\node[L patch] (n1) at (2.6, \rowy) {Patch\\K=4, s=4\\$4{\to}16$\\135$\times$240};
+\node[L main]  (n2) at (5.2, \rowy) {Main 1\\K=3, s=2\\$16{\to}16$\\68$\times$120};
+\node[L main]  (n3) at (7.8, \rowy) {Main 2\\K=3, s=1\\$16{\to}16$\\68$\times$120};
+\node[L ds]    (n4) at (10.4,\rowy) {DS 1\\K=1, s=2\\$16{\to}16$\\34$\times$60};
+\node[L main]  (n5) at (13.0,\rowy) {Main 3\\K=3, s=2\\$16{\to}32$\\34$\times$60};
+
+\draw[arrow] (n0.east) -- (n1.west);
+\draw[arrow] (n1.east) -- (n2.west);
+\draw[arrow] (n2.east) -- (n3.west);
+\draw[arrow] (n3.east) -- (n4.west);
+% n4 → m1 (DS 1 输出进入加号) → n5；见 Residual 段
+
+% 行末转下行的下弯箭头
+\draw[arrow]
+    (n5.east) -- ++(0.5,0)
+    -- ++(0,-2.2)
+    -- ++(-13.0,0)
+    -- ++(0,-0.6)
+    -- node[edge label, midway, fill=white]{} ($(0.0,\rowy-3.5)+(0,0)$);
+
+% =============================================================================
+% 第 2 行: Main4 -> DS2 -> Main5 -> Main6 -> DS3 -> FC
+% y = 0.5
+% =============================================================================
+\def\rowyB{0.5}
+\node[L main] (n6)  at (0.0, \rowyB) {Main 4\\K=3, s=1\\$32{\to}32$\\34$\times$60};
+\node[L ds]   (n7)  at (2.6, \rowyB) {DS 2\\K=1, s=2\\$16{\to}32$\\17$\times$30};
+\node[L main] (n8)  at (5.2, \rowyB) {Main 5\\K=3, s=2\\$32{\to}64$\\17$\times$30};
+\node[L main] (n9)  at (7.8, \rowyB) {Main 6\\K=3, s=1\\$64{\to}64$\\17$\times$30};
+\node[L ds]   (n10) at (10.4,\rowyB) {DS 3\\K=1, s=2\\$32{\to}64$\\9$\times$15};
+\node[L fc]   (n11) at (13.0,\rowyB) {FC\\---\\$256{\to}522$\\---};
+
+% n6 → m2 → n7 → n8 → n9 → m3 → n10 → n11；见 Residual 段
+
+% 行末向右出箭头标输出
+\draw[arrow] (n11.east) -- ++(0.8,0)
+    node[font=\sffamily\scriptsize\bfseries, text=coAnno, anchor=west, align=left]
+        {522 类\\classes};
+
+% =============================================================================
+% 3 条残差短路（深红虚线弧）
+% ResNet 标准: Main 1 → Main 2 是变换分支, DS 1 是 1×1 identity 投影分支,
+%             两者在 ⊕ 处汇合后送下一 Block.
+% 加号 m1/m2/m3 放在 DS 输出端 (DS 之后 Main 之前), 表示"主分支+identity 分支"汇合.
+% =============================================================================
+
+% 残差 1: n2 (Main 1) 输入侧 → 跳过 n3 n4 → 落到 n4 (DS 1) 输出端 ⊕ → n5 (Main 3)
+\node[merge plus] (m1) at ($(n4.east)+(0.6,0)$) {+};
+\draw[residual]
+    ($(n2.west)+(-0.3,0)$) -- ++(0,1.4)
+    -- ++(8.0,0)
+    -- (m1.north);
+\draw[arrow] (n4.east) -- (m1.west);
+\draw[arrow] (m1.east) -- (n5.west);
+\node[res lbl] at (8.0, 5.5) {Residual 1};
+
+% 残差 2: n6 (Main 4) 输入 → 跳过 → n7 (DS 2) 输出端 ⊕ → n8 (Main 5)
+\node[merge plus] (m2) at ($(n7.east)+(0.6,0)$) {+};
+\draw[residual]
+    ($(n6.west)+(-0.3,0)$) -- ++(0,1.4)
+    -- ++(3.5,0)
+    -- (m2.north);
+\draw[arrow] (n7.east) -- (m2.west);
+\draw[arrow] (m2.east) -- (n8.west);
+\node[res lbl] at (3.0, 2.0) {Residual 2};
+
+% 残差 3: n8 (Main 5) 输入 → 跳过 → n10 (DS 3) 输出端 ⊕ → n11 (FC)
+\node[merge plus] (m3) at ($(n10.east)+(0.6,0)$) {+};
+\draw[residual]
+    ($(n8.west)+(-0.3,0)$) -- ++(0,1.4)
+    -- ++(8.0,0)
+    -- (m3.north);
+\draw[arrow] (n8.east) -- (n9.west);
+\draw[arrow] (n9.east) -- (n10.west);
+\draw[arrow] (n10.east) -- (m3.west);
+\draw[arrow] (m3.east) -- (n11.west);
+\node[res lbl] at (8.0, 2.0) {Residual 3};
+
+% =============================================================================
+% 底部图例
+% =============================================================================
+\node[legend box, anchor=north] at (6.5, -1.4) {%
+\begin{tabular}{@{}c@{\ \ }l@{\quad}c@{\ \ }l@{\quad}c@{\ \ }l@{\quad}c@{\ \ }l@{}}
+\tikz\node[L patch, minimum width=4mm, minimum height=3mm]{}; & Patch (K=4, s=4) &
+\tikz\node[L main, minimum width=4mm, minimum height=3mm]{}; & Main (K=3 主路径) &
+\tikz\node[L ds, minimum width=4mm, minimum height=3mm]{}; & Downsample (K=1, s=2 短路) &
+\tikz\node[L fc, minimum width=4mm, minimum height=3mm]{}; & FC (全连接) \\
+\end{tabular}%
+};
+
+% 底部注释
+\node[font=\sffamily\scriptsize\itshape, text=coAnno, anchor=north, align=center]
+    at (6.5,-2.4)
+    {输入 540$\times$960$\times$4 $\to$ FC 输出 522 类; 空间分辨率递减, 通道数递增 \\
+     Input 540$\times$960$\times$4 $\to$ FC out 522 classes; spatial res decreases, channels increase};
+
+\end{tikzpicture}
+\end{document}

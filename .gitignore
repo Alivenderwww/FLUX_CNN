@@ -127,3 +127,17 @@ Syn/vd100_minimal/create_project.err
 Syn/vd100_minimal/.gen/
 Syn/vd100_minimal/.srcs/
 Syn/vd100_minimal/vd100_minimal_with_elf.pdi
+
+# paper/ 子目录: 精确 ignore 渲染产物 / 二进制 / 临时文件
+# 不用 `paper/` 整目录 ignore — paper.md 等已 tracked,
+# git 仍要递归扫 56 MB 渲染产物每次 stat, 性能炸
+paper/_archive/
+paper/figures-rendered/emf/
+paper/figures-rendered/pdf/
+paper/figures-rendered/png/
+paper/figures-rendered/svg/
+paper/figures-rendered/_test_minimal.*
+paper/figures-rendered/_depfin_ref/
+paper/workspace/.docx-media/
+paper/workspace/paper.docx
+paper/workspace/figures/*.png

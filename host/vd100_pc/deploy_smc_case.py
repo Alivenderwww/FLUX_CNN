@@ -32,19 +32,46 @@ import vd100_rpc
 from vd100_rpc import Vd100Rpc, NUM_CORES
 
 
-# SMC layout 常量 (跟 toolchain/run_multicore_chain.py 对齐)
-SMC_MEM_STRIDE        = 0x0100_0000
-SMC_IFM_OFM_BASE      = 0x0000_0000
-SMC_LAYER_DATA_OFFSET = 0x0008_0000
-SMC_WB_BASE           = 0x0080_0000
-SMC_LAYER_WB_OFFSET   = 0x0001_0000
-SMC_RDMA_BASE         = 0x0090_0000
-SMC_LAYER_RDMA_OFFSET = 0x0001_0000
-SMC_DESC_BASE         = 0x00A0_0000
-SMC_LAYER_DESC_OFFSET = 0x0001_0000
-SMC_INPUT_BASE        = 0x00D0_0000
-SMC_LAYER_INPUT_OFFSET = 0x0008_0000
-SMC_FINAL_OFM_BASE    = 0x00E0_0000
+# === F5: SMC layout 从 hardware/vd100.json 读 (废除 hardcode) ===
+# 加 toolchain 到 sys.path 以便 import HardwareConfig
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+_TOOLCHAIN_DIR = os.path.join(_PROJECT_ROOT, 'toolchain')
+if _TOOLCHAIN_DIR not in sys.path:
+    sys.path.insert(0, _TOOLCHAIN_DIR)
+
+try:
+    from hardware.hardware_cfg import HardwareConfig
+    _HW_PATH = os.environ.get('FLUX_HW_JSON',
+                              os.path.join(_TOOLCHAIN_DIR, 'hardware', 'vd100.json'))
+    _hw = HardwareConfig.load(_HW_PATH)
+    _r = _hw.deployment.regions
+    SMC_MEM_STRIDE         = _hw.deployment.smc_mem_stride
+    SMC_IFM_OFM_BASE       = _r.ifm_ofm_base
+    SMC_LAYER_DATA_OFFSET  = _r.layer_data_offset
+    SMC_WB_BASE            = _r.wb_base
+    SMC_LAYER_WB_OFFSET    = _r.layer_wb_offset
+    SMC_RDMA_BASE          = _r.rdma_base
+    SMC_LAYER_RDMA_OFFSET  = _r.layer_rdma_offset
+    SMC_DESC_BASE          = _r.desc_base
+    SMC_LAYER_DESC_OFFSET  = _r.layer_desc_offset
+    SMC_INPUT_BASE         = _r.input_base
+    SMC_LAYER_INPUT_OFFSET = _r.layer_input_offset
+    SMC_FINAL_OFM_BASE     = _r.final_ofm_base
+except Exception as _e:
+    # Fallback hardcode (硬件 JSON 缺失时)
+    print(f"[WARN] hardware.json load failed ({_e}); 用 hardcode 默认", file=sys.stderr)
+    SMC_MEM_STRIDE        = 0x0100_0000
+    SMC_IFM_OFM_BASE      = 0x0000_0000
+    SMC_LAYER_DATA_OFFSET = 0x0008_0000
+    SMC_WB_BASE           = 0x0080_0000
+    SMC_LAYER_WB_OFFSET   = 0x0001_0000
+    SMC_RDMA_BASE         = 0x0090_0000
+    SMC_LAYER_RDMA_OFFSET = 0x0001_0000
+    SMC_DESC_BASE         = 0x00A0_0000
+    SMC_LAYER_DESC_OFFSET = 0x0001_0000
+    SMC_INPUT_BASE        = 0x00D0_0000
+    SMC_LAYER_INPUT_OFFSET = 0x0008_0000
+    SMC_FINAL_OFM_BASE    = 0x00F0_0000
 
 NUM_COL = 16   # mac_array 列数 (= cout 并行度)
 WORD_BYTES = 16   # BUS_DATA_W=128 bit
@@ -87,7 +114,43 @@ def load_hex_file_words(path: str) -> list:
 
 # -------------------- meta 解析 --------------------
 def parse_meta(case_dir: str) -> dict:
-    """解析 multicore_meta.txt 成 dict, value 自动转 int / list / str."""
+    """优先读 manifest.json (Phase B), 回退老 multicore_meta.txt.
+    返回老格式 dict (兼容现有代码)."""
+    manifest_path = os.path.join(case_dir, 'manifest.json')
+    if os.path.exists(manifest_path):
+        return _parse_meta_from_manifest(manifest_path, case_dir)
+    return _parse_meta_legacy(case_dir)
+
+
+def _parse_meta_from_manifest(manifest_path: str, case_dir: str) -> dict:
+    """从 manifest.json 重建老 multicore_meta.txt 格式 dict (兼容当前 deploy 逻辑)."""
+    import json
+    with open(manifest_path, 'r', encoding='utf-8') as f:
+        m = json.load(f)
+    # 仍 fallback 老 meta 拿 SMC_* / DDR_* / LAYER_X_DIR 等老字段 (sim 兼容)
+    legacy = _parse_meta_legacy(case_dir) if os.path.exists(os.path.join(case_dir, 'multicore_meta.txt')) else {}
+    # manifest 字段映射回老 KV (host 用)
+    def _hex2int(v):
+        return int(v, 0) if isinstance(v, str) else int(v)
+    legacy['NUM_CORES']           = int(m['n_cores'])
+    legacy['NUM_LAYERS']          = int(m['n_layers'])
+    dep = m.get('deploy', {})
+    legacy['_DESC_LIST_BASE_PER_CORE'] = [_hex2int(v) for v in dep.get('desc_list_base_per_core', [])]
+    legacy['_DESC_COUNT_PER_CORE']     = list(dep.get('desc_count_per_core', []))
+    legacy['_FINAL_OFM_BASE']     = _hex2int(dep.get('final_ofm_base', 0))
+    # 每 (core, layer) DESC_BASE / DESC_COUNT (host poke_csr 用)
+    for layer in m['layers']:
+        for cid_str, smc in layer.get('smc_layout', {}).items():
+            cid = int(cid_str.split('_')[1]) if cid_str.startswith('core_') else int(cid_str)
+            li = int(layer['idx'])
+            legacy[f'CORE_{cid}_LAYER_{li}_DESC_BASE']  = _hex2int(smc['desc_base'])
+            legacy[f'CORE_{cid}_LAYER_{li}_DESC_COUNT'] = int(smc['desc_count'])
+    legacy['_manifest_source'] = manifest_path
+    return legacy
+
+
+def _parse_meta_legacy(case_dir: str) -> dict:
+    """旧版 multicore_meta.txt KV 文本解析."""
     path = os.path.join(case_dir, 'multicore_meta.txt')
     meta = {}
     with open(path, 'r') as f:
@@ -130,12 +193,15 @@ def load_ifb_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, globa
     读 chain_data/layerXX/ifb.txt → 按 SMC_LAYER_X_IFM_SEG_WIDTHS/STARTS 切散布到 mem[i].
     """
     ldir_key = f'LAYER_{layer_idx}_DIR'
+    fallback = os.path.join(case_dir, 'chain_data', f'layer{layer_idx:02d}')
     if ldir_key in meta and meta[ldir_key]:
         ldir = meta[ldir_key]
         if not os.path.isabs(ldir):
             ldir = os.path.join(case_dir, ldir)
+        if not os.path.isdir(ldir):
+            ldir = fallback   # case 移动后 meta 绝对路径失效, fallback
     else:
-        ldir = os.path.join(case_dir, 'chain_data', f'layer{layer_idx:02d}')
+        ldir = fallback
 
     ifb_words = load_hex_file_words(os.path.join(ldir, 'ifb.txt'))
     if not ifb_words:
@@ -148,13 +214,18 @@ def load_ifb_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, globa
     mode       = meta[f'SMC_LAYER_{layer_idx}_MODE']
 
     # base offset within each mem (跟 sim TB preload_ifb_smc 一致)
-    root_slot = meta.get(f'SMC_LAYER_{layer_idx}_ROOT_SLOT', -1)
-    if layer_idx == 0:
-        base_offset = SMC_INPUT_BASE
-    elif root_slot >= 0:
-        base_offset = SMC_INPUT_BASE + (root_slot + 1) * SMC_LAYER_INPUT_OFFSET
+    # 优先用 SMC_LAYER_X_IFB_OFFSET (新, 动态分配); fallback ROOT_SLOT × 固定 stride (老 case)
+    ifb_off_key = f'SMC_LAYER_{layer_idx}_IFB_OFFSET'
+    if ifb_off_key in meta and meta[ifb_off_key] >= 0:
+        base_offset = SMC_INPUT_BASE + meta[ifb_off_key]
     else:
-        return   # 非 root layer 不需 preload
+        root_slot = meta.get(f'SMC_LAYER_{layer_idx}_ROOT_SLOT', -1)
+        if layer_idx == 0:
+            base_offset = SMC_INPUT_BASE
+        elif root_slot >= 0:
+            base_offset = SMC_INPUT_BASE + (root_slot + 1) * SMC_LAYER_INPUT_OFFSET
+        else:
+            return   # 非 root layer 不需 preload
 
     if mode in ('A', 'C'):
         my_core = meta[f'SMC_LAYER_{layer_idx}_MODE_A_CORE']
@@ -169,7 +240,7 @@ def load_ifb_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, globa
         seg_starts = meta[f'SMC_LAYER_{layer_idx}_IFM_SEG_STARTS']
         if isinstance(seg_widths, int): seg_widths = [seg_widths]
         if isinstance(seg_starts, int): seg_starts = [seg_starts]
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             sw, ss = seg_widths[i], seg_starts[i]
             base = smc_addr(global_base, i, base_offset)
             # gather: r * sw * cs + x * cs + cs_idx ← src: r * w_in * cs + (ss+x) * cs + cs_idx
@@ -202,7 +273,7 @@ def load_wb_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, global
         kk = meta[f'SMC_LAYER_{layer_idx}_K'] ** 2
         cins = meta[f'SMC_LAYER_{layer_idx}_C_IN_SLICES']
         wb_per_cs = kk * cins   # 每 cs 占 wb-rows
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             my_cs_start = cs_starts[i] // NUM_COL
             my_cs_n = (cs_widths[i] + NUM_COL - 1) // NUM_COL
             my_wb_lo = my_cs_start * wb_per_cs
@@ -214,7 +285,7 @@ def load_wb_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, global
     else:
         # broadcast 整图
         buf = b''.join(wb_all_words[: n_words * 16])
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             base = smc_addr(global_base, i, SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET)
             rpc.load_ddr(base, buf)
         print(f"    WB[{layer_idx}] broadcast → 3 mem ({len(buf)/1024:.1f} KB)")
@@ -226,7 +297,7 @@ def load_rdma_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, glob
     # 优先 sliced
     any_sliced = False
     sliced_words = {}
-    for c in range(NUM_CORES):
+    for c in range(int(meta.get('NUM_CORES', NUM_CORES))):
         n_w = meta.get(f'CORE_{c}_LAYER_{layer_idx}_RDMA_WORDS', 0)
         if n_w > 0:
             any_sliced = True
@@ -252,7 +323,7 @@ def load_rdma_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, glob
             cs_widths = meta[f'SMC_LAYER_{layer_idx}_COUT_SEG_WIDTHS']
             if isinstance(cs_starts, int): cs_starts = [cs_starts]
             if isinstance(cs_widths, int): cs_widths = [cs_widths]
-            for i in range(NUM_CORES):
+            for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
                 my_cs_start = cs_starts[i] // NUM_COL
                 my_cs_n = (cs_widths[i] + NUM_COL - 1) // NUM_COL
                 base = smc_addr(global_base, i, SMC_RDMA_BASE + layer_idx * SMC_LAYER_RDMA_OFFSET)
@@ -260,7 +331,7 @@ def load_rdma_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, glob
                 rpc.load_ddr(base, buf)
         else:
             buf = b''.join(words[: n_words])
-            for i in range(NUM_CORES):
+            for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
                 base = smc_addr(global_base, i, SMC_RDMA_BASE + layer_idx * SMC_LAYER_RDMA_OFFSET)
                 rpc.load_ddr(base, buf)
         print(f"    RDMA[{layer_idx}] broadcast → 3 mem ({len(buf)/1024:.1f} KB)")
@@ -268,7 +339,7 @@ def load_rdma_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int, glob
 
 def load_desc_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int):
     """desc list per (core, layer)."""
-    for c in range(NUM_CORES):
+    for c in range(int(meta.get('NUM_CORES', NUM_CORES))):
         key_base = f'CORE_{c}_LAYER_{layer_idx}_DESC_BASE'
         key_count = f'CORE_{c}_LAYER_{layer_idx}_DESC_COUNT'
         if key_base not in meta or meta.get(key_count, 0) == 0:
@@ -283,7 +354,7 @@ def load_desc_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int):
 
 def load_sg_cmd_smc(rpc: Vd100Rpc, case_dir: str, meta: dict, layer_idx: int):
     """IDMA + ODMA SG cmd lists per (core, layer). 每 cmd 32 byte = 2 word."""
-    for c in range(NUM_CORES):
+    for c in range(int(meta.get('NUM_CORES', NUM_CORES))):
         for which in ('idma', 'odma'):
             key_base  = f'SMC_CORE_{c}_LAYER_{layer_idx}_{which.upper()}_CMD_BASE'
             key_count = f'SMC_CORE_{c}_LAYER_{layer_idx}_{which.upper()}_CMD_COUNT'
@@ -305,29 +376,34 @@ def build_layer_cfgs(meta: dict) -> list:
     cfgs = []
     for l in range(n_layers):
         base, count = [0]*NUM_CORES, [0]*NUM_CORES
-        for c in range(NUM_CORES):
+        for c in range(int(meta.get('NUM_CORES', NUM_CORES))):
             base [c] = meta.get(f'CORE_{c}_LAYER_{l}_DESC_BASE', 0)
             count[c] = meta.get(f'CORE_{c}_LAYER_{l}_DESC_COUNT', 0)
         cfgs.append({'desc_list_base': base, 'desc_count': count})
     return cfgs
 
 
-def read_ofm_smc(rpc: Vd100Rpc, meta: dict, layer_idx: int, global_base: int) -> bytes:
-    """读最后一层 OFM (整图, stitch 多核). layer 维度从 meta 取.
+def read_ofm_smc(rpc: Vd100Rpc, meta: dict, layer_idx: int, global_base: int,
+                 ofm_offset: int = None) -> bytes:
+    """读 layer_idx 的 OFM (整图, stitch 多核). layer 维度从 meta 取.
     返回 NHWC int8 byte stream, len = h_out × w_out × c_out.
+
+    ofm_offset: 该层 OFM 在每个 mem 内的偏移. 默认 None = SMC_FINAL_OFM_BASE (最后一层).
+                中间层用 SMC_IFM_OFM_BASE + layer_idx * SMC_LAYER_DATA_OFFSET.
     """
+    if ofm_offset is None:
+        ofm_offset = SMC_FINAL_OFM_BASE
     h_out = meta[f'LAYER_{layer_idx}_H_OUT']
     w_out = meta[f'LAYER_{layer_idx}_W_OUT']
     c_out = meta[f'LAYER_{layer_idx}_C_OUT']
     cout_slices = (c_out + NUM_COL - 1) // NUM_COL
     mode = meta[f'SMC_LAYER_{layer_idx}_MODE']
 
-    # 最后一层 OFM 在 SMC_FINAL_OFM_BASE
     out = bytearray(h_out * w_out * c_out)
 
     if mode == 'A':
         my_core = meta[f'SMC_LAYER_{layer_idx}_MODE_A_CORE']
-        base = smc_addr(global_base, my_core, SMC_FINAL_OFM_BASE)
+        base = smc_addr(global_base, my_core, ofm_offset)
         n_words = h_out * w_out * cout_slices
         raw = rpc.read_ddr(base, n_words * WORD_BYTES)
         # NHWC layout: r * w * cs + x * cs + cs_idx
@@ -345,10 +421,10 @@ def read_ofm_smc(rpc: Vd100Rpc, meta: dict, layer_idx: int, global_base: int) ->
         cs_widths = meta[f'SMC_LAYER_{layer_idx}_COUT_SEG_WIDTHS']
         if isinstance(cs_starts, int): cs_starts = [cs_starts]
         if isinstance(cs_widths, int): cs_widths = [cs_widths]
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             my_cs_start = cs_starts[i] // NUM_COL
             my_cs_n = (cs_widths[i] + NUM_COL - 1) // NUM_COL
-            base = smc_addr(global_base, i, SMC_FINAL_OFM_BASE)
+            base = smc_addr(global_base, i, ofm_offset)
             n_words = h_out * w_out * my_cs_n
             raw = rpc.read_ddr(base, n_words * WORD_BYTES)
             for r in range(h_out):
@@ -365,9 +441,9 @@ def read_ofm_smc(rpc: Vd100Rpc, meta: dict, layer_idx: int, global_base: int) ->
         seg_starts = meta[f'SMC_LAYER_{layer_idx}_OFM_SEG_STARTS']
         if isinstance(seg_widths, int): seg_widths = [seg_widths]
         if isinstance(seg_starts, int): seg_starts = [seg_starts]
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             sw, ss = seg_widths[i], seg_starts[i]
-            base = smc_addr(global_base, i, SMC_FINAL_OFM_BASE)
+            base = smc_addr(global_base, i, ofm_offset)
             n_words = h_out * sw * cout_slices
             raw = rpc.read_ddr(base, n_words * WORD_BYTES)
             for r in range(h_out):
@@ -388,12 +464,16 @@ def load_expected_ofm(case_dir: str, meta: dict, layer_idx: int) -> bytes:
     c_out = meta[f'LAYER_{layer_idx}_C_OUT']
     cout_slices = (c_out + NUM_COL - 1) // NUM_COL
     ldir_key = f'LAYER_{layer_idx}_DIR'
+    fallback = os.path.join(case_dir, 'chain_data', f'layer{layer_idx:02d}')
     if ldir_key in meta and meta[ldir_key]:
         ldir = meta[ldir_key]
         if not os.path.isabs(ldir):
             ldir = os.path.join(case_dir, ldir)
+        # case 被移动后, meta 里的绝对路径可能失效, fallback 到 case_dir/chain_data/
+        if not os.path.isdir(ldir):
+            ldir = fallback
     else:
-        ldir = os.path.join(case_dir, 'chain_data', f'layer{layer_idx:02d}')
+        ldir = fallback
     words = load_hex_file_words(os.path.join(ldir, 'expected_ofm.txt'))
     out = bytearray(h_out * w_out * c_out)
     for r in range(h_out):
@@ -527,7 +607,7 @@ def _load_ifb_override(rpc: Vd100Rpc, ifm: bytes, meta: dict, global_base: int):
         if isinstance(seg_widths, int): seg_widths = [seg_widths]
         if isinstance(seg_starts, int): seg_starts = [seg_starts]
         # gather per-mem
-        for i in range(NUM_CORES):
+        for i in range(int(meta.get('NUM_CORES', NUM_CORES))):
             sw, ss = seg_widths[i], seg_starts[i]
             base = smc_addr(global_base, i, SMC_INPUT_BASE)
             buf = bytearray()

@@ -19,7 +19,7 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLCHAIN_DIR = os.path.dirname(_SCRIPT_DIR)
 if _TOOLCHAIN_DIR not in sys.path:
     sys.path.insert(0, _TOOLCHAIN_DIR)
-import compile_layer     # noqa: E402
+from backend import data_emit as compile_layer     # noqa: E402
 
 CKPTS_DIR = os.path.join(_SCRIPT_DIR, "ckpts")
 

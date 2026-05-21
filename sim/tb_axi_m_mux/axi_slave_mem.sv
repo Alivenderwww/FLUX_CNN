@@ -14,7 +14,16 @@ module axi_slave_mem #(
     parameter int ADDR_W = 32,
     parameter int DATA_W = 128,
     parameter int ID_W   = 4,
-    parameter int DEPTH  = 1024      // 单位 = DATA_W-bit word
+    parameter int DEPTH  = 1024,     // 单位 = DATA_W-bit word
+    // 模拟真实 NoC + DDR latency. AR/AW fire 后随机 wait [MIN..MAX] cycle.
+    // MAX=0 = 原 0-cycle 立刻响应 (跟 sim 历史行为一致).
+    parameter int AR_LATENCY_MIN = 0,
+    parameter int AR_LATENCY_MAX = 0,
+    parameter int AW_LATENCY_MIN = 0,
+    parameter int AW_LATENCY_MAX = 0,
+    parameter int R_GAP_MIN      = 0,   // R burst 中间每拍随机插 gap (NoC 突发抖动)
+    parameter int R_GAP_MAX      = 0,
+    parameter int RANDOM_SEED    = 32'h12345
 )(
     input  logic                clk,
     input  logic                rstn,
@@ -100,15 +109,26 @@ module axi_slave_mem #(
     end
 
     // ---- 读通道 ----
-    typedef enum logic [1:0] { RS_IDLE, RS_DATA } rst_t;
+    typedef enum logic [1:0] { RS_IDLE, RS_WAIT, RS_DATA } rst_t;
     rst_t rst_s;
     logic [ID_W-1:0]   rid_latch;
     logic [AIDX_W-1:0] rptr;
     logic [7:0]        rremain;
     logic              rlast_pending;
+    logic [15:0]       r_wait_cnt;  // latency counter
+
+    // R burst 中间随机插入 gap (RVALID gating)
+    logic [15:0] r_gap_cnt;
+    logic        r_gap_active;
+    int          r_seed = RANDOM_SEED;
+
+    function automatic int rand_range(input int lo, input int hi);
+        if (hi <= lo) return lo;
+        return lo + ($random(r_seed) & 32'h7FFFFFFF) % (hi - lo + 1);
+    endfunction
 
     assign ARREADY = (rst_s == RS_IDLE);
-    assign RVALID  = (rst_s == RS_DATA);
+    assign RVALID  = (rst_s == RS_DATA) && !r_gap_active;
     assign RID     = rid_latch;
     assign RDATA   = mem[rptr];
     assign RRESP   = 2'b00;
@@ -121,14 +141,31 @@ module axi_slave_mem #(
             rptr          <= '0;
             rremain       <= '0;
             rlast_pending <= 1'b0;
+            r_wait_cnt    <= '0;
+            r_gap_cnt     <= '0;
+            r_gap_active  <= 1'b0;
         end else begin
+            // R gap: 每拍 R 握手后概率插 gap
+            if (r_gap_active) begin
+                if (r_gap_cnt == 16'd0) r_gap_active <= 1'b0;
+                else                     r_gap_cnt   <= r_gap_cnt - 16'd1;
+            end
             case (rst_s)
                 RS_IDLE: if (ARVALID && ARREADY) begin
                     rid_latch     <= ARID;
                     rptr          <= ARADDR[BYTE_OFS+AIDX_W-1 : BYTE_OFS];
                     rremain       <= ARLEN;
                     rlast_pending <= (ARLEN == 8'd0);
-                    rst_s         <= RS_DATA;
+                    if (AR_LATENCY_MAX == 0) begin
+                        rst_s     <= RS_DATA;
+                    end else begin
+                        r_wait_cnt <= rand_range(AR_LATENCY_MIN, AR_LATENCY_MAX)[15:0];
+                        rst_s     <= RS_WAIT;
+                    end
+                end
+                RS_WAIT: begin
+                    if (r_wait_cnt == 16'd0) rst_s <= RS_DATA;
+                    else                     r_wait_cnt <= r_wait_cnt - 16'd1;
                 end
                 RS_DATA: if (RVALID && RREADY) begin
                     if (rlast_pending) begin
@@ -138,6 +175,11 @@ module axi_slave_mem #(
                         rptr          <= rptr + 1;
                         rremain       <= rremain - 1;
                         rlast_pending <= (rremain == 8'd1);
+                        // burst 中间随机插 gap 模拟 NoC 突发抖动
+                        if (R_GAP_MAX > 0) begin
+                            r_gap_cnt    <= rand_range(R_GAP_MIN, R_GAP_MAX)[15:0];
+                            r_gap_active <= 1'b1;
+                        end
                     end
                 end
                 default: rst_s <= RS_IDLE;

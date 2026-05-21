@@ -179,15 +179,16 @@ module ofb_writer #(
     // Shortcut Bank SRAM 同步读: 周期 N 发 sb_re, 周期 N+1 sb_rdata 有效.
     // SDP 流水化 (J-3): mult 进 DSP48 input register (1-cycle), 输出在 N+2 拍 valid.
     //
-    // Stage 0 (cycle N):   acc_fire → 拉 shortcut (sb_raddr = sb_ptr).
-    //                       counters 推进, 算 evt_fire_cs_wrap.
-    // Stage 1 (cycle N+1): pipe_valid + pipe_psum/bias/ofb_waddr/evt_cs_wrap latch.
-    //                       sb_rdata 到达, SDP 输入 (psum, bias, shortcut, valid).
-    //                       SDP 内部 stage1 latch (prod_d, shortcut_d, valid_d).
-    // Stage 2 (cycle N+2): SDP.valid_out=1, ofm_data 组合输出.
-    //                       pipe2_ofb_waddr / pipe2_evt_cs_wrap 跟 valid_out 同拍 align.
-    //                       ofb_we = SDP.valid_out, ofb_wdata = sdp_out, OFB 写.
-    //                       row_done_pulse = pipe2_evt_cs_wrap & SDP.valid_out.
+    // Stage 0 (cycle N):    acc_fire → 拉 shortcut (sb_raddr = sb_ptr).
+    //                        counters 推进, 算 evt_fire_cs_wrap.
+    // Stage 1 (cycle N+1):  pipe_valid + pipe_psum/bias/ofb_waddr/evt_cs_wrap latch.
+    //                        sb_rdata 到达, SDP 输入 (psum, bias, shortcut, valid).
+    //                        SDP 内 stage 0a latch (biased_d = psum + bias).
+    // Stage 2 (cycle N+2):  pipe2 latch.  SDP 内 stage 1 latch (prod_d = biased_d * mult_d).
+    // Stage 3 (cycle N+3):  pipe3 latch.  SDP 内 stage 2a latch (q_zp_d).
+    // Stage 4 (cycle N+4):  pipe4 latch.  SDP.valid_out=1, ofm_data 组合输出.
+    //                        ofb_we = SDP.valid_out, ofb_wdata = sdp_out, OFB 写.
+    //                        row_done_pulse = pipe4_evt_cs_wrap & SDP.valid_out.
     // =========================================================================
     logic                                 pipe_valid;
     logic signed [NUM_COL*PSUM_WIDTH-1:0] pipe_psum;
@@ -277,7 +278,21 @@ module ofb_writer #(
 
     // =========================================================================
     // SDP (组合, 在 Stage 1 用 latched 数据 + 这拍到达的 sb_rdata)
+    //
+    // 2026-05-18 Timing fix: cfg_sdp_mult 在 ofb_writer 内 latch 一拍后送 SDP.
+    //   原因: SDP 内的 mult input register (mult_d) 被 Vivado retiming 跟
+    //   cfg_regs.r_sdp_mult merge 删掉, critical path 还是 cfg_regs → SDP DSP
+    //   18-22 logic levels. 在 ofb_writer 内 latch + KEEP attribute 强制保留
+    //   register, retime 后能进 DSP58 input reg, 切短 routing.
+    //   mult / shift 都是 layer-stable cfg, 1 拍延迟跟数据 align 无关.
     // =========================================================================
+    (* keep = "true" *) logic signed [31:0] cfg_sdp_mult_d;
+    (* keep = "true" *) logic [5:0]         cfg_sdp_shift_d;
+    always_ff @(posedge clk) begin
+        cfg_sdp_mult_d  <= cfg_sdp_mult;
+        cfg_sdp_shift_d <= cfg_sdp_shift;
+    end
+
     logic [NUM_COL*DATA_WIDTH-1:0] sdp_out;
 
     logic sdp_valid_out;
@@ -287,8 +302,8 @@ module ofb_writer #(
     ) u_sdp (
         .clk            (clk),
         .rst_n          (rst_n),
-        .shift_amt      (cfg_sdp_shift),
-        .mult           (cfg_sdp_mult),
+        .shift_amt      (cfg_sdp_shift_d),
+        .mult           (cfg_sdp_mult_d),
         .zp_out         (cfg_sdp_zp_out),
         .clip_min       (cfg_sdp_clip_min),
         .clip_max       (cfg_sdp_clip_max),
@@ -306,36 +321,42 @@ module ofb_writer #(
     );
 
     // =========================================================================
-    // Sideband pipeline (跟 SDP 内部 valid_d → valid_dd → valid_out lockstep)
-    //   SDP J-4 内部 3-stage (input → stage1 → stage2a latch → stage2b out),
-    //   即 pipe_valid 后过 2 拍 sdp_valid_out 才 high. sideband 也加 2 级 latch:
+    // Sideband pipeline (跟 SDP 内部 valid_b → valid_d → valid_dd → valid_out lockstep)
+    //   SDP 内部 4-stage (input → 0a/biased → 1/prod → 2a/q_zp → 2b out, 3 cycle latency).
+    //   即 pipe_valid 后过 3 拍 sdp_valid_out 才 high. sideband 加 3 级 latch:
     //     pipe   (Stage 0→1, 已有)
-    //     pipe2  (Stage 1→2 latch, 跟 SDP.valid_d 同拍)
-    //     pipe3  (Stage 2→2b latch, 跟 SDP.valid_dd / valid_out 同拍)
+    //     pipe2  (跟 SDP.valid_b 同拍)
+    //     pipe3  (跟 SDP.valid_d 同拍)
+    //     pipe4  (跟 SDP.valid_dd / valid_out 同拍)
     //   valid=0 时 sideband 不被消费 (ofb_we=0), 不需要 reset.
+    //   2026-05-18: 加 pipe4 跟 SDP stage 0a (biased latch) 同步.
     // =========================================================================
     logic [ADDR_W-1:0]  pipe3_ofb_waddr;
     logic               pipe3_evt_cs_wrap;
+    logic [ADDR_W-1:0]  pipe4_ofb_waddr;
+    logic               pipe4_evt_cs_wrap;
     always_ff @(posedge clk) begin
         pipe2_ofb_waddr   <= pipe_ofb_waddr;
         pipe2_evt_cs_wrap <= pipe_evt_cs_wrap;
         pipe3_ofb_waddr   <= pipe2_ofb_waddr;
         pipe3_evt_cs_wrap <= pipe2_evt_cs_wrap;
+        pipe4_ofb_waddr   <= pipe3_ofb_waddr;
+        pipe4_evt_cs_wrap <= pipe3_evt_cs_wrap;
     end
 
     // =========================================================================
     // OFB 写 (Stage 2b 出, 用 SDP.valid_out + pipe3_* sideband)
     // =========================================================================
     assign ofb_we    = sdp_valid_out;
-    assign ofb_waddr = pipe3_ofb_waddr[AW-1:0];
+    assign ofb_waddr = pipe4_ofb_waddr[AW-1:0];
     assign ofb_wdata = sdp_out;
 
     // =========================================================================
     // 三段式 FSM
     // =========================================================================
-    // SDP pipeline (J-4): SDP 内部 3-stage (input → stage1 latch → stage2a latch → stage2b out).
-    // ofb_writer 自身 1-stage (Stage 0→1 latch) + SDP 2-stage = 总 3 stage, max in_flight=3.
-    // in_flight 跟踪 Stage 0..2b 内 valid 数, 让 S_FLUSH 等 drain.
+    // SDP pipeline (2026-05-18): SDP 内部 4-stage (input → 0a/biased → 1/prod → 2a/q_zp → 2b out,
+    //   3 cycle latency).  ofb_writer 自身 1-stage (Stage 0→1 latch) + SDP 3-stage = 总 4 stage,
+    //   max in_flight=4. in_flight 跟踪 Stage 0..2b 内 valid 数, 让 S_FLUSH 等 drain. 3-bit 容 max=7, 够用.
     //   acc_fire (Stage 0 入)   → in_flight++
     //   sdp_valid_out (Stage 2b 出) → in_flight--
     logic [2:0] in_flight;
@@ -426,13 +447,13 @@ module ofb_writer #(
     //                   已经写到 OFB SRAM)
     //   rows_written:   累计 yout 数（控制路径，复位必须）
     // =========================================================================
-    assign row_done_pulse = pipe3_evt_cs_wrap && sdp_valid_out;
+    assign row_done_pulse = pipe4_evt_cs_wrap && sdp_valid_out;
 
     logic [15:0] r_rows_written;
     always_ff @(posedge clk) begin
         if      (!rst_n)                                 r_rows_written <= 16'd0;
         else if (evt_start)                              r_rows_written <= 16'd0;
-        else if (pipe3_evt_cs_wrap && sdp_valid_out)     r_rows_written <= r_rows_written + 16'd1;
+        else if (pipe4_evt_cs_wrap && sdp_valid_out)     r_rows_written <= r_rows_written + 16'd1;
         else                                             r_rows_written <= r_rows_written;
     end
     assign rows_written = r_rows_written;

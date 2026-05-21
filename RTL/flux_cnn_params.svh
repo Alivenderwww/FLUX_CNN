@@ -1,7 +1,7 @@
 // =============================================================================
 // flux_cnn_params.svh  --  自动生成, 不要手改
-// 来源: params.py (single source of truth)
-// 改完 params.py 跑 `python params.py` 重生成此文件.
+// 来源: hardware/*.json + toolchain/hardware/codegen.py
+// 改硬件参数: 改 hardware/vd100.json 后跑 `python -m toolchain.hardware.codegen`
 // =============================================================================
 
 `ifndef FLUX_CNN_PARAMS_SVH

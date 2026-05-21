@@ -672,16 +672,42 @@ def print_per_core_plan(per_core_plan: Dict[int, List[LayerStep]]) -> None:
 # 主入口: schedule 整网 → stages
 # ---------------------------------------------------------------------------
 def schedule(layers: List[Layer], n_cores: int,
-             force_multicore: bool = False) -> List[Stage]:
-    """force_multicore=True: BW-PoC 用, 让所有 layer 走多核 (无单核空转)."""
-    total_cycles = sum(l.cycles_estimate for l in layers)
-    target_per_core_cycles = total_cycles // n_cores
+             force_multicore: bool = False):
+    """返回 (stages, effective_n_cores).
 
-    stages = split_into_stages(layers, n_cores, target_per_core_cycles)
+    Auto-fallback: 若 n_cores>1 但某层 (W/cout 太小切不动) 必须 mode A 单核,
+    整网降为 n_cores=1 (避免 board axi_noc 跨 mem stitch AR/R 不平衡 bug).
+    """
+    effective_n_cores = n_cores
+    # 暂时性 fallback (2026-05-17): 板上 axi_noc 对小 btt (≤16 byte = 1 AXI beat)
+    # 跨 mem fetch 存在协议 bug → AR/R 不平衡. W slice 含 halo 1 列 + cin_slices=1 时
+    # halo cmd btt = 1×1×16 = 16 byte = 1 beat, 触发 hang.
+    # 检测到任何 layer 必须 mode A 时, 整网降 n_cores=1 避开 stitch + halo 同时出现.
+    # 待 BD axi_noc 升级或加 protocol_checker workaround 后解锁 layer-by-layer 异构.
+    # 详见 memory/axi_noc_small_btt_hang.md.
+    if n_cores > 1:
+        for l in layers:
+            mode, _ = choose_mode(l, n_cores,
+                                   target_per_core_cycles=10**9,
+                                   prefer_w_slice=True,
+                                   force_multicore=True)
+            if mode == Mode.A_SINGLE:
+                print(f"  [scheduler] layer '{l.name}' 必须 mode A 单核 "
+                      f"(W={l.w_in} c_out={l.c_out} 切不到 {n_cores} 核)")
+                effective_n_cores = 1
+                break
+        if effective_n_cores != n_cores:
+            print(f"  [scheduler] 降级 n_cores {n_cores} → 1 (axi_noc 小 btt 板级 bug, "
+                  f"详见 memory/axi_noc_small_btt_hang.md)")
+
+    total_cycles = sum(l.cycles_estimate for l in layers)
+    target_per_core_cycles = max(1, total_cycles // effective_n_cores)
+
+    stages = split_into_stages(layers, effective_n_cores, target_per_core_cycles)
     for stage in stages:
-        assign_cores_in_stage(stage, n_cores, target_per_core_cycles,
+        assign_cores_in_stage(stage, effective_n_cores, target_per_core_cycles,
                                force_multicore=force_multicore)
-    return stages
+    return stages, effective_n_cores
 
 
 def print_schedule(stages: List[Stage], n_cores: int) -> None:
@@ -816,5 +842,5 @@ if __name__ == '__main__':
     yolo_report = analyze(yolo_layers)
     print_analysis(yolo_report)
     for n in [2, 4, 8]:
-        stages = schedule(yolo_layers, n_cores=n)
+        stages, _ = schedule(yolo_layers, n_cores=n)
         print_schedule(stages, n_cores=n)

@@ -19,6 +19,15 @@
 `endif
 
 module tb_vd100_minimal;
+    // 模拟真实 NoC + DDR latency, 复现 board ring wrap bug.
+    // Random latency + R burst gap 模拟真 NoC 抖动 (sim 默认 0 cycle 是最佳情况)
+    parameter int AR_LATENCY_MIN = 0;
+    parameter int AR_LATENCY_MAX = 0;
+    parameter int AW_LATENCY_MIN = 0;
+    parameter int AW_LATENCY_MAX = 0;
+    parameter int R_GAP_MIN      = 0;
+    parameter int R_GAP_MAX      = 0;
+
     localparam logic [31:0] BRAM_BASE_ADDR = 32'hA4100000;
     localparam logic [31:0] DESC_BASE      = BRAM_BASE_ADDR + 32'h00000;
     // v9 fix: OFM_BASE_ADDR 从 macro 来 (= dynamic 算的 OFM offset), 不再 hardcode 0x30000
@@ -63,33 +72,34 @@ module tb_vd100_minimal;
     logic [1:0]   m_rresp;  logic m_rlast, m_rvalid, m_rready;
 
     // ========================================================================
-    // DUT: multicore_top_minimal_v (board 用的 RTL wrapper)
+    // DUT: multicore_top_n4_v (board 实际用 NUM_CORES=1)
     // ========================================================================
-    multicore_top_minimal_v u_dut (
+    multicore_top_n4_v u_dut (
         .clk(clk), .rst_n(rst_n),
 
-        .csr_axil_awaddr(csr_awaddr), .csr_axil_awvalid(csr_awvalid), .csr_axil_awready(csr_awready),
-        .csr_axil_wdata(csr_wdata),   .csr_axil_wstrb(csr_wstrb),
-        .csr_axil_wvalid(csr_wvalid), .csr_axil_wready(csr_wready),
-        .csr_axil_bresp(csr_bresp),   .csr_axil_bvalid(csr_bvalid), .csr_axil_bready(csr_bready),
-        .csr_axil_araddr(csr_araddr), .csr_axil_arvalid(csr_arvalid), .csr_axil_arready(csr_arready),
-        .csr_axil_rdata(csr_rdata),   .csr_axil_rresp(csr_rresp),
-        .csr_axil_rvalid(csr_rvalid), .csr_axil_rready(csr_rready),
+        .csr_axil_0_awaddr(csr_awaddr), .csr_axil_0_awvalid(csr_awvalid), .csr_axil_0_awready(csr_awready),
+        .csr_axil_0_wdata(csr_wdata),   .csr_axil_0_wstrb(csr_wstrb),
+        .csr_axil_0_wvalid(csr_wvalid), .csr_axil_0_wready(csr_wready),
+        .csr_axil_0_bresp(csr_bresp),   .csr_axil_0_bvalid(csr_bvalid), .csr_axil_0_bready(csr_bready),
+        .csr_axil_0_araddr(csr_araddr), .csr_axil_0_arvalid(csr_arvalid), .csr_axil_0_arready(csr_arready),
+        .csr_axil_0_rdata(csr_rdata),   .csr_axil_0_rresp(csr_rresp),
+        .csr_axil_0_rvalid(csr_rvalid), .csr_axil_0_rready(csr_rready),
 
-        .m_axi_awid(m_awid), .m_axi_awaddr(m_awaddr), .m_axi_awlen(m_awlen),
-        .m_axi_awsize(m_awsize), .m_axi_awburst(m_awburst), .m_axi_awlock(m_awlock),
-        .m_axi_awcache(m_awcache), .m_axi_awprot(m_awprot), .m_axi_awqos(m_awqos),
-        .m_axi_awvalid(m_awvalid), .m_axi_awready(m_awready),
-        .m_axi_wdata(m_wdata), .m_axi_wstrb(m_wstrb),
-        .m_axi_wlast(m_wlast), .m_axi_wvalid(m_wvalid), .m_axi_wready(m_wready),
-        .m_axi_bid(m_bid), .m_axi_bresp(m_bresp), .m_axi_bvalid(m_bvalid), .m_axi_bready(m_bready),
-        .m_axi_arid(m_arid), .m_axi_araddr(m_araddr), .m_axi_arlen(m_arlen),
-        .m_axi_arsize(m_arsize), .m_axi_arburst(m_arburst), .m_axi_arlock(m_arlock),
-        .m_axi_arcache(m_arcache), .m_axi_arprot(m_arprot), .m_axi_arqos(m_arqos),
-        .m_axi_arvalid(m_arvalid), .m_axi_arready(m_arready),
-        .m_axi_rid(m_rid), .m_axi_rdata(m_rdata),
-        .m_axi_rresp(m_rresp), .m_axi_rlast(m_rlast),
-        .m_axi_rvalid(m_rvalid), .m_axi_rready(m_rready)
+        .m_axi_0_awid(m_awid), .m_axi_0_awaddr(m_awaddr), .m_axi_0_awlen(m_awlen),
+        .m_axi_0_awsize(m_awsize), .m_axi_0_awburst(m_awburst), .m_axi_0_awlock(m_awlock),
+        .m_axi_0_awcache(m_awcache), .m_axi_0_awprot(m_awprot), .m_axi_0_awqos(m_awqos),
+        .m_axi_0_awvalid(m_awvalid), .m_axi_0_awready(m_awready),
+        .m_axi_0_wdata(m_wdata), .m_axi_0_wstrb(m_wstrb),
+        .m_axi_0_wlast(m_wlast), .m_axi_0_wvalid(m_wvalid), .m_axi_0_wready(m_wready),
+        .m_axi_0_bid(m_bid), .m_axi_0_bresp(m_bresp), .m_axi_0_bvalid(m_bvalid), .m_axi_0_bready(m_bready),
+        .m_axi_0_arid(m_arid), .m_axi_0_araddr(m_araddr), .m_axi_0_arlen(m_arlen),
+        .m_axi_0_arsize(m_arsize), .m_axi_0_arburst(m_arburst), .m_axi_0_arlock(m_arlock),
+        .m_axi_0_arcache(m_arcache), .m_axi_0_arprot(m_arprot), .m_axi_0_arqos(m_arqos),
+        .m_axi_0_arvalid(m_arvalid), .m_axi_0_arready(m_arready),
+        .m_axi_0_rid(m_rid), .m_axi_0_rdata(m_rdata),
+        .m_axi_0_rresp(m_rresp), .m_axi_0_rlast(m_rlast),
+        .m_axi_0_rvalid(m_rvalid), .m_axi_0_rready(m_rready),
+        .irq_done()
     );
 
     // ========================================================================
@@ -106,7 +116,10 @@ module tb_vd100_minimal;
     assign mem_araddr_byte = m_araddr - BRAM_BASE_ADDR;
 
     axi_slave_mem #(
-        .ADDR_W(32), .DATA_W(128), .ID_W(4), .DEPTH(BRAM_DEPTH)
+        .ADDR_W(32), .DATA_W(128), .ID_W(4), .DEPTH(BRAM_DEPTH),
+        .AR_LATENCY_MIN(AR_LATENCY_MIN), .AR_LATENCY_MAX(AR_LATENCY_MAX),
+        .AW_LATENCY_MIN(AW_LATENCY_MIN), .AW_LATENCY_MAX(AW_LATENCY_MAX),
+        .R_GAP_MIN(R_GAP_MIN), .R_GAP_MAX(R_GAP_MAX)
     ) u_bram (
         .clk(clk), .rstn(rst_n),
         .AWID(m_awid), .AWADDR(mem_awaddr_byte), .AWLEN(m_awlen), .AWBURST(m_awburst),
@@ -174,24 +187,24 @@ module tb_vd100_minimal;
     initial last_state = 4'd0;
     always @(posedge clk) begin
         if (rst_n
-            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 12)
+            && u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 12)
         begin
-            if (u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base != last_yout_base) begin
+            if (u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_yout_base != last_yout_base) begin
                 $display("[YOUT-B t=%0t] yout_base %0d -> %0d  (cmd_idx=%0d, state=%0d)",
                     $time, last_yout_base,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state);
-                last_yout_base = u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base;
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.state);
+                last_yout_base = u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_yout_base;
             end
-            if (u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state != last_state) begin
+            if (u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.state != last_state) begin
                 $display("[STATE t=%0t] %0d->%0d (cmd_idx=%0d yout_base=%0d sts_fire=%b)",
                     $time, last_state,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.s2mm_sts_fire);
-                last_state = u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state;
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.state,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.s2mm_sts_fire);
+                last_state = u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.state;
             end
         end
     end
@@ -204,16 +217,16 @@ module tb_vd100_minimal;
         // (line_buffer act trace 暂禁 — 信号名不一致)
         // ODMA 读 OFB — cmd_idx 在 cmd_fire 时 +1, 实际处理 cmd N-1. 看 cmd 175 burst 用 cmd_idx=176.
         if (rst_n
-            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_re
-            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx >= 176
-            && u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 187)
+            && u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.ofb_re
+            && u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx >= 176
+            && u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx <= 187)
         begin
             $display("[OFB-R t=%0t] ofb_re raddr=%0d  cmd_idx=%0d  yout_base=%0d  rdata[31:0]=0x%h",
                 $time,
-                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_raddr,
-                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
-                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_yout_base,
-                u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.ofb_rdata[31:0]);
+                u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.ofb_raddr,
+                u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_yout_base,
+                u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.ofb_rdata[31:0]);
         end
     end
 
@@ -270,12 +283,12 @@ module tb_vd100_minimal;
                 peek_csr(12'h008, seq_dbg);
                 $display("[TB t=%0t monitor] STATUS=0x%h SEQ_DBG=0x%h  IDMA cmd_idx=%0d rows_pushed=%0d  ODMA cmd_idx=%0d rows_drained=%0d  ofb rows_written=%0d ring_full=%b",
                          $time, status_reg, seq_dbg,
-                         u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.r_cmd_idx,
-                         u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.r_rows_pushed,
-                         u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
-                         u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_rows_drained,
-                         u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.rows_written,
-                         u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.ring_full_d);
+                         u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.r_cmd_idx,
+                         u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.r_rows_pushed,
+                         u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                         u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_rows_drained,
+                         u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.rows_written,
+                         u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.ring_full_d);
             end
             if (timeout_us > 50000) begin   // 5 s @ 100 MHz
                 peek_csr(12'h008, seq_dbg);
@@ -283,68 +296,68 @@ module tb_vd100_minimal;
                 // Hier signal dump (deadlock root cause analysis)
                 $display("  === IDMA SG dispatcher ===");
                 $display("    st=%0d  r_cmd_idx=%0d / cmd_count=%0d",
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.st,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.r_cmd_idx,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.cfg_cmd_count);
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.st,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.r_cmd_idx,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.cfg_cmd_count);
                 $display("    r_rows_pushed=%0d  rows_consumed=%0d  ring_diff=%0d  ring_strip_rows=%0d",
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.r_rows_pushed,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.rows_consumed,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.rows_diff,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.cfg_ifb_strip_rows);
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.r_rows_pushed,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.rows_consumed,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.rows_diff,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.cfg_ifb_strip_rows);
                 $display("  === ODMA SG dispatcher ===");
                 $display("    state=%0d  r_cmd_idx=%0d / cmd_count=%0d  r_cmds_done=%0d  r_rows_drained=%0d",
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.state,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.cfg_cmd_count,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_cmds_done,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_rows_drained);
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.state,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.cfg_cmd_count,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_cmds_done,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_rows_drained);
                 $display("    r_rows_consumed_from_writer=%0d  has_writer_data_ready=%b",
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.r_rows_consumed_from_writer,
-                    u_dut.u_mc_minimal_sv.u_core.g_odma_sg.u_odma_sg.has_writer_data_ready);
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.r_rows_consumed_from_writer,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_odma_sg.u_odma_sg.has_writer_data_ready);
                 $display("  === ofb_writer ===");
                 $display("    rows_written=%0d  rows_drained=%0d  ring_full_d=%b  acc_out_ready=%b",
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.rows_written,
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.rows_drained,
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.ring_full_d,
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.acc_out_ready);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.rows_written,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.rows_drained,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.ring_full_d,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.acc_out_ready);
                 $display("    cfg_ofb_strip_rows=%0d  cfg_ofb_ring_words=%0d  cfg_ofb_row_words=%0d",
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.cfg_ofb_strip_rows,
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.cfg_ofb_ring_words,
-                    u_dut.u_mc_minimal_sv.u_core.u_ofb_writer.cfg_ofb_row_words);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.cfg_ofb_strip_rows,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.cfg_ofb_ring_words,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_ofb_writer.cfg_ofb_row_words);
                 $display("  === line_buffer ===");
                 $display("    rows_consumed=%0d  rows_available=%0d  streaming_rows_ready=%b",
-                    u_dut.u_mc_minimal_sv.u_core.u_line_buffer.rows_consumed,
-                    u_dut.u_mc_minimal_sv.u_core.u_line_buffer.rows_available,
-                    u_dut.u_mc_minimal_sv.u_core.u_line_buffer.streaming_rows_ready);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_line_buffer.rows_consumed,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_line_buffer.rows_available,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_line_buffer.streaming_rows_ready);
                 $display("  === mm2s_arb ===");
                 $display("    cmd_owner=%0d  data_cnt=%0d  data_head=%0d  data_empty=%b  data_full=%b",
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.cmd_owner,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.data_cnt,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.data_head,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.data_empty,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.data_full);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.cmd_owner,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.data_cnt,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.data_head,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.data_empty,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.data_full);
                 $display("    idma_cmd_tvalid=%b idma_cmd_tready=%b",
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.idma_cmd_tvalid,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.idma_cmd_tready);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.idma_cmd_tvalid,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.idma_cmd_tready);
                 $display("    ocmd_cmd_tvalid=%b ocmd_cmd_tready=%b ocmd_starve=%b ocmd_wait_cnt=%0d",
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.ocmd_cmd_tvalid,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.ocmd_cmd_tready,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.ocmd_starve,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.r_ocmd_wait_cnt);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.ocmd_cmd_tvalid,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.ocmd_cmd_tready,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.ocmd_starve,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.r_ocmd_wait_cnt);
                 $display("    mm2s_data_tvalid=%b mm2s_data_tready=%b idma_data_tvalid=%b idma_data_tready=%b ocmd_data_tvalid=%b ocmd_data_tready=%b",
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.mm2s_data_tvalid,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.mm2s_data_tready,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.idma_data_tvalid,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.idma_data_tready,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.ocmd_data_tvalid,
-                    u_dut.u_mc_minimal_sv.u_core.u_mm2s_arb.ocmd_data_tready);
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.mm2s_data_tvalid,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.mm2s_data_tready,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.idma_data_tvalid,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.idma_data_tready,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.ocmd_data_tvalid,
+                    u_dut.u_mc_n4.g_core[0].u_core.u_mm2s_arb.ocmd_data_tready);
                 $display("  === IDMA SG internals ===");
                 $display("    st=%0d r_btt=%0d cap_btt=%0d mm2s_data_tlast=%b ifb_we=%b",
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.st,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.r_btt,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.cap_btt,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.mm2s_data_tlast,
-                    u_dut.u_mc_minimal_sv.u_core.g_idma_sg.u_idma_sg.ifb_we);
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.st,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.r_btt,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.cap_btt,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.mm2s_data_tlast,
+                    u_dut.u_mc_n4.g_core[0].u_core.g_idma_sg.u_idma_sg.ifb_we);
                 $finish;
             end
             timeout_us++;

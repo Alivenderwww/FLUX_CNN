@@ -17,7 +17,7 @@ new_bif:
 {
     image
     {
-        { type=bootimage, file=C:/_Project/FLUX_CNN/Syn/vd100_bd/output/vd100_resnet11.runs/impl_1/design_1_wrapper.pdi }
+        { type=bootimage, file=C:/_Project/FLUX_CNN/Syn/vd100_minimal/output/ps_hello.runs/impl_1/design_1_wrapper.pdi }
     }
     // image_id 0x1C000000 = PM_SUBSYS_DEFAULT (ALINX 06_ps_hello 同样用法).
     // 之前用 0x1c000002 触发 PLM 0x33C/0x07F4 = XPM_INVALID_SUBSYSID

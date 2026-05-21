@@ -61,8 +61,8 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/DMA/mm2s_arb.sv \
     ../../RTL/DMA/dfe.sv \
     ../../RTL/core_top.sv \
-    ../../RTL/Versal/multicore_top_minimal.sv \
-    ../../RTL/Versal/multicore_top_minimal_v.v \
+    ../../RTL/Versal/multicore_top_n4.sv \
+    ../../RTL/Versal/multicore_top_n4_v.v \
     tb_vd100_minimal.sv
 
 vsim -c -voptargs="+acc" \

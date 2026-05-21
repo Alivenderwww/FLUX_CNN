@@ -25,7 +25,7 @@ compile_layer.py — 单层 Conv2d (PyTorch) → 硬件数据 + cfg + descriptor
 import os
 import argparse
 
-import hw_files
+from backend import hw_cfg_derive as hw_files
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -1,0 +1,64 @@
+{
+  "_schema_version": "1.0",
+  "_comment": "VD100 (Versal AI Edge xcve2302) 部署配置. arch=RTL 硬件常量, deployment=board-specific 地址 + 部署. Source of truth, 跑 json_to_params.py 自动生成 params.py + flux_cnn_params.svh.",
+
+  "arch": {
+    "_comment": "RTL 硬件单元参数. 改这里要重综合.",
+    "num_pe":          16,
+    "num_col":         16,
+    "data_width":       8,
+    "psum_width":      32,
+    "wrf_depth":       32,
+    "arf_depth":       32,
+    "parf_depth":      32,
+    "ifb_depth":     1024,
+    "wb_depth":       640,
+    "ofb_depth":     1024,
+    "shortcut_depth": 2048,
+
+    "bus_addr_width":  32,
+    "bus_data_width": 128,
+    "axi_m_id":         2,
+    "axi_m_width":      2,
+    "dma_len_width":   24,
+
+    "csr_addr_width":  12,
+    "csr_data_width":  32
+  },
+
+  "deployment": {
+    "_comment": "board-specific 部署. 改这里不动 RTL, 只要重 deploy.",
+    "target":              "vd100",
+    "num_cores":           1,
+    "ddr_base":            "0x10000000",
+    "ddr_size_mb":         2048,
+    "smc_mem_stride":      "0x01000000",
+
+    "regions": {
+      "_comment":              "SMC mem 内 layout (per-mem offset). 必须保证不重叠 + ≤ smc_mem_stride.",
+      "ifm_ofm_base":          "0x00000000",
+      "layer_data_offset":     "0x00080000",
+      "wb_base":               "0x00800000",
+      "layer_wb_offset":       "0x00010000",
+      "rdma_base":             "0x00900000",
+      "layer_rdma_offset":     "0x00010000",
+      "desc_base":             "0x00A00000",
+      "layer_desc_offset":     "0x00010000",
+      "idma_cmd_base":         "0x00B00000",
+      "layer_idma_cmd_offset": "0x00010000",
+      "odma_cmd_base":         "0x00C00000",
+      "layer_odma_cmd_offset": "0x00010000",
+      "input_base":            "0x00D00000",
+      "layer_input_offset":    "0x00080000",
+      "final_ofm_base":        "0x00F00000"
+    },
+
+    "csr_axil": {
+      "_comment": "BD CSR 地址映射 (per-core). N=1 时只用 core_0.",
+      "core_0": "0xA4000000",
+      "core_1": "0xA4001000",
+      "core_2": "0xA4002000",
+      "core_3": "0xA4003000"
+    }
+  }
+}

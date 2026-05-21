@@ -2,26 +2,20 @@
 `include "flux_cnn_params.svh"
 
 // =============================================================================
-// multicore_top_n4.sv  --  N=4 多核 + BD SmartConnect (无内部 SMC)
+// multicore_top_n4.sv  --  N=2 双核 + BD axi_noc 直连 DDR (无内部 SMC)
+// (文件名保留 n4 后缀以兼容 BD reference, 实际 NUM_CORES=2)
 //
-// 跟 multicore_top_smc.sv 区别:
-//   - 不内嵌 axi_smc_4to4 IP (BD 顶层用 SmartConnect IP 代替)
-//   - 不内嵌 axi_lite_1to4 IP (BD SmartConnect 自动 CSR fanout)
-//   - 暴露 N=4 个独立 csr_axil + N=4 个独立 m_axi (一对一 per core)
-//   - 跨核 IFB AXI (rmt_ifb) 仍 tie 0 (NUMA 模式)
-//
-// 用途: vd100 board demo N=4 多核 + 4 URAM(BD 内 emb_mem_gen) + SmartConnect 5×8
+// 用途: vd100 board demo N=2 双核 → axi_noc → DDR
 //   BD 内连:
-//     CIPS.M_AXI_FPD ─┐
-//     m_axi_0..3 ─────┤  SmartConnect ─→ csr_axil_0..3
-//                     ├                ─→ axi_bram_ctrl_0..3 (URAM 1MB each)
+//     CIPS.M_AXI_FPD → SmartConnect (1 SI × 2 MI) → csr_axil_0..1
+//     m_axi_0..1 → axi_noc.S06..S07 → DDR (各分配不同 MC channel 避免拥塞)
 //
-// SG_MODE=1 (跟 vd100_minimal 一致, ConvCore IDMA/ODMA 走 SG cmd list).
-// FLUX_MAC_SIMD: 综合时加 +define+FLUX_MAC_SIMD 开启 DSP48E1 INT8 SIMD MAC.
+// SG_MODE=1, FLUX_MAC_SIMD enable.
+// 跨核 IFB AXI (rmt_ifb) 仍 tie 0 (NUMA 模式, 每核拉自己 W slice).
 // =============================================================================
 
 module multicore_top_n4 #(
-    parameter int NUM_CORES   = 4,
+    parameter int NUM_CORES   = 2,
     parameter int CSR_DATA_W  = 32,
     parameter int CSR_ADDR_W  = 12,   // per-core 12-bit (BD SmartConnect 路由)
     parameter int BUS_ADDR_W  = `FLUX_BUS_ADDR_W,              // 32

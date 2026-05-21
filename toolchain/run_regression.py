@@ -32,7 +32,7 @@ SIM_DIR     = os.path.normpath(os.path.join(_SCRIPT_DIR, "..", "sim", "tb_core_d
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
-import hw_files          # noqa: E402
+from backend import hw_cfg_derive as hw_files          # noqa: E402
 import gen_isa_test      # noqa: E402
 
 # Report 输出到 sim dir（和生成的 .txt 放一起）。

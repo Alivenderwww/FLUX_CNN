@@ -89,7 +89,7 @@ class Vd100Rpc:
             rpc.poke_csr(0, CSR_CTRL, CTRL_START_DFE)
             cycles = rpc.run_layers([(desc_base[c], desc_count[c]) for c in range(3)] for ...)
     """
-    def __init__(self, host: str = '169.254.111.10', port: int = 5000, timeout: float = 30.0):
+    def __init__(self, host: str = '169.254.111.10', port: int = 5000, timeout: float = 90.0):
         self.host = host
         self.port = port
         self.timeout = timeout
@@ -173,8 +173,10 @@ class Vd100Rpc:
 
     def read_ddr(self, ddr_addr: int, length: int) -> bytes:
         """从板 DDR 地址 ddr_addr 读 length 字节 (server 端 DCacheInvalidateRange).
-        分段读避免单次 resp 过大."""
-        CHUNK = 1024 * 1024
+        分段读避免 lwIP 大 transfer 超 timeout.
+        Chunk 8 KB (lwIP TCP send window 4 KB 友好), 单 chunk timeout ≤ 30s.
+        """
+        CHUNK = 1024 * 1024  # 1 MB chunk (回到原默认), 配合 timeout=90s 跑大 OFM
         if length <= CHUNK:
             _, _, data = self._request(CMD_READ_DDR, ddr_addr, length)
             return data
@@ -203,15 +205,22 @@ class Vd100Rpc:
         a72 server 会 11 层循环: 写 DESC_LIST_BASE/COUNT + start_dfe + poll done.
         在 sim 这一步是 axi_lite_write + write_dfe_start + wait_dfe_done.
         """
-        # 打包 LayerCfg array (32 byte / layer): 3*u32 desc_base + 3*u32 desc_count + 2*u32 pad
+        # 打包 LayerCfg array (32 byte / layer): 3*u32 desc_base + 3*u32 desc_count + 2*u32 pad.
+        # 协议固定 3 core (跟 PS server 端 layer_cfg_t 一致). NUM_CORES<3 时把多余 slot
+        # 填 0, PS server 见 desc_count[c]==0 会跳过, 不写不存在的 csr_axil.
         n = len(layers)
         if n == 0:
             return 0
         buf = bytearray()
         for cfg in layers:
-            base = cfg['desc_list_base']
-            cnt  = cfg['desc_count']
+            base = list(cfg['desc_list_base'])
+            cnt  = list(cfg['desc_count'])
             assert len(base) == NUM_CORES and len(cnt) == NUM_CORES
+            # pad 到长度 3
+            while len(base) < 3:
+                base.append(0)
+            while len(cnt) < 3:
+                cnt.append(0)
             buf.extend(struct.pack('<III', base[0], base[1], base[2]))
             buf.extend(struct.pack('<III', cnt[0],  cnt[1],  cnt[2]))
             buf.extend(struct.pack('<II', 0, 0))  # reserved

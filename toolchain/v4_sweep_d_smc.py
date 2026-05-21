@@ -15,7 +15,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _THIS_DIR)
 sys.path.insert(0, os.path.dirname(_THIS_DIR))
 
-import scheduler                # noqa: E402
+from midend import scheduler                # noqa: E402
 import run_multicore_chain as RMC  # noqa: E402
 
 SIM_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "sim", "tb_smc"))

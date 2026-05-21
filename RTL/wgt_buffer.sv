@@ -130,10 +130,24 @@ module wgt_buffer #(
     logic [ADDR_W-1:0] l_wb_base_cs;     // load 侧 cs base
 
     // =========================================================================
+    // cfg latch (Round K7 SMC Fmax fix 2026-05-19):
+    //   cfg_num_tiles 直接驱动 wb SRAM 写地址路径 (logic 15 levels, route 5.8ns),
+    //   135 MHz 时序违例. 加 1 拍 input register + (* keep *) 防 retime 合并掉,
+    //   切断长 routing fanout. cfg layer-stable 1 拍延迟不影响数据正确性.
+    // =========================================================================
+    (* keep = "true" *) logic [7:0] cfg_num_tiles_d;
+    (* keep = "true" *) logic [5:0] cfg_last_valid_w_d, cfg_tile_w_d;
+    always_ff @(posedge clk) begin
+        cfg_num_tiles_d    <= cfg_num_tiles;
+        cfg_last_valid_w_d <= cfg_last_valid_w;
+        cfg_tile_w_d       <= cfg_tile_w;
+    end
+
+    // =========================================================================
     // 派生量
     // =========================================================================
     logic [5:0] cur_valid_w;
-    assign cur_valid_w = (tile_cnt == cfg_num_tiles - 8'd1) ? cfg_last_valid_w : cfg_tile_w;
+    assign cur_valid_w = (tile_cnt == cfg_num_tiles_d - 8'd1) ? cfg_last_valid_w_d : cfg_tile_w_d;
 
     logic [5:0] c_cur_round_len;    // compute 侧当前 round 长度
     logic [5:0] l_cur_round_len;    // load 侧当前 round 长度
@@ -150,7 +164,7 @@ module wgt_buffer #(
     logic x_is_last, cins_is_last, tile_is_last, yout_is_last, cs_is_last;
     assign x_is_last    = (x_cnt    == cur_valid_w       - 6'd1);
     assign cins_is_last = (cins_cnt == cfg_cin_slices    - 6'd1);
-    assign tile_is_last = (tile_cnt == cfg_num_tiles     - 8'd1);
+    assign tile_is_last = (tile_cnt == cfg_num_tiles_d   - 8'd1);
     assign yout_is_last = (yout_cnt == cfg_h_out         - 16'd1);
     assign cs_is_last   = (cs_cnt   == cfg_cout_slices   - 6'd1);
 
@@ -163,7 +177,7 @@ module wgt_buffer #(
     assign l_round_done    = (l_slots_done == l_cur_round_len     - 6'd1);
     assign l_round_is_last = (l_round      == cfg_rounds_per_cins - 3'd1);
     assign l_cins_is_last  = (l_cins       == cfg_cin_slices      - 6'd1);
-    assign l_tile_is_last  = (l_tile       == cfg_num_tiles       - 8'd1);
+    assign l_tile_is_last  = (l_tile       == cfg_num_tiles_d     - 8'd1);
     assign l_yout_is_last  = (l_yout       == cfg_h_out           - 16'd1);
     assign l_cs_is_last    = (l_cs         == cfg_cout_slices     - 6'd1);
 
@@ -415,7 +429,7 @@ module wgt_buffer #(
         // 优先级与 compute 嵌套一致: round > cins > tile > cs > yout
         cld_multi_round = (cfg_rounds_per_cins != 3'd1);
         cld_multi_cins  = !cld_multi_round  && (cfg_cin_slices != 6'd1);
-        cld_multi_tile  = !cld_multi_round  && !cld_multi_cins && (cfg_num_tiles != 8'd1);
+        cld_multi_tile  = !cld_multi_round  && !cld_multi_cins && (cfg_num_tiles_d != 8'd1);
         cld_multi_cs    = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && (cfg_cout_slices != 6'd1);
         cld_multi_yout  = !cld_multi_round  && !cld_multi_cins && !cld_multi_tile && !cld_multi_cs && (cfg_h_out != 16'd1);
     end

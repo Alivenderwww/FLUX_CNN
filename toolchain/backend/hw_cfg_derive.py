@@ -767,11 +767,13 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     # 装不下就按 SRAM 容量切小 strip，ring-buffer 流式跑）。
     ifb_row_words = W_IN * cin_slices
     ifb_strip_rows_max = IFB_SRAM_WORDS // ifb_row_words
-    ifb_strip_rows_min = K + 1
+    # K=1 stride=1 时不需要 sliding window, ring 1 行就够 (mac 跟 IDMA 串行,
+    # 性能降级但功能正确). K>1 需要至少 K+1 行 (K 行 mac 用 + 1 行 IDMA prefetch).
+    ifb_strip_rows_min = (K + 1) if K > 1 else 1
     if ifb_strip_rows_max < ifb_strip_rows_min:
         raise ValueError(
             f"IFB SRAM 容量不足: W_IN*cin_slices={ifb_row_words}, "
-            f"max rows={ifb_strip_rows_max} < K+1={ifb_strip_rows_min}")
+            f"max rows={ifb_strip_rows_max} < min={ifb_strip_rows_min} (K={K})")
     if H_IN <= ifb_strip_rows_max:
         # 整图装得下：strip = 全图（ring 不 wrap，相当于原 batch 语义）
         ifb_strip = H_IN
@@ -1055,7 +1057,7 @@ def derive_cout_slice_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT_full, stride,
         '_COUT_SLICE_COUT_FULL'  : 整层 cout (用于 rdma 切片 / OFM stitch)
     """
     # 延迟 import (避免顶层 circular dep): mesh_cmd → hw_files
-    import mesh_cmd as _mc
+    from backend import sg_cmd_emit as _mc
     seg_starts, seg_widths, seg_cs = _mc.compute_cout_segments(NUM_COUT_full, n_split)
     my_cout       = seg_widths[my_core]
     my_cout_start = seg_starts[my_core]

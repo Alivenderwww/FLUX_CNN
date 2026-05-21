@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
-flux_cnn params  --  唯一参数表 (Single Source of Truth)
+flux_cnn params  --  arch 字段 thin loader
 
-RTL 和 Python toolchain 都从这里取参数, 避免双份维护.
+Phase A 后 arch 常量 (NUM_PE / IFB_DEPTH / ...) 从 toolchain/hardware/*.json 读取,
+本文件只暴露兼容名供老 `from params import NUM_PE` 继续 work.
+
+CSR_ADDR_MAP / DEFAULT_DDR_LAYOUT / helper 函数 (core_ifb_axi_base) 仍是 hardcode
+(CSR layout 是 RTL+toolchain 同步约定, 跟具体硬件无关; deployment 在 hardware.json
+deployment 字段, toolchain SMC layout 用 HardwareConfig 直接读).
 
 用法:
-  - Python:  from params import NUM_PE, IFB_DEPTH, ...
-             from params import CSR_ADDR_MAP, core_ifb_axi_base
-  - RTL:     `include "flux_cnn_params.svh"  (自动生成)
-             跑 `python params.py` 重新生成 svh
+  - Python:  from params import NUM_PE, IFB_DEPTH, ...     (兼容)
+             from toolchain.hardware import HardwareConfig (新代码推荐)
+  - RTL:     `include "flux_cnn_params.svh"
+             跑 `python -m toolchain.hardware.codegen` 重新生成 svh
 
-约定: 改完 params.py **必须** 重跑 codegen 同步 svh, 否则 RTL/Python 不一致.
-建议放进 git pre-commit hook 或 build 流程里.
+环境变量 FLUX_HW_JSON 可指定 hardware json 路径 (默认 toolchain/hardware/vd100.json).
 """
 
 import os
@@ -19,15 +23,39 @@ import sys
 from pathlib import Path
 
 # =============================================================================
-# 1. 核内 datapath 尺寸
+# 0. 加载 hardware.json (arch 字段) — 失败时 fallback hardcode 保留向后兼容
 # =============================================================================
-NUM_PE      = 16        # 一列 PE 数 (= IFB SRAM 一行 cin byte 数)
-NUM_COL     = 16        # mac_array 列数 (= cout 并行度)
-DATA_WIDTH  = 8         # INT8
-PSUM_WIDTH  = 32        # INT32 累加
-WRF_DEPTH   = 32        # 每 PE 内权重 RF 深度
-ARF_DEPTH   = 32        # line_buffer 内 act ring depth
-PARF_DEPTH  = 32        # parf_accum 内 partial sum depth
+_PROJECT_ROOT = Path(__file__).resolve().parent
+_DEFAULT_HW_JSON = _PROJECT_ROOT / 'toolchain' / 'hardware' / 'vd100.json'
+_HW_JSON_PATH = os.environ.get('FLUX_HW_JSON', str(_DEFAULT_HW_JSON))
+
+try:
+    sys.path.insert(0, str(_PROJECT_ROOT / 'toolchain'))
+    from hardware.hardware_cfg import HardwareConfig
+    if os.path.exists(_HW_JSON_PATH):
+        _cfg = HardwareConfig.load(_HW_JSON_PATH)
+        _arch = _cfg.arch
+    else:
+        _cfg = None
+        _arch = None
+except Exception:
+    _cfg = None
+    _arch = None
+
+def _a(name, fallback):
+    """从 HardwareConfig.arch 读, 失败 fallback 到 hardcode 默认."""
+    return getattr(_arch, name) if _arch is not None else fallback
+
+# =============================================================================
+# 1. 核内 datapath 尺寸 (from hardware.json arch)
+# =============================================================================
+NUM_PE      = _a('num_pe',     16)     # 一列 PE 数 (= IFB SRAM 一行 cin byte 数)
+NUM_COL     = _a('num_col',    16)     # mac_array 列数 (= cout 并行度)
+DATA_WIDTH  = _a('data_width',  8)     # INT8
+PSUM_WIDTH  = _a('psum_width', 32)     # INT32 累加
+WRF_DEPTH   = _a('wrf_depth',  32)     # 每 PE 内权重 RF 深度
+ARF_DEPTH   = _a('arf_depth',  32)     # line_buffer 内 act ring depth
+PARF_DEPTH  = _a('parf_depth', 32)     # parf_accum 内 partial sum depth
 
 # =============================================================================
 # 2. SRAM 容量 (word, 1 word = 不同 SRAM 不同位宽, 见注释)
@@ -45,12 +73,10 @@ PARF_DEPTH  = 32        # parf_accum 内 partial sum depth
 #   line_buffer rows_consumed_raw 在 evt_iss_yout_wrap reset 与 dispatcher 跨
 #   strip 累计 rows_pushed 失同步 → 单 strip 末死锁. 修: 仅 evt_start reset.
 #   触发: ResNet11 layer 3 (K=1 stride=2 cross-mem chunk) IFB strip mode hang.
-IFB_DEPTH       = 1024  # 8192→1024 省 28 BRAM36/core. 实际 ring 需 ≤ 396 word
-WB_DEPTH        = 640   # 1024→640 (distributed RAM, 仅省 LUTRAM)
-OFB_DEPTH       = 1024  # 2048→1024 (LUTRAM, 仅省 LUTRAM)
-SHORTCUT_DEPTH  = 2048  # 8192→2048 省 24 BRAM36/core. 实际 ≤ 2044 word, slack 4
-                        # 取 2^11 = 2048 而非 2560: Vivado BRAM mapping 友好 (power of 2),
-                        # 综合 4×u_shortcut_bank 减 28 BRAM (vs 2560 不友好 mapping).
+IFB_DEPTH       = _a('ifb_depth',      1024)  # 8192→1024 省 28 BRAM36/core
+WB_DEPTH        = _a('wb_depth',        640)  # 1024→640 (distributed RAM)
+OFB_DEPTH       = _a('ofb_depth',      1024)  # 2048→1024 (LUTRAM)
+SHORTCUT_DEPTH  = _a('shortcut_depth', 2048)  # 8192→2048 省 24 BRAM36/core (2^11 友好)
 
 # 派生: word size in bytes
 IFB_WORD_BYTES      = NUM_PE  * DATA_WIDTH // 8           # 16
@@ -61,13 +87,13 @@ SHORTCUT_WORD_BYTES = OFB_WORD_BYTES                       # 16 (跟 OFB 共享 
 # =============================================================================
 # 3. AXI / CSR 接口
 # =============================================================================
-BUS_ADDR_W   = 32
-BUS_DATA_W   = 128
-AXI_M_ID     = 2          # 每核内 master per-master ID 宽 (axi_dm + DFE 等共享)
-AXI_M_WIDTH  = 2          # log2(masters per core) = 4 个 master
-DMA_LEN_W    = 24         # IDMA/ODMA byte_len 宽度
-CSR_ADDR_W   = 12         # cfg_regs 寻址空间 = 4 KB
-CSR_DATA_W   = 32
+BUS_ADDR_W   = _a('bus_addr_width',  32)
+BUS_DATA_W   = _a('bus_data_width', 128)
+AXI_M_ID     = _a('axi_m_id',         2)  # 每核 per-master ID 宽
+AXI_M_WIDTH  = _a('axi_m_width',      2)  # log2(masters/core) = 4 master
+DMA_LEN_W    = _a('dma_len_width',   24)
+CSR_ADDR_W   = _a('csr_addr_width',  12)
+CSR_DATA_W   = _a('csr_data_width',  32)
 
 # 派生
 CORE_BUS_ID  = AXI_M_ID + AXI_M_WIDTH    # 4: 核内 bus_*id 位宽
@@ -186,8 +212,8 @@ DEFAULT_DDR_LAYOUT = {
 
 
 # =============================================================================
-# 7. RTL header 生成器
-#    跑 `python params.py` 生成 RTL/flux_cnn_params.svh.
+# 7. (legacy) RTL svh 生成 — 现在迁到 toolchain/hardware/codegen.py
+#    保留 gen_svh 函数兼容老调用方 (如 build script). 实际逻辑 thin wrap codegen.
 # =============================================================================
 SVH_HEADER = """\
 // =============================================================================
@@ -306,10 +332,16 @@ def gen_svh(out_path: str = 'RTL/flux_cnn_params.svh') -> str:
 # CLI
 # =============================================================================
 if __name__ == '__main__':
-    out = gen_svh()
-    print(f"Generated {out}")
-    print(f"  - {len(CSR_ADDR_MAP)} CSR addr entries")
-    print(f"  - Datapath: NUM_PE={NUM_PE}, NUM_COL={NUM_COL}, DATA_WIDTH={DATA_WIDTH}")
-    print(f"  - SRAM: IFB={IFB_DEPTH}, WB={WB_DEPTH}, OFB={OFB_DEPTH}, Shortcut={SHORTCUT_DEPTH}")
-    print(f"  - AXI: ADDR={BUS_ADDR_W}, DATA={BUS_DATA_W}")
-    print(f"  - Multicore: CORE_IFB_BASE=0x{CORE_IFB_BASE:08X}, STRIDE=0x{CORE_IFB_STRIDE:08X}")
+    # 维持兼容: `python params.py` 仍能生成 svh, 但内部 delegate 给 codegen.
+    # 推荐新代码用: `python -m toolchain.hardware.codegen`
+    print("[DEPRECATED] params.py 不再 SSOT; svh 生成请用 `python -m toolchain.hardware.codegen`")
+    print(f"  hardware json: {_HW_JSON_PATH}")
+    print(f"  arch loaded:   {'yes' if _arch is not None else 'no (fallback hardcode)'}")
+    print(f"  Datapath: NUM_PE={NUM_PE} NUM_COL={NUM_COL} DATA_WIDTH={DATA_WIDTH}")
+    print(f"  SRAM: IFB={IFB_DEPTH} WB={WB_DEPTH} OFB={OFB_DEPTH} Shortcut={SHORTCUT_DEPTH}")
+    # 兼容性: 老 build script 跑 `python params.py` 想要生成 svh, delegate codegen.
+    try:
+        out = gen_svh()
+        print(f"  Generated (legacy path) {out}")
+    except Exception as e:
+        print(f"  legacy gen_svh failed: {e}; 请改用 codegen.py")

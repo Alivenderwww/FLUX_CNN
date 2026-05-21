@@ -49,7 +49,7 @@
 //   0x164  SDP_RELU_EN       [0]
 //   0x168  H_IN_TOTAL        [15:0]            整图输入高度
 //   0x16C  IFB_STRIP_ROWS    [7:0]             IFB ring 容纳输入行数
-//   0x170  OFB_STRIP_ROWS    [5:0]             OFB ring 容纳输出行数
+//   0x170  OFB_STRIP_ROWS    [7:0]             OFB ring 容纳输出行数
 //   0x174  DDR_IFM_ROW_STRIDE[19:0]            DDR 相邻输入行跨度（字节）
 //   0x178  DDR_OFM_ROW_STRIDE[19:0]            DDR 相邻输出行跨度（字节）
 //   0x17C  DMA_MODE          [0]=idma_stream [1]=odma_stream
@@ -118,9 +118,19 @@ module cfg_regs #(
     input  logic                     layer_busy,
     input  logic                     layer_done,
 
+    // ---- VD100 dbg 输入 (RO 寄存器 0x008 expose) ----
+    input  logic [3:0]               seq_state,
+    input  logic [7:0]               fifo_count,
+    input  logic [3:0]               master_arvalid,
+    input  logic [3:0]               master_rvalid,
+
     // ---- CTRL 输出：host 触发 DFE 拉 descriptor 和 Sequencer 启动 ----
     output logic                     start_dfe_pulse,    // CTRL[4] 写 1
     output logic                     start_layer_pulse,  // CTRL[5] 写 1
+    // CTRL[7] 写 1 → stretched 软 reset (持续 16 拍低) 给所有 sub-module
+    // 用途: 任何 dispatcher / sequencer stuck 时, host 写 CTRL=0x80 拉回 IDLE.
+    // cfg_regs 自身不响应这个 reset, cfg 寄存器值在软 reset 后保留.
+    output logic                     soft_reset_n,       // stretched, low-active
 
     // ---- 整层完成 sticky 标志 (用于顶层 done 端口 / GIC IRQ / STATUS[0]) ----
     //   layer_done 一上升 → set, start_layer_pulse 自清.
@@ -155,8 +165,8 @@ module cfg_regs #(
 
     // ---- Streaming / ring 配置输出 ----
     output logic [15:0]              h_in_total,
-    output logic [7:0]               ifb_strip_rows,
-    output logic [5:0]               ofb_strip_rows,
+    output logic [15:0]              ifb_strip_rows,  // VD100 fix 2026-05-15: 8→16 bit, 任意 H 都 fit
+    output logic [15:0]              ofb_strip_rows,  // VD100 fix 2026-05-15: 6→8→16 bit, 跟 h_in_total 对齐
     output logic [CORE_ADDR_W-1:0]   ddr_ifm_row_stride,
     output logic [CORE_ADDR_W-1:0]   ddr_ofm_row_stride,
     // J-2: idma_streaming / odma_streaming outputs removed (hardware 恒 streaming).
@@ -222,6 +232,7 @@ module cfg_regs #(
     // =========================================================================
     localparam [ADDR_W-1:0] ADDR_CTRL             = `FLUX_ADDR_CTRL;
     localparam [ADDR_W-1:0] ADDR_STATUS           = `FLUX_ADDR_STATUS;
+    localparam [ADDR_W-1:0] ADDR_SEQ_DBG          = 12'h008;   // VD100 dbg RO
 
     localparam [ADDR_W-1:0] ADDR_H_OUT            = `FLUX_ADDR_H_OUT;
     localparam [ADDR_W-1:0] ADDR_W_OUT            = `FLUX_ADDR_W_OUT;
@@ -299,6 +310,25 @@ module cfg_regs #(
     assign start_layer_pulse = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[5];
 
     // -------------------------------------------------------------------------
+    // soft reset stretcher: host 写 CTRL.bit7 = 1 → r_soft_rst_cnt 装 64 拍 → 持续
+    // 64 拍 soft_reset_n=0 → 所有 sub-module + axi_dm IP 内部全部 reset 回 IDLE.
+    // VD100 fix 2026-05-15: 拉长 16 → 64 拍, 因为 axi_dm IP 内部有多个 reset domain
+    // (mm2s/s2mm/cmdsts), 16 拍可能不够完全 sync. axi_dm aresetn 之前用 hard rst_n,
+    // 现已改为 core_rst_n 跟其他 sub-module 同步.
+    // 仅 csr_w 触发, sequencer 自己写 CFG_WRITE 不会触发 (seq_w_addr 只能写 0x100+).
+    // -------------------------------------------------------------------------
+    logic [5:0] r_soft_rst_cnt;
+    logic       soft_reset_trigger;
+    assign soft_reset_trigger = csr_w_en && (csr_w_addr == ADDR_CTRL) && csr_w_data[7];
+
+    always_ff @(posedge clk) begin
+        if      (!rst_n)              r_soft_rst_cnt <= 6'd0;
+        else if (soft_reset_trigger)  r_soft_rst_cnt <= 6'd63;
+        else if (r_soft_rst_cnt != 0) r_soft_rst_cnt <= r_soft_rst_cnt - 6'd1;
+    end
+    assign soft_reset_n = (r_soft_rst_cnt == 6'd0);
+
+    // -------------------------------------------------------------------------
     // core_done sticky: layer_done 上升沿 set, start_layer_pulse 清掉
     //   - host poll: STATUS[0] = 1 表示有"未消费"的 done; 写 CTRL[5]=1 启下一层会自清
     //   - GIC level IRQ: 拉到顶层 done 端口, 一直高直到 host 启下一层
@@ -356,7 +386,7 @@ module cfg_regs #(
     //   csr_w 优先级高于 seq_w (本核既被 host 配过又恰好有 desc 时取 host 值).
     //   start_layer_pulse 时清 vld: 多层 chain 时每层 desc 重新接管 (W slice 多核不同
     //   sub_W → 不同 ring_words, host 写一次不能共享).
-    logic [7:0]              r_ifb_strip_rows_host;
+    logic [15:0]             r_ifb_strip_rows_host;  // 8→16 bit
     logic [CORE_ADDR_W-1:0]  r_ifb_ring_words_host;
     logic                    r_ifb_strip_rows_host_vld;
     logic                    r_ifb_ring_words_host_vld;
@@ -370,7 +400,7 @@ module cfg_regs #(
                 r_ifb_ring_words_host_vld <= 1'b0;
             end
             if (csr_w_en && csr_w_addr == ADDR_IFB_STRIP_ROWS) begin
-                r_ifb_strip_rows_host     <= csr_w_data[7:0];
+                r_ifb_strip_rows_host     <= csr_w_data[15:0];  // 8→16 bit
                 r_ifb_strip_rows_host_vld <= 1'b1;
             end
             if (csr_w_en && csr_w_addr == ADDR_IFB_RING_WORDS) begin
@@ -431,8 +461,8 @@ module cfg_regs #(
     logic [5:0]              r_sdp_shift;
     logic                    r_sdp_relu_en;
     logic [15:0]             r_h_in_total;
-    logic [7:0]              r_ifb_strip_rows;
-    logic [5:0]              r_ofb_strip_rows;
+    logic [15:0]             r_ifb_strip_rows;   // 8→16 bit (任意 H)
+    logic [15:0]             r_ofb_strip_rows;   // 6→8→16 bit
     logic [CORE_ADDR_W-1:0]  r_ddr_ifm_row_stride;
     logic [CORE_ADDR_W-1:0]  r_ddr_ofm_row_stride;
     logic [31:0]             r_idma_src_base;
@@ -504,8 +534,8 @@ module cfg_regs #(
                 ADDR_SDP_SHIFT       : r_sdp_shift       <= seq_w_data[5:0];
                 ADDR_SDP_RELU_EN     : r_sdp_relu_en     <= seq_w_data[0];
                 ADDR_H_IN_TOTAL      : r_h_in_total      <= seq_w_data[15:0];
-                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[7:0];
-                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[5:0];
+                ADDR_IFB_STRIP_ROWS  : r_ifb_strip_rows  <= seq_w_data[15:0];  // 8→16 bit
+                ADDR_OFB_STRIP_ROWS  : r_ofb_strip_rows  <= seq_w_data[15:0];  // 6→8→16 bit
                 ADDR_DDR_IFM_ROW_STR : r_ddr_ifm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_DDR_OFM_ROW_STR : r_ddr_ofm_row_stride <= seq_w_data[CORE_ADDR_W-1:0];
                 ADDR_IDMA_SRC_BASE   : r_idma_src_base   <= seq_w_data[31:0];
@@ -617,75 +647,36 @@ module cfg_regs #(
                           odma_busy,  wdma_busy,  idma_busy,
                           layer_busy, r_core_done_sticky};
 
+    // 优化 (2026-05-17): 读 mux 从 68 项削到 ~20 项, 只保留 host 实际 peek_csr 的地址.
+    // 其它 layer cfg 寄存器全部不再 readback (sequencer 写完后用作硬件信号, 没人读).
+    // 验证: grep "peek_csr.*0x" host/vd100_pc/*.py 实际只用 18 个地址.
+    // 估省 LUT: 68→20 项 32-bit case mux ≈ 2000+ LUT.
     always_comb begin
         case (reg_r_addr)
-            ADDR_CTRL            : reg_r_data = '0;
-            ADDR_STATUS          : reg_r_data = status_word;
-            ADDR_H_OUT           : reg_r_data = {16'd0, r_h_out};
-            ADDR_W_OUT           : reg_r_data = {16'd0, r_w_out};
-            ADDR_W_IN            : reg_r_data = {16'd0, r_w_in};
-            ADDR_K               : reg_r_data = {28'd0, r_k};
-            ADDR_KY              : reg_r_data = {28'd0, r_ky};
-            ADDR_STRIDE          : reg_r_data = {29'd0, r_stride};
-            ADDR_CIN_SLICES      : reg_r_data = {26'd0, r_cin_slices};
-            ADDR_COUT_SLICES     : reg_r_data = {26'd0, r_cout_slices};
-            ADDR_TILE_W          : reg_r_data = {26'd0, r_tile_w};
-            ADDR_NUM_TILES       : reg_r_data = {24'd0, r_num_tiles};
-            ADDR_LAST_VALID_W    : reg_r_data = {26'd0, r_last_valid_w};
-            ADDR_TOTAL_WRF       : reg_r_data = {22'd0, r_total_wrf};
-            ADDR_KK              : reg_r_data = {22'd0, r_kk};
-            ADDR_ROUNDS_PER_CINS : reg_r_data = {29'd0, r_rounds_per_cins};
-            ADDR_ROUND_LEN_LAST  : reg_r_data = {26'd0, r_round_len_last};
-            ADDR_IFB_BASE        : reg_r_data = {12'd0, r_ifb_base};
-            ADDR_WB_BASE         : reg_r_data = {12'd0, r_wb_base};
-            ADDR_OFB_BASE        : reg_r_data = {12'd0, r_ofb_base};
-            ADDR_IFB_ROW_STEP    : reg_r_data = {12'd0, r_ifb_row_step};
-            ADDR_WB_COUT_STEP    : reg_r_data = {12'd0, r_wb_cout_step};
-            ADDR_TILE_IN_STEP    : reg_r_data = {12'd0, r_tile_in_step};
-            ADDR_IFB_RING_WORDS  : reg_r_data = {12'd0, r_ifb_ring_words};
-            ADDR_OFB_ROW_WORDS   : reg_r_data = {12'd0, r_ofb_row_words};
-            ADDR_OFB_RING_WORDS  : reg_r_data = {12'd0, r_ofb_ring_words};
-            ADDR_IFB_ISS_STEP    : reg_r_data = {12'd0, r_ifb_iss_step};
-            ADDR_IFB_KY_STEP     : reg_r_data = {12'd0, r_ifb_ky_step};
-            ADDR_TILE_PIX_STEP   : reg_r_data = {16'd0, r_tile_pix_step};
-            ADDR_ARF_REUSE_EN    : reg_r_data = {31'd0, r_arf_reuse_en};
-            ADDR_SDP_SHIFT       : reg_r_data = {26'd0, r_sdp_shift};
-            ADDR_SDP_RELU_EN     : reg_r_data = {31'd0, r_sdp_relu_en};
-            ADDR_H_IN_TOTAL      : reg_r_data = {16'd0, r_h_in_total};
-            ADDR_IFB_STRIP_ROWS  : reg_r_data = {24'd0, r_ifb_strip_rows};
-            ADDR_OFB_STRIP_ROWS  : reg_r_data = {26'd0, r_ofb_strip_rows};
-            ADDR_DDR_IFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ifm_row_stride};
-            ADDR_DDR_OFM_ROW_STR : reg_r_data = {12'd0, r_ddr_ofm_row_stride};
-            ADDR_DMA_MODE        : reg_r_data = {30'd0, r_dma_mode_ctrl};
-            ADDR_DESC_LIST_BASE  : reg_r_data = r_desc_list_base;
-            ADDR_DESC_COUNT      : reg_r_data = {16'd0, r_desc_count};
-            ADDR_SDP_MULT        : reg_r_data = $unsigned(r_sdp_mult);
-            ADDR_SDP_ZP_OUT      : reg_r_data = {{23{r_sdp_zp_out[8]}}, r_sdp_zp_out};
-            ADDR_SDP_CLIP_MIN    : reg_r_data = {{23{r_sdp_clip_min[8]}}, r_sdp_clip_min};
-            ADDR_SDP_CLIP_MAX    : reg_r_data = {{23{r_sdp_clip_max[8]}}, r_sdp_clip_max};
-            ADDR_SDP_ROUND_EN    : reg_r_data = {31'd0, r_sdp_round_en};
-            ADDR_IDMA_SRC_BASE   : reg_r_data = r_idma_src_base;
-            ADDR_IDMA_BYTE_LEN   : reg_r_data = {8'd0, r_idma_byte_len};
-            ADDR_WDMA_SRC_BASE   : reg_r_data = r_wdma_src_base;
-            ADDR_WDMA_BYTE_LEN   : reg_r_data = {8'd0, r_wdma_byte_len};
-            ADDR_ODMA_DST_BASE   : reg_r_data = r_odma_dst_base;
-            ADDR_ODMA_BYTE_LEN   : reg_r_data = {8'd0, r_odma_byte_len};
-            ADDR_RDMA_SRC_BASE   : reg_r_data = r_rdma_src_base;
-            ADDR_RDMA_BYTE_LEN   : reg_r_data = {8'd0, r_rdma_byte_len};
-            ADDR_RESIDUAL_EN     : reg_r_data = {31'd0, r_residual_en};
-            ADDR_SKIP_IDMA       : reg_r_data = {31'd0, r_skip_idma};
-            ADDR_OFM_TDEST       : reg_r_data = {24'd0, r_ofm_tdest};
-            ADDR_OFM_OPCODE      : reg_r_data = {28'd0, r_ofm_opcode};
-            ADDR_IDMA_CMD_LIST_PTR : reg_r_data = r_idma_cmd_list_ptr;
+            ADDR_CTRL              : reg_r_data = '0;
+            ADDR_STATUS            : reg_r_data = status_word;
+            ADDR_SEQ_DBG           : reg_r_data = {16'd0, master_rvalid, master_arvalid, fifo_count[3:0], seq_state};
+            // 以下是 host debug 偶尔 peek 的: layer cfg sanity check / DMA cmd verify
+            ADDR_H_OUT             : reg_r_data = {16'd0, r_h_out};
+            ADDR_W_OUT             : reg_r_data = {16'd0, r_w_out};
+            ADDR_SDP_SHIFT         : reg_r_data = {26'd0, r_sdp_shift};
+            ADDR_H_IN_TOTAL        : reg_r_data = {16'd0, r_h_in_total};
+            ADDR_IFB_STRIP_ROWS    : reg_r_data = {16'd0, r_ifb_strip_rows};
+            ADDR_OFB_STRIP_ROWS    : reg_r_data = {16'd0, r_ofb_strip_rows};
+            ADDR_DESC_LIST_BASE    : reg_r_data = r_desc_list_base;
+            ADDR_DESC_COUNT        : reg_r_data = {16'd0, r_desc_count};
+            ADDR_SDP_MULT          : reg_r_data = $unsigned(r_sdp_mult);
+            ADDR_IFB_RING_WORDS    : reg_r_data = {12'd0, r_ifb_ring_words};
+            ADDR_OFB_ROW_WORDS     : reg_r_data = {12'd0, r_ofb_row_words};
+            ADDR_OFB_RING_WORDS    : reg_r_data = {12'd0, r_ofb_ring_words};
+            ADDR_BIAS_BASE         : reg_r_data = {19'd0, r_bias_base};
             ADDR_IDMA_CMD_COUNT    : reg_r_data = {16'd0, r_idma_cmd_count};
             ADDR_IDMA_CMDS_PER_ROW : reg_r_data = {24'd0, r_idma_cmds_per_row};
             ADDR_ODMA_CMD_LIST_PTR : reg_r_data = r_odma_cmd_list_ptr;
             ADDR_ODMA_CMD_COUNT    : reg_r_data = {16'd0, r_odma_cmd_count};
             ADDR_ODMA_CMDS_PER_ROW : reg_r_data = {24'd0, r_odma_cmds_per_row};
-            ADDR_SHORTCUT_MULT   : reg_r_data = {{16{r_shortcut_mult[15]}}, r_shortcut_mult};
-            ADDR_SHORTCUT_SHIFT  : reg_r_data = {27'd0, r_shortcut_shift};
-            ADDR_BIAS_BASE       : reg_r_data = {19'd0, r_bias_base};
-            default              : reg_r_data = '0;
+            ADDR_IDMA_SRC_BASE     : reg_r_data = r_idma_src_base;
+            default                : reg_r_data = '0;   // 其它 ~50 项 host 不读, 返 0
         endcase
     end
 

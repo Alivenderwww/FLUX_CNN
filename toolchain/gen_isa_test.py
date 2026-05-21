@@ -14,7 +14,7 @@ import os
 import random
 import sys
 
-import hw_files
+from backend import hw_cfg_derive as hw_files
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -64,6 +64,9 @@ def generate_random(
     # ---- chained-CASES overrides (run_regression in-process call) ----
     ifm_arr_in=None,        # [H_IN][W_IN][NUM_CIN] int (skip random gen if 不为 None)
     shortcut_arr_in=None,   # [H_OUT][W_OUT][NUM_COUT] int (residual 时, 优先于随机)
+    # ---- D-1 PyTorch 真权重 override (跳 random weight gen) ----
+    wb_arr_in=None,         # [K][K][NUM_COUT][NUM_CIN] int8 (None = random)
+    bias_arr_in=None,       # [NUM_COUT] int32 (None = no bias)
     sdp_mult=None, sdp_zp_out=None,
     sdp_clip_min=None, sdp_clip_max=None,
     sdp_round_en=None, sdp_relu_en=None,
@@ -139,20 +142,31 @@ def generate_random(
                         cin = cins * HW_PE + cin_local
                         ifm_arr[y][x][cin] = random.randint(0, 7)
 
-    # ---- 生成 random w_arr: [K][K][NUM_COUT][NUM_CIN] int (-3..3, small) ----
-    w_arr = [[[[0] * NUM_CIN for _ in range(NUM_COUT)]
-              for _ in range(K)] for _ in range(K)]
-    for cs in range(cout_slices):
-        local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
-        for cins in range(cin_slices):
-            local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
-            for ky in range(K):
-                for kx in range(K):
-                    for lc in range(local_cout):
-                        cout = cs * HW_COL + lc
-                        for cin_local in range(local_cin):
-                            cin = cins * HW_PE + cin_local
-                            w_arr[ky][kx][cout][cin] = random.randint(-3, 3)
+    # ---- w_arr: D-1 真权重 override, 否则随机 ----
+    if wb_arr_in is not None:
+        # 维度断言
+        assert len(wb_arr_in) == K, f"wb_arr_in K={len(wb_arr_in)} vs K={K}"
+        assert len(wb_arr_in[0]) == K, f"wb_arr_in Kx vs K={K}"
+        assert len(wb_arr_in[0][0]) == NUM_COUT, \
+            f"wb_arr_in Cout={len(wb_arr_in[0][0])} vs NUM_COUT={NUM_COUT}"
+        assert len(wb_arr_in[0][0][0]) == NUM_CIN, \
+            f"wb_arr_in Cin={len(wb_arr_in[0][0][0])} vs NUM_CIN={NUM_CIN}"
+        w_arr = wb_arr_in
+    else:
+        # 生成 random w_arr: [K][K][NUM_COUT][NUM_CIN] int (-3..3, small)
+        w_arr = [[[[0] * NUM_CIN for _ in range(NUM_COUT)]
+                  for _ in range(K)] for _ in range(K)]
+        for cs in range(cout_slices):
+            local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
+            for cins in range(cin_slices):
+                local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
+                for ky in range(K):
+                    for kx in range(K):
+                        for lc in range(local_cout):
+                            cout = cs * HW_COL + lc
+                            for cin_local in range(local_cin):
+                                cin = cins * HW_PE + cin_local
+                                w_arr[ky][kx][cout][cin] = random.randint(-3, 3)
 
     # ---- SDP 参数: 优先 override, 否则 F-1a 默认 (mult=1, clip[0,255], ReLU on, no round)
     if sdp_mult     is None: sdp_mult     = 1
@@ -192,11 +206,11 @@ def generate_random(
         if shortcut_mult  is None: shortcut_mult  = 0
         if shortcut_shift is None: shortcut_shift = 0
 
-    # ---- 模拟硬件算 expected_ofm（bias=None）----
+    # ---- 模拟硬件算 expected_ofm（bias=None 默认; D-1 PyTorch 真权重传 bias_arr_in） ----
     #   注意 expected_ofm 用 *原始* conv 计算 (pre-S2D, pre-fold), bit-exact 对照.
     ofm_arr, _H, _W = hw_files.compute_expected_ofm(
         H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride, pad_top, pad_left,
-        ifm_arr, w_arr, bias_arr=None,
+        ifm_arr, w_arr, bias_arr=bias_arr_in,
         sdp_mult=sdp_mult, sdp_shift=shift_amt, sdp_zp_out=sdp_zp_out,
         sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
         sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
@@ -301,11 +315,11 @@ def generate_random(
         H_IN_hw = H_IN
         pad_top_hw = pad_top
 
-    # R.1/R.2: rdma_data.txt = bias 段 (zero) + 可选 shortcut 段
-    #   bias_arr = None → 全 0 bias (跟 compute_expected_ofm 用 bias=None 一致)
-    #   shortcut_arr 仅 residual=True 时非 None
+    # R.1/R.2: rdma_data.txt = bias 段 + 可选 shortcut 段
+    #   D-1 fix: 传 bias_arr_in 给 emit, 跟 compute_expected_ofm 同源 (RTL bias_rf 通路才有数据)
+    #   bias_arr_in = None → 全 0 bias (合成 demo 一直这样)
     n_rdma_lines, _ = hw_files.write_rdma_data(
-        out_dir, bias_arr=None, shortcut_arr=shortcut_arr,
+        out_dir, bias_arr=bias_arr_in, shortcut_arr=shortcut_arr,
         NUM_COUT=NUM_COUT, HW_COL=HW_COL,
         H_OUT=H_OUT, W_OUT=W_OUT)
 

@@ -1,0 +1,34 @@
+// vd100_with_elf.bif
+//
+// 用 type=bootimage 引用 apply_config 输出的 .pdi 当 base, append A72 ELF.
+// PLM 是 root, 自己 load A72 ELF 到 DDR 不轴 firewall.
+//
+// 前提: BD 已含 PS NMU (FPD_CCI×4 + LPD + PMC), apply_config 完成.
+//
+// 命令:
+//   "D:\Xilinx\Vitis\2023.2\bin\bootgen.bat" -arch versal \
+//       -image vd100_with_elf.bif \
+//       -o vd100_with_elf.pdi \
+//       -w on
+//
+// 然后 Vivado 烧 vd100_with_elf.pdi, A72 自动跑 lwIP server.
+
+new_bif:
+{
+    image
+    {
+        { type=bootimage, file=C:/_Project/FLUX_CNN/Syn/vd100_minimal/output/ps_hello.runs/impl_1/design_1_wrapper.pdi }
+    }
+    // image_id 0x1C000000 = PM_SUBSYS_DEFAULT (ALINX 06_ps_hello 同样用法).
+    // 之前用 0x1c000002 触发 PLM 0x33C/0x07F4 = XPM_INVALID_SUBSYSID
+    image
+    {
+        name=user_elfs_subsys, id=0x1c000000
+        partition
+        {
+            id=0x10
+            core=a72-0
+            file=C:/_Project/FLUX_CNN/host/vd100_ps_baremetal/workspace2/resnet11_app/Debug/resnet11_app.elf
+        }
+    }
+}

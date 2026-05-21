@@ -20,7 +20,7 @@
 // 在 layer 内 stable, sequencer 跨 layer 切换前会 wait pipeline drained, 所以
 // SDP pipeline 内部用 cfg 直连 (不 latch), 不会出现 mid-pipeline cfg 变化.
 //
-// total latency: 2 cycles (input fire → output valid 2 拍后)
+// total latency: 3 cycles (input fire → output valid 3 拍后; 2026-05-18 SDP 加 stage 0a)
 //   ofb_writer 用 valid_out 当 ofb_we, in_flight 计数器扩到 [2:0] 容纳 max 3.
 //
 // J-3 → J-4 timing 演进:
@@ -58,27 +58,49 @@ module sdp #(
     input  logic [NUM_COL*8-1:0]              shortcut_in,
     input  logic                              valid_in,
 
-    // --- 输出 (stage 2b, 2 cycle latency) ---
+    // --- 输出 (stage 2b, 3 cycle latency; 2026-05-18 stage 0a 拆 add+mult) ---
     output logic [NUM_COL*8-1:0]              ofm_data,
     output logic                              valid_out
 );
 
     localparam int EXT_W = PSUM_WIDTH + 10;   // 42: 容纳 q+zp 和 + shortcut 不溢
 
+    // mult / shift 由 ofb_writer 端 (* keep = "true" *) latch 一拍后送入 SDP, 这里
+    // 直接用 input port 值 (= 已经 latched 后的 cfg). 不在 SDP 内重复 latch.
     // =========================================================================
-    // Stage 0 → 1 (comb): psum + bias 拼成 biased
+    // Stage 0 → 0a (latch): psum + bias 拼成 biased
+    //   2026-05-18: 拆 stage. 原版 (biased + biased*mult) 同一拍, Vivado 把 32×33-bit
+    //   signed mult 拆 LUTCY 链 (logic levels 26-30), 跑不过 150 MHz. 拆成 add 单独 1
+    //   拍 + mult 单独 1 拍后, Vivado 能推 DSP58 (M reg = 1-cycle), 满足 150 MHz.
+    //   代价: SDP latency 2→3 cycle, streaming 吞吐不变, 推理首 OFM 多 1 cycle 无感.
     // =========================================================================
-    logic signed [PSUM_WIDTH:0] biased_ch [0:NUM_COL-1];
-    always_comb begin
+    logic signed [PSUM_WIDTH:0] biased_d [0:NUM_COL-1];
+    logic                       valid_b;
+
+    always_ff @(posedge clk) begin
+        if (!rst_n) valid_b <= 1'b0;
+        else        valid_b <= valid_in;
+    end
+
+    always_ff @(posedge clk) begin
         for (int c = 0; c < NUM_COL; c++) begin
-            biased_ch[c] = (PSUM_WIDTH+1)'($signed(psum_in[c*PSUM_WIDTH +: PSUM_WIDTH]))
+            biased_d[c] <= (PSUM_WIDTH+1)'($signed(psum_in[c*PSUM_WIDTH +: PSUM_WIDTH]))
                          + (PSUM_WIDTH+1)'($signed(bias_in[c*PSUM_WIDTH +: PSUM_WIDTH]));
         end
     end
 
+    // shortcut_in 跟 biased_d 同步, 多 1 拍 latch 跟 prod_d 对齐
+    logic signed [7:0] shortcut_b [0:NUM_COL-1];
+    always_ff @(posedge clk) begin
+        for (int c = 0; c < NUM_COL; c++) begin
+            shortcut_b[c] <= $signed(shortcut_in[c*8 +: 8]);
+        end
+    end
+
     // =========================================================================
-    // Stage 1 latch: prod_d = biased * mult, shortcut 透传, valid
-    //   prod_d 让 Vivado 推 DSP48E1 with input + M register (1-cycle mult).
+    // Stage 0a → 1 (latch): prod_d = biased_d * mult, shortcut 透传, valid
+    //   biased_d 已 reg, mult 由 ofb_writer 端 KEEP register latch (避免 Vivado retime
+    //   合并掉), 32×33 → 64 signed mult Vivado 推 DSP58 (1-cycle).
     // =========================================================================
     logic signed [63:0]    prod_d      [0:NUM_COL-1];
     logic signed [7:0]     shortcut_d  [0:NUM_COL-1];
@@ -86,13 +108,13 @@ module sdp #(
 
     always_ff @(posedge clk) begin
         if (!rst_n) valid_d <= 1'b0;
-        else        valid_d <= valid_in;
+        else        valid_d <= valid_b;
     end
 
     always_ff @(posedge clk) begin
         for (int c = 0; c < NUM_COL; c++) begin
-            prod_d[c]     <= $signed(biased_ch[c]) * $signed(mult);
-            shortcut_d[c] <= $signed(shortcut_in[c*8 +: 8]);
+            prod_d[c]     <= $signed(biased_d[c]) * $signed(mult);
+            shortcut_d[c] <= shortcut_b[c];
         end
     end
 

@@ -31,8 +31,8 @@ _TOOLCHAIN_DIR  = os.path.dirname(_SCRIPT_DIR)
 if _TOOLCHAIN_DIR not in sys.path:
     sys.path.insert(0, _TOOLCHAIN_DIR)
 
-import hw_files          # noqa: E402
-import compile_layer     # noqa: E402
+from backend import hw_cfg_derive as hw_files          # noqa: E402
+from backend import data_emit as compile_layer     # noqa: E402
 from zoo import MODELS, build_model   # noqa: E402
 
 

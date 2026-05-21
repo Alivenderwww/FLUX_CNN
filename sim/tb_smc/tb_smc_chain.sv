@@ -36,7 +36,7 @@ module tb_smc_chain;
     localparam int AXI_M_ID   = `FLUX_AXI_M_ID;
     localparam int AXI_M_W    = `FLUX_AXI_M_WIDTH;
 
-    localparam int NUM_CORES  = 4;
+    localparam int NUM_CORES  = 4;   // tb_smc 原生支持 N=4 (axi_smc_4to4 IP)
     localparam int CORE_ID_W  = $clog2(NUM_CORES);
     localparam int HOST_CSR_AW = 12 + CORE_ID_W;
 
@@ -51,7 +51,7 @@ module tb_smc_chain;
     localparam longint SMC_LAYER_DESC_OFFSET   = 64'h0001_0000;
     localparam longint SMC_INPUT_BASE          = 64'h00D0_0000;
     localparam longint SMC_LAYER_INPUT_OFFSET  = 64'h0008_0000;   // 512 KB / root slot
-    localparam longint SMC_FINAL_OFM_BASE      = 64'h00E0_0000;
+    localparam longint SMC_FINAL_OFM_BASE      = 64'h00F0_0000;   // sync 跟 toolchain Phase D (扩 input region 给 patch s2d 2MB IFM)
 
     // CSR 地址
     localparam [11:0] ADDR_CTRL           = `FLUX_ADDR_CTRL;
@@ -132,6 +132,7 @@ module tb_smc_chain;
     string  smc_layer_mode       [0:31];   // "W" or "A"
     int     smc_layer_mode_a_core[0:31];
     int     smc_layer_root_slot  [0:31];
+    longint smc_layer_ifb_offset [0:31];   // 新动态分配 offset (相对 SMC_INPUT_BASE), -1 表示非 root layer
 
     // 每 layer mem 散布 layout (driver compute_smc_w_segments 算, TB 直接读不重算切片公式)
     //   IFM_SEG_WIDTHS / STARTS: layer_idx 输入散布到 4 mem 的段宽 + 起点 (整图 W 坐标)
@@ -175,6 +176,7 @@ module tb_smc_chain;
             smc_layer_mode[l]         = "?";
             smc_layer_mode_a_core[l]  = -1;
             smc_layer_root_slot[l]    = -1;
+            smc_layer_ifb_offset[l]   = -1;
             smc_layer_has_residual[l] = 0;
         end
         while (!$feof(fd)) begin
@@ -264,6 +266,7 @@ module tb_smc_chain;
                             else if (suffix == "STRIDE")        smc_layer_stride     [layer_id] = val;
                             else if (suffix == "MODE_A_CORE")   smc_layer_mode_a_core[layer_id] = $signed(val[31:0]);
                             else if (suffix == "ROOT_SLOT")     smc_layer_root_slot  [layer_id] = $signed(val[31:0]);
+                            else if (suffix == "IFB_OFFSET")    smc_layer_ifb_offset [layer_id] = $signed(val);
                             else if (suffix == "HAS_RESIDUAL")  smc_layer_has_residual[layer_id] = val;
                         end
                     end
@@ -423,8 +426,11 @@ module tb_smc_chain;
 
         $readmemh($sformatf("%s/ifb.txt", layer_dir), ifb_arr);
 
-        // base offset within each mem (跟 driver SMC_LAYER_INPUT_OFFSET 一致)
-        if (layer_idx == 0)
+        // base offset within each mem
+        // 优先 SMC_LAYER_X_IFB_OFFSET (新, 动态分配); fallback ROOT_SLOT × 固定 stride (老 case)
+        if (smc_layer_ifb_offset[layer_idx] >= 0)
+            base_offset = SMC_INPUT_BASE + smc_layer_ifb_offset[layer_idx];
+        else if (layer_idx == 0)
             base_offset = SMC_INPUT_BASE;
         else if (smc_layer_root_slot[layer_idx] >= 0)
             base_offset = SMC_INPUT_BASE + (smc_layer_root_slot[layer_idx] + 1) * SMC_LAYER_INPUT_OFFSET;

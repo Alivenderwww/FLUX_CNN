@@ -4,7 +4,7 @@
 样式：散点图（log-log）
   - x = 单帧计算量 GMAC，log 轴
   - y = 帧率 fps，log 轴
-  - 颜色 = 频点（深蓝 ASIC 850 MHz / 深金 FPGA 148.5 MHz）
+  - 颜色 = 频点（深蓝 ASIC 850 MHz / 深金 FPGA 135.86 MHz）
   - 形状 = 方块（统一；本图所有数据均为本工作，与图 5.16 的"方块=本工作"语义一致）
   - 大小 = 网络层数
   - 同一网络的双频点用细虚线连
@@ -20,16 +20,19 @@ from _style import setup_style, save_figure, COLOR_BASELINE, COLOR_THIRD, COLOR_
 
 setup_style()
 
-# 表 5.13 + 5.14 N=4 数据
-# (网络名, GMAC, 层数, ASIC fps @850MHz, FPGA fps @148.5MHz, 平均PE利用率%)
+# 表 5.6 数据 (paper.md §5.7.7), N=4, PE 利用率按各网络层组成实测/分析模型加权
+# (网络名, GMAC, 层数, ASIC fps @850MHz, FPGA fps @135.86MHz, 平均PE利用率%)
+# ResNet11 用 N=4 W slice 实测 cycle 173,432 直接折算 fps；其余 6 网络按各自层级
+# PE 利用率（K=3 主路径 85% / K=1 降采样 20% / K=5/7 大核 95% / Patch S2D 71% /
+# 深度可分卷积 6% / FC 5%）加权后乘 §5.7.3 多核加速 3.44× 折算
 data = [
-    ("ResNet11",     0.131, 11, 3765,  658,  72.7),
-    ("AlexNet",      1.139,  8,  260,   45,  43.4),
-    ("VGG-16",      15.470, 16,   33,    6,  75.4),
-    ("ResNet-18",    1.814, 21,  309,   54,  82.3),
-    ("ResNet-50",    4.089, 54,  113,   20,  68.0),
-    ("MobileNet-V1", 0.569, 28,  711,  124,  59.4),
-    ("YOLOv2-tiny",  3.537,  9,  164,   29,  85.0),
+    ("ResNet11",     0.131, 11, 4901,  783,  73.8),
+    ("AlexNet",      1.139,  8,  260,   41,  43.4),
+    ("VGG-16",      15.470, 16,   33,    5,  75.4),
+    ("ResNet-18",    1.814, 21,  309,   49,  82.3),
+    ("ResNet-50",    4.089, 54,  113,   18,  68.0),
+    ("MobileNet-V1", 0.569, 28,  711,  113,  59.4),
+    ("YOLOv2-tiny",  3.537,  9,  164,   27,  85.0),
 ]
 
 fig, ax = plt.subplots(figsize=(9.0, 5.6))
@@ -93,7 +96,7 @@ ax.set_yscale("log")
 ax.set_xlabel("单帧计算量（GMAC）")
 ax.set_ylabel("帧率（fps，$N=4$ 配置）")
 ax.set_xlim(0.08, 30)
-ax.set_ylim(3, 12000)
+ax.set_ylim(3, 8000)
 ax.grid(True, which="both", linestyle=":", linewidth=0.5, alpha=0.5)
 
 # 形状/大小图例
@@ -104,7 +107,7 @@ legend_elements = [
            label="ASIC @ 850 MHz"),
     Line2D([0], [0], marker="s", color="none", markerfacecolor=COLOR_THIRD,
            markersize=11, markeredgecolor="white", markeredgewidth=1.2,
-           label="FPGA @ 148.5 MHz"),
+           label="FPGA @ 135.86 MHz"),
 ]
 # 大小图例（层数）
 for layers, label in [(8, "8 层"), (28, "28 层"), (54, "54 层")]:

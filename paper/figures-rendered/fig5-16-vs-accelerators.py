@@ -25,9 +25,12 @@ COLOR_VGG    = COLOR_IMPROVED
 COLOR_RES50  = COLOR_THIRD
 
 # 数据：(加速器名, 峰值GOPS, AlexNet fps, VGG-16 fps, ResNet-50 fps, 是否本工作)
+# FLUX_CNN N=4 数据按 paper.md §5.7.7 表 5.6 (按各网络层级 PE 利用率加权分析模型) 折算
+# - ASIC @ 850 MHz: 1024 PE × 850 MHz × 2 ops/MAC = 1740.8 GOPS 峰值
+# - FPGA @ 135.86 MHz: 1024 PE × 135.86 MHz × 2 ops/MAC = 278.2 GOPS 峰值
 data = [
-    ("FLUX_CNN N=4 ASIC",  435,  260,   33,  113, True),
-    ("FLUX_CNN N=4 FPGA",   76,   45,    6,   20, True),
+    ("FLUX_CNN N=4 ASIC", 1741,  260,   33,  113, True),
+    ("FLUX_CNN N=4 FPGA",  278,   41,    5,   18, True),
     ("Eyeriss",            168,   35, None, None, False),
     ("Eyeriss v2",         154,  278, None, None, False),
     ("NVDLA",              128, None,   30,   60, False),
@@ -107,7 +110,7 @@ ax.set_xscale("log")
 ax.set_yscale("log")
 ax.set_xlabel("峰值算力（GOPS）")
 ax.set_ylabel("网络级帧率（fps）")
-ax.set_xlim(50, 1500)
+ax.set_xlim(80, 3000)
 ax.set_ylim(3, 600)
 ax.grid(True, which="both", linestyle=":", linewidth=0.5, alpha=0.5)
 

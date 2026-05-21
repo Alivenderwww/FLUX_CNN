@@ -124,20 +124,10 @@ COLOR_PALETTE_6 = [_p["BASELINE"], _p["IMPROVED"], _p["THIRD"],
 
 
 def setup_style():
-    # 字体策略（本次只改英文，中文沿用原配置 Microsoft YaHei）：
-    #   - 英文 / 数字 / 标点：Times New Roman（serif），与论文正文一致
-    #   - 中文：Microsoft YaHei 作 CJK 字形回退
-    #   - 数学公式：mathtext fontset = "stix"（与 Times 同族 serif，搭配自然）
-    #
-    # 关键技巧：matplotlib 3.6+ 的 per-glyph fallback 要在 font.family
-    # **直接列表形式** 上才生效——matplotlib 把整个 list 串成 FT2Font 的
-    # fallback chain. 反之, font.family="serif" + font.serif=[...] 路径
-    # 不做 per-glyph 回退, 只取首个能找到的字体. 务必用 list 形式.
+    # 字体策略：英文回退默认 sans-serif (DejaVu Sans)，中文仍用 Microsoft YaHei
     mpl.rcParams.update({
-        "font.family": ["Times New Roman", "Microsoft YaHei", "DejaVu Serif"],
-        # serif / sans-serif 维持普通备份, 实际不通过它们 fallback
-        "font.serif":      ["Times New Roman", "Times", "DejaVu Serif"],
-        "font.sans-serif": ["Microsoft YaHei", "SimHei", "Arial", "DejaVu Sans"],
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans", "Arial"],
         "font.size": 10,
         "axes.labelsize": 11,
         "axes.titlesize": 11,
@@ -154,7 +144,7 @@ def setup_style():
         "savefig.dpi": 300,
         "axes.unicode_minus": False,
         # mathtext 用 STIX (Times 同族 serif), 与英文字体一致
-        "mathtext.fontset": "stix",
+        "mathtext.fontset": "dejavusans",
         "mathtext.default": "regular",
     })
 

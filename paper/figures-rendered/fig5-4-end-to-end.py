@@ -17,15 +17,15 @@ from _style import setup_style, save_figure, COLOR_BASELINE, COLOR_IMPROVED, COL
 
 setup_style()
 
-# 表 5.4 数据
+# 表 5.2 数据（按 135.86 MHz 推荐工作频率折算）
 configs = ["$N=1$\n基线",
            "$N=1$\n含 S2D",
            "$N=2$\n+W 切片",
            "$N=4$\n+W 切片",
            "$N=4$\n+SMC 直送\n+调度优化"]
-wall_cy = np.array([1115000, 596088, 450469, 354555, 190133])
-fps     = np.array([129, 241, 319, 406, 756])
-speedup = np.array([1.00, 1.87, 2.48, 3.14, 5.86])
+wall_cy = np.array([1115000, 596088, 450469, 354555, 173432])
+fps     = np.array([122, 228, 302, 383, 783])
+speedup = np.array([1.00, 1.87, 2.48, 3.14, 6.43])
 
 # 段间增量贡献描述
 deltas = [

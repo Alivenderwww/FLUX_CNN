@@ -17,10 +17,16 @@
 | exp9 | M | INT8 SIMD on DSP48E1 ⭐ | LUT 162→99K (-36%), DSP 320→832, Fmax 125→144 MHz |
 | exp10 | – | VD100 demo plan | 板级化路线图 |
 | exp11 | – | ResNet11 真图推理 | 3 张合成图 sim bit-exact PASS |
+| [k7_n4_smc_synth_report_2026_05_19](k7_n4_smc_synth_report_2026_05_19.md) | – | K7-325T N=4 SMC 综合报告 (本次更新) | post-route Fmax **135.86 MHz** / 173K cy / **783 FPS** / Power 1.925 W |
 
-**main 分支最终数据** (K325T xc7k325tffg900-2 routed):
-- ResNet11 N=4 SIMD: **190,258 cy** / **757 FPS @ 143.8 MHz**
-- LUT: 99,061 (49%) / DSP: 832 (99%) / RAMB36: 288
+**main 分支最终数据 (2026-05-19 更新, K325T xc7k325tffg900-2 routed)**:
+- ResNet11 N=4 SIMD: **173,432 cy** / **783.5 FPS @ 135.86 MHz** (routed Fmax)
+- LUT: 93,756 (46%) / FFs: 60,925 (15%) / DSP: 832 (99%) / RAMB36: 288 (65%)
+- Power: 1.925 W (Dynamic 1.74 + Static 0.185), 143.6 GOP/W peak efficiency
+- vs 历史 (190,133 cy / 700 FPS @ 133.3 MHz): **−8.8% cycles, +11.9% FPS**
+
+历史数据 (exp9 SIMD baseline, 仅参考):
+- ResNet11 N=4: 190,133 cy, paper INDEX 老版写的 "757 FPS @ 143.8 MHz" 是按 synth-only Fmax 算的乐观估算, routed 实际 700 FPS @ 133.3 MHz
 
 ## vd100-demo 分支 — VE2302 板级 demo
 
@@ -42,10 +48,10 @@
 | LUT | 99,061 | 128,375 |
 | DSP | 832 (DSP48E1, INT8 SIMD) | 144 (DSP58, no SIMD) |
 | 大 SRAM 映射 | RAMB36 × 288 | RAMB36 × 81 + URAM × 64 ⭐ |
-| Fmax | 143.8 MHz (routed) | 182.3 MHz (OOC) |
-| ResNet11 cy | 190,258 (sim) | ~230,000 (sim 估, N=3) |
+| Fmax | **135.86 MHz (routed)** | 182.3 MHz (OOC) |
+| ResNet11 cy | **173,432 (sim, 2026-05-19 更新)** | ~230,000 (sim 估, N=3) |
 | 整网 latency @ Fmax | 1.32 ms | 1.26 ms |
-| FPS @ Fmax | **757** | **~792** (估) |
+| FPS @ Fmax | **783.5** (2026-05-19 routed) | **~792** (估) |
 | Host 接口 | (无) | PS 千兆网 + Windows Python |
 | 板级 demo | sim/综合数据 | 待板级 bring-up |
 

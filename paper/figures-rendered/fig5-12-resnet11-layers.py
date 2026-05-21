@@ -19,26 +19,30 @@ from _style import setup_style, save_figure, COLOR_ANNO, COLOR_FIRE, COLOR_IDLE,
 
 setup_style()
 
-# 表 5.12 数据
-layers = ["L0\nPatch", "L1\nK3 s2", "L2\nK3 s1", "L3\nds K=1", "L4\nK3 s2",
-          "L5\nK3 s1", "L6\nds K=1", "L7\nK3 s2", "L8\nK3 s1", "L9\nds K=1", "L10\n全连接"]
-layer_types = ["patch",  "k3",   "k3",   "ds",   "k3",   "k3",   "ds",   "k3",   "k3",   "ds",   "fc"]
-fire_max = np.array([32640, 18360, 18360, 2040,  9720,  19440, 1080,  10800, 21600, 1200,  144])
-wall_cy  = np.array([46019, 27709, 19800, 10921, 11305, 22176, 6726,  12539, 27364, 2972,  2927])
+# 表 5.12 数据（ResNet11 实际 11 层 cycles, N=4 W slice + cout slice）
+# 来源：paper/data/k7_n4_smc_synth_report_2026_05_19.md §4.1
+# 整网 wall = 172,916 + barrier 516 = 173,432
+layers = ["L0\nPatch", "L1\nK3 s1", "L2\nK3 s1", "L3\nds K=1", "L4\nK3 s2",
+          "L5\nK3 s1", "L6\nds K=1", "L7\nK3 s2", "L8\nK3 s1", "L9\nK1 s1", "L10\n全连接"]
+layer_types = ["patch",  "k3",   "k3",   "ds",   "k3",   "k3",   "ds",   "k3",   "k3",   "k1",   "fc"]
+wall_cy  = np.array([39979, 21608, 19670, 9128,  10392, 21897, 5321,  12347, 27181, 2471,  2922])
+util     = np.array([70.9,  92.7,  86.0,  18.7,  87.7,  78.9,  16.1,  86.1,  85.0,  40.4,  5.0])
+fire_max = (wall_cy * util / 100.0).astype(int)
 idle     = wall_cy - fire_max
-util     = np.array([70.9,  66.3,  92.7,  18.7,  86.0,  87.7,  16.1,  86.1,  78.9,  40.4,  5.0])
 
 # 层类型染色（背景）
 TYPE_BG = {
     "patch": "#fff3e0",  # 浅橙：Patch 层
     "k3":    "#e8f4ea",  # 浅绿：K=3 主路径
     "ds":    "#fff8d6",  # 浅黄：降采样（访存受限）
+    "k1":    "#e8eef8",  # 浅蓝：1×1 卷积
     "fc":    "#f0f0f0",  # 浅灰：全连接
 }
 TYPE_LABEL = {
     "patch": "Patch",
     "k3":    "$K=3$ 主路径",
     "ds":    "降采样 $K=1$",
+    "k1":    "$K=1$",
     "fc":    "全连接",
 }
 

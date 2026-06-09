@@ -124,10 +124,12 @@ COLOR_PALETTE_6 = [_p["BASELINE"], _p["IMPROVED"], _p["THIRD"],
 
 
 def setup_style():
-    # 字体策略：英文回退默认 sans-serif (DejaVu Sans)，中文仍用 Microsoft YaHei
+    # 字体策略：英文/数字/公式用 Times New Roman（serif），中文用 Microsoft YaHei 作 CJK 回退
+    # 关键：font.family 用 list 形式才触发 matplotlib per-glyph fallback（TNR 缺字形时回退 YaHei）
     mpl.rcParams.update({
-        "font.family": "sans-serif",
-        "font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans", "Arial"],
+        "font.family": ["Times New Roman", "Microsoft YaHei", "DejaVu Serif"],
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "font.sans-serif": ["Microsoft YaHei", "SimHei", "Arial", "DejaVu Sans"],
         "font.size": 10,
         "axes.labelsize": 11,
         "axes.titlesize": 11,
@@ -144,7 +146,7 @@ def setup_style():
         "savefig.dpi": 300,
         "axes.unicode_minus": False,
         # mathtext 用 STIX (Times 同族 serif), 与英文字体一致
-        "mathtext.fontset": "dejavusans",
+        "mathtext.fontset": "stix",
         "mathtext.default": "regular",
     })
 

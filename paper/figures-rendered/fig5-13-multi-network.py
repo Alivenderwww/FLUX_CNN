@@ -22,17 +22,17 @@ setup_style()
 
 # 表 5.6 数据 (paper.md §5.7.7), N=4, PE 利用率按各网络层组成实测/分析模型加权
 # (网络名, GMAC, 层数, ASIC fps @850MHz, FPGA fps @135.86MHz, 平均PE利用率%)
-# ResNet11 用 N=4 W slice 实测 cycle 173,432 直接折算 fps；其余 6 网络按各自层级
+# FR-Net 用 N=4 W slice 实测 cycle 173,432 直接折算 fps；其余 6 网络按各自层级
 # PE 利用率（K=3 主路径 85% / K=1 降采样 20% / K=5/7 大核 95% / Patch S2D 71% /
 # 深度可分卷积 6% / FC 5%）加权后乘 §5.7.3 多核加速 3.44× 折算
 data = [
-    ("ResNet11",     0.131, 11, 4901,  783,  73.8),
-    ("AlexNet",      1.139,  8,  260,   41,  43.4),
-    ("VGG-16",      15.470, 16,   33,    5,  75.4),
-    ("ResNet-18",    1.814, 21,  309,   49,  82.3),
-    ("ResNet-50",    4.089, 54,  113,   18,  68.0),
-    ("MobileNet-V1", 0.569, 28,  711,  113,  59.4),
-    ("YOLOv2-tiny",  3.537,  9,  164,   27,  85.0),
+    ("FR-Net",     0.131, 11,  783 * 850 / 135.86,  783,  73.8),
+    ("AlexNet",      1.139,  8, 45.3 * 850 / 135.86, 45.3,  43.4),
+    ("VGG-16",      15.470, 16,  5.8 * 850 / 135.86,  5.8,  75.4),
+    ("ResNet-18",    1.814, 21, 54.0 * 850 / 135.86, 54.0,  82.3),
+    ("ResNet-50",    4.089, 54, 19.8 * 850 / 135.86, 19.8,  68.0),
+    ("MobileNet-V1", 0.569, 28,124.2 * 850 / 135.86,124.2,  59.4),
+    ("YOLOv2-tiny",  3.537,  9, 28.6 * 850 / 135.86, 28.6,  85.0),
 ]
 
 fig, ax = plt.subplots(figsize=(9.0, 5.6))
@@ -64,7 +64,7 @@ ax.scatter(fpga_x, fpga_y, s=fpga_s, color=COLOR_THIRD,
 
 # 第 3 步：网络名标注 — 统一标在 ASIC 点右上方且偏移大，配引导线避免遮挡
 LABEL_OFFSETS = {  # 全部朝右上偏移
-    "ResNet11":     ( 14,  18),
+    "FR-Net":     ( 14,  -18),
     "AlexNet":      ( 14,  18),
     "VGG-16":       (-86,   8),
     "ResNet-18":    ( 14,  18),
@@ -84,10 +84,10 @@ for name, gmac, layers, fps_a, fps_f, util in data:
 
 # fps 数值标在点旁（小字）— 偏移加大避开方块本身
 for name, gmac, layers, fps_a, fps_f, util in data:
-    ax.annotate(f"{fps_a}", (gmac, fps_a), xytext=(-12, -14),
+    ax.annotate(f"{fps_a:.1f}", (gmac, fps_a), xytext=(-12, -14),
                 textcoords="offset points",
                 fontsize=8, color=COLOR_BASELINE, ha="right", va="top")
-    ax.annotate(f"{fps_f}", (gmac, fps_f), xytext=(-12, 0),
+    ax.annotate(f"{fps_f:.1f}", (gmac, fps_f), xytext=(-12, 0),
                 textcoords="offset points",
                 fontsize=8, color=COLOR_THIRD, ha="right", va="center")
 

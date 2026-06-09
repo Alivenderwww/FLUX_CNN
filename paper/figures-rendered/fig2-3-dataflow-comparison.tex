@@ -45,7 +45,7 @@
         draw=coBaseline,
     },
     panel title/.style={
-        font=\sffamily\small\bfseries,
+        font=\sffamily\bfseries,
         text=coAnno,
         align=center,
     },
@@ -72,7 +72,7 @@
 % Panel A: WS (Weight-Stationary)
 % =============================================================================
 \node[panel frame] (pA) at (-5.2, 0) {};
-\node[panel title, anchor=north] at ($(pA.north)+(0,-2mm)$) {(a) WS / Weight-Stationary};
+\node[panel title, anchor=north] at ($(pA.north)+(0,-2mm)$) {Weight-Stationary};
 \node[panel sub, anchor=north] at ($(pA.north)+(0,-7mm)$) {权重静止};
 
 % PE 阵列 4x4, 中心 (-5.2, 0.4)
@@ -101,7 +101,7 @@
 % Panel B: OS (Output-Stationary)
 % =============================================================================
 \node[panel frame] (pB) at (0, 0) {};
-\node[panel title, anchor=north] at ($(pB.north)+(0,-2mm)$) {(b) OS / Output-Stationary};
+\node[panel title, anchor=north] at ($(pB.north)+(0,-2mm)$) {Output-Stationary};
 \node[panel sub, anchor=north] at ($(pB.north)+(0,-7mm)$) {输出静止};
 
 % PE 阵列 4x4, 中心 (0, 0.4)
@@ -131,7 +131,7 @@
 % Panel C: RS (Row-Stationary)
 % =============================================================================
 \node[panel frame] (pC) at (5.2, 0) {};
-\node[panel title, anchor=north] at ($(pC.north)+(0,-2mm)$) {(c) RS / Row-Stationary};
+\node[panel title, anchor=north] at ($(pC.north)+(0,-2mm)$) {Row-Stationary};
 \node[panel sub, anchor=north] at ($(pC.north)+(0,-7mm)$) {行静止};
 
 % PE 阵列 4x4, 中心 (5.2, 0.4)

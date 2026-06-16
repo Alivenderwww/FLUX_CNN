@@ -12,6 +12,44 @@
 > **🎉 Phase 7 SMC + NUMA ResNet11 N=4 完整网络 sim PASS** (220,824 cy, 453 fps, 11/11 layer 全 bit-exact, 13/13 regression case 全 PASS), 见 §2.12.
 > 长期项目状态见 `README.md`, 模块细节见 `docs/`, 编码规范见 `RTL代码编写原则.md`,
 > 历史经验教训见 `memory/`.
+> **🆕 2026-06-16: tb_smc N=4 hang 修复 + frnet N=4 SMC 跑通 + 系统性假阳性发现**, 见 §0.
+
+---
+
+## 0. 最新进展 (2026-06-16): tb_smc hang 修复 + frnet 性能验证
+
+### 0.1 tb_smc N=4 SMC hang 修复 (plan2.md 存量回归解除)
+- **根因** (波形实证, 推翻 plan2 的 toolchain cfg 方向): `idma_sg_dispatcher.sv` 的 **S_DONE 单拍竞态**.
+  末条 cmd 的 STS 在途时 r_done 漏置 (S_DONE 仅 1 拍无条件回 S_IDLE), idma_done 永 0 → sequencer 死等 S_WAIT.
+  hang 签名实测: `cmds_per_row=1 fires=480 sts=480 sts_drained=1 r_done=0` (cfg 全对、STS 全回, 仍 r_done=0).
+- **修复** (1 行 RTL): `S_DONE: if (sts_drained) st_next = S_IDLE;` (停留等 STS 排空).
+  对 N=2 board **no-op** (board 进 S_DONE 时 STS 已排空). + sts_drained 声明前移 (ModelSim 单遍编译需要).
+- **验证**: resnet11 N=4 SMC 11/11 层 bit-exact PASS, Wall 172333 cy. 详见 `memory/idma_sg_s_done_race.md`.
+
+### 0.2 frnet (DualDONN8 ResNet 后端) N=4 SMC 性能验证
+- **维度已对齐真实网络** (从 `CNN-SPSCD-...-DualDONN8-img480x270.py` 逐层核对): 源图 960×540 → DONN 2×2 →
+  8×270×480 → stem 输入 268×480×8 (s2d 取 H 整除 4) → 67×120×8 → L2 34×60×16 → L3 17×30×32 → L4 9×15×64 → FC.
+  (plan2 初版误把 DONN 输出当源图又多 patch 一次, 维度只有真实的 1/2, 已修正)
+- **结果**: 11/11 层 bit-exact PASS, **Wall 59060 cy / ≈1693 fps@100MHz / PE util 50.7% / 30.69M MAC**.
+- 完整报告 (per-layer 周期+util / 瓶颈分析 / IDMA dispatcher 分解): `docs/frnet_n4_perf.md`.
+- frnet 网络定义在 `run_multicore_chain.py --demo frnet` 分支 (合成权重, 非真 QAT; `FRNET_SHIFTS` 可覆盖 shift).
+- **TODO**: AvgPool 2×2 未实现 (FLUX 不跑 pool, 等效深度卷积待做, 当前 FC root preload 绕过); 接真 QAT 权重才算真部署.
+
+### 0.3 ⚠️ 系统性假阳性发现 (记录不修)
+- 合成数据 (IFM[0,7]/wgt[-3,3]) + 大 shift (抄 resnet11 的 11~13) 让 chain 中间层激活**全塌缩为 0**,
+  bit-exact "PASS" 是**假阳性** (软硬都全 0). frnet **和 resnet11** 都中招.
+- **性能数字仍有效** (与数据值无关, 修数据前后 Wall 一致). 只有功能 bit-exact 正确性是空的.
+- frnet 已按参考单层 case 重标定 shift 修好 (真 bit-exact). resnet11 等历史 demo 暂记录不修.
+- 详见 `memory/synthetic_data_shift_collapse.md`.
+
+### 0.4 SMC chain 自动性能报告 (PERF_* → CSV, 架构无关)
+- tb_smc chain 跑完**自动**出 CSV 性能报告 (任意模型/层数/输入/核数), 机制类比 regression_report.
+- TB 打印机读 tag 行 `PERF_RUN/PERF_LAYER/PERF_LAYER_CORE/PERF_CORE/PERF_DDR`; `run.tcl` 用
+  `-onfinish stop` 让 $finish 停回 tcl 后自动调 `toolchain/gen_perf_report.py` 解析成 5 个 CSV
+  (`<case>_run/layer/layer_core/core/ddr.csv`, 落 case 目录).
+- 架构无关: cores/layers/ddrs 由 PERF_RUN 自描述, parser 用通用 key=value 解析 (新字段自动进 header).
+  `mac_pipe_pct = Σfire/(cores×wall)` 是硬件 pipe 利用率. 新 TB 照样打印 PERF_* 即可复用同一 parser.
+- 手动: `python toolchain/gen_perf_report.py <log> --out-dir <case_dir> --case <name>`. 文档见 `docs/simulation.md` §5.5.
 
 ---
 

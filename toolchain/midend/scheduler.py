@@ -294,8 +294,12 @@ def set_force_cout_layer_names(names):
 
 
 def can_w_slice(layer: Layer, n_split: int) -> bool:
-    """W 切片可行性: w_in >= n_split * (K+1) 留 halo."""
-    return layer.w_in >= n_split * (layer.k + 1)
+    """W 切片可行性: 每核至少分到 1 输出列 (w_out >= n_split). halo / sub_W 几何由
+    compute_w_slice_geom 处理. 原约束 w_in >= n_split*(K+1) 用「输入列 + halo 余量」估算,
+    偏保守 — wslice_smallw (W=8 N=4 每核 W_OUT=2) 已验证小 sub_W 几何 PASS, 真正边界是输出列
+    而非输入列. 放宽让小图深层 (FR-Net L3 W_OUT=15 / L4 W_OUT=8, N=4) 也能 4 核 W slice 跑通,
+    避免 W slice→cout slice 不兼容; 对 W 维大的旧网络判定不变 (远超门槛)."""
+    return layer.w_out >= n_split
 
 
 def can_cout_slice(layer: Layer, n_split: int) -> bool:

@@ -1553,6 +1553,36 @@ def _layers_for_demo(args):
         else:
             from run_regression import CASES
             layers = scheduler.chain_to_layers(CASES[:11])
+    elif args.demo == 'frnet':
+        # FR-Net (DualDONN8 ResNet 后端) — FLUX 上的真实推理网络.
+        # 输入 = DONN 光学前端输出 8ch × 270 × 480 (源图 960×540 → 2×2 patch → H/2×W/2 = 270×480,
+        #   双 DONN 各 4 输出沿通道拼成 8 通道). DONN 是光学/FP32, 不上硬件, 仿真从 stem 开始.
+        # stem 输入 H 取 268 = floor(270/4)×4: PyTorch stem K4S4 在 270 行上 floor 取整 → 67 行,
+        #   等价于丢弃最后 2 行只用前 268 行 (s2d 折叠要求 H 被 stride 整除). W=480 已被 4 整除 → 120.
+        # 维度核对 (Python 源码 ResNetSmallDualHead base_ch=8 layers=(1,1,1,1) pool_hw=(2,2)):
+        #   stem 67×120×8 → L2 34×60×16 → L3 17×30×32 → L4 9×15×64 → adapool 2×2 → FC.
+        # 结构: stem(K4S4 8→8, s2d 自动) + L2/L3/L4 残差块(8→16→32→64) + FC.
+        # AvgPool(9×15→2×2) 暂不实现 (FLUX 不跑 pool, 等效深度卷积 TODO); FC 是 root preload.
+        # FC: flatten 256 后 cls(13)+grid(100) 两头合并成 1 层 cout=113 (root preload).
+        from run_regression import Chain, resnet_block
+        # shift 标定: 合成数据 IFM∈[0,7] wgt∈[-3,3] 很小, 旧 shift(抄 resnet11 的 11~13)
+        # 对小 cin 层是 /2048 → 中间激活全塌缩为 0 (假阳性). 按参考单层 case 重估 (k3 cin8
+        # → shift4 等). 可经 FRNET_SHIFTS 环境变量覆盖做 calibration: "stem,c1,c2,ds,...,fc".
+        import os as _os
+        _envsh = _os.environ.get('FRNET_SHIFTS')
+        if _envsh:
+            _v = [int(x) for x in _envsh.split(',')]
+            _stem_sh, _l2_sh, _l3_sh, _l4_sh, _fc_sh = \
+                _v[0], tuple(_v[1:4]), tuple(_v[4:7]), tuple(_v[7:10]), _v[10]
+        else:
+            _stem_sh, _l2_sh, _l3_sh, _l4_sh, _fc_sh = 2, (4, 4, 2), (4, 5, 2), (5, 5, 3), 5
+        _c    = Chain(h=268, w=480, c=8)
+        _stem = _c.conv('Stem', k=4, c=8,  s=4, pad=0, shift=_stem_sh)
+        _l2   = resnet_block(_stem, 'L2', c=16, shifts=_l2_sh)
+        _l3   = resnet_block(_l2,   'L3', c=32, shifts=_l3_sh)
+        _l4   = resnet_block(_l3,   'L4', c=64, shifts=_l4_sh)
+        _c.root('FC', k=1, c_in=256, c_out=113, h=1, w=1, shift=_fc_sh)
+        layers = scheduler.chain_to_layers(_c.cases)
     else:
         # 其他 demo (simple2/wslice*/patch_*/resnet*) 转交给老 main if/elif (避免 in-process 调用时 sys.exit)
         # 重要: 用 sys.argv 复制 args 让原 main 的 if/elif 跑一次后退出
@@ -1591,7 +1621,7 @@ if __name__ == '__main__':
                                  'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
                                  'wslice_smallw', 'wslice_k7', 'wslice_k1',
                                  'patch1', 'patch_small', 'patch_s2d', 'patch_s2d_resnet',
-                                 'resnet_block1', 'resnet_residual_wslice', 'resnet11',
+                                 'resnet_block1', 'resnet_residual_wslice', 'resnet11', 'frnet',
                                  # board sweep 单层 demo (本地新增)
                                  'sw_h64_w32', 'sw_h96_w32', 'sw_h128_w32',
                                  'sw_h32_w32_s2', 'sw_h64_w32_s2', 'sw_h64_w75_s2'],

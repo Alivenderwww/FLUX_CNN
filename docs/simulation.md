@@ -132,6 +132,35 @@ FAIL 分支只打 `cycles + mismatches + name`（无 perf counters）。
 
 ---
 
+## 5.5 SMC chain 自动性能报告（PERF_* → CSV，架构无关）
+
+多核 SMC chain TB（`sim/tb_smc/tb_smc_chain.sv`）跑完**自动**生成 CSV 性能报告，
+无论什么模型 / 层数 / 输入 / 核数都能直接拿到原始数据（机制类比 `regression_report`）。
+
+**机制**：TB 打印一组**机读 tag 行**（`run -all` 末尾），`run.tcl` 用 `-onfinish stop`
+让 `$finish` 停回 tcl 后自动调 `toolchain/gen_perf_report.py transcript` 解析成 CSV：
+
+| tag 行 | 内容 | → CSV |
+|---|---|---|
+| `PERF_RUN result= layers= cores= ddrs= wall_cyc= clk_mhz=` | run 总览 | `<case>_run.csv`（+派生 fps / mac_pipe_pct） |
+| `PERF_LAYER l= cyc=` | 每层周期 | `<case>_layer.csv`（+pct_of_wall / mac_pipe_pct） |
+| `PERF_LAYER_CORE l= c= cyc= fire= util_pct= *_stall= *_idle=` | 每层每核 | `<case>_layer_core.csv`（最细粒度原始数据） |
+| `PERF_CORE c= idma_grant= … data_cyc= done_cyc=` | 每核 arb+dispatcher | `<case>_core.csv` |
+| `PERF_DDR d= busy_cyc= aw_fire= w_beats= ar_fire= r_beats=` | 每 DDR 流量 | `<case>_ddr.csv`（+busy_pct） |
+
+**架构无关**：`cores/layers/ddrs` 由 `PERF_RUN` 自描述，parser 用通用 `key=value` 解析
+（新增字段自动进 CSV header），缺某类行则不出该 CSV。`mac_pipe_pct = Σfire/(cores×wall)`
+是**硬件 pipe 利用率**（非 ops 算术利用率，后者需每层理论 MAC）。
+
+**手动重生成**（事后从任意 log）：
+```bash
+python toolchain/gen_perf_report.py <sim_log> --out-dir <case_dir> --case <name>
+```
+
+新 TB 要接入这套报告，只需照上表打印 `PERF_*` 行即可被同一 parser 解析。
+
+---
+
 ## 6. 文件清单和编译顺序
 
 `sim/tb_core_dma/run.tcl`：

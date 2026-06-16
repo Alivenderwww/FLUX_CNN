@@ -374,6 +374,10 @@ module tb_smc_chain;
                  c, l, layer_cycles, d_fire,
                  (real'(d_fire) / real'(layer_cycles)) * 100.0,
                  d_act_st, d_act_id, d_wgt_st, d_wgt_id, d_psm_st, d_psm_id, d_acc_id);
+        // 机读 tag 行 (gen_perf_report.py 解析 → CSV). 架构无关: l/c 自描述.
+        $display("PERF_LAYER_CORE l=%0d c=%0d cyc=%0d fire=%0d util_pct=%.1f act_stall=%0d act_idle=%0d wgt_stall=%0d wgt_idle=%0d psum_stall=%0d psum_idle=%0d acc_idle=%0d",
+                 l, c, layer_cycles, d_fire, (real'(d_fire) / real'(layer_cycles)) * 100.0,
+                 d_act_st, d_act_id, d_wgt_st, d_wgt_id, d_psm_st, d_psm_id, d_acc_id);
     endtask
 
     // 写 byte_addr 处的一个 BUS_DATA_W word 到 mem[mem_id]
@@ -915,6 +919,7 @@ module tb_smc_chain;
             layer_cycles = ($time - t_layer_start) / 10;
             $display("  Layer %0d done @ t=%0t (cycles=%0d, mask=%b)",
                      l, $time, layer_cycles, expected_done_mask);
+            $display("PERF_LAYER l=%0d cyc=%0d", l, layer_cycles);
 
             // PE 利用率 profile dump (per-core diff)
             //   act_idle = mac_array 等 line_buffer 给数据 (上游慢, 通常 IDMA bound)
@@ -1004,7 +1009,7 @@ module tb_smc_chain;
                 $display("");
                 $display("  === IDMA SG dispatcher state cy breakdown ===");
                 for (int cc = 0; cc < NUM_CORES; cc++) begin
-                    int fc, rwc, ic, dc, donc;
+                    int fc, rwc, ic, dc, donc, ig, wg, rg, og;
                     case (cc)
                         0: begin
                             fc  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
@@ -1012,6 +1017,10 @@ module tb_smc_chain;
                             ic  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
                             dc  = u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
                             donc= u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                            ig  = u_dut.gen_core[0].u_core.u_mm2s_arb.hs_idma_grant;
+                            wg  = u_dut.gen_core[0].u_core.u_mm2s_arb.hs_wdma_grant;
+                            rg  = u_dut.gen_core[0].u_core.u_mm2s_arb.hs_rdma_grant;
+                            og  = u_dut.gen_core[0].u_core.u_mm2s_arb.hs_ocmd_grant;
                         end
                         1: begin
                             fc  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
@@ -1019,6 +1028,10 @@ module tb_smc_chain;
                             ic  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
                             dc  = u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
                             donc= u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                            ig  = u_dut.gen_core[1].u_core.u_mm2s_arb.hs_idma_grant;
+                            wg  = u_dut.gen_core[1].u_core.u_mm2s_arb.hs_wdma_grant;
+                            rg  = u_dut.gen_core[1].u_core.u_mm2s_arb.hs_rdma_grant;
+                            og  = u_dut.gen_core[1].u_core.u_mm2s_arb.hs_ocmd_grant;
                         end
                         2: begin
                             fc  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
@@ -1026,6 +1039,10 @@ module tb_smc_chain;
                             ic  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
                             dc  = u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
                             donc= u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                            ig  = u_dut.gen_core[2].u_core.u_mm2s_arb.hs_idma_grant;
+                            wg  = u_dut.gen_core[2].u_core.u_mm2s_arb.hs_wdma_grant;
+                            rg  = u_dut.gen_core[2].u_core.u_mm2s_arb.hs_rdma_grant;
+                            og  = u_dut.gen_core[2].u_core.u_mm2s_arb.hs_ocmd_grant;
                         end
                         3: begin
                             fc  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_fetch_cy;
@@ -1033,10 +1050,16 @@ module tb_smc_chain;
                             ic  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_issue_cy;
                             dc  = u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_data_cy;
                             donc= u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.hs_done_cy;
+                            ig  = u_dut.gen_core[3].u_core.u_mm2s_arb.hs_idma_grant;
+                            wg  = u_dut.gen_core[3].u_core.u_mm2s_arb.hs_wdma_grant;
+                            rg  = u_dut.gen_core[3].u_core.u_mm2s_arb.hs_rdma_grant;
+                            og  = u_dut.gen_core[3].u_core.u_mm2s_arb.hs_ocmd_grant;
                         end
                     endcase
                     $display("    C%0d: fetch=%0d ring_wait=%0d issue=%0d data=%0d done=%0d (sum=%0d)",
                              cc, fc, rwc, ic, dc, donc, fc + rwc + ic + dc + donc);
+                    $display("PERF_CORE c=%0d idma_grant=%0d wdma_grant=%0d rdma_grant=%0d ocmd_grant=%0d fetch_cyc=%0d ringwait_cyc=%0d issue_cyc=%0d data_cyc=%0d done_cyc=%0d",
+                             cc, ig, wg, rg, og, fc, rwc, ic, dc, donc);
                 end
             end
 
@@ -1073,6 +1096,24 @@ module tb_smc_chain;
                      mismatches, layer_ofb_words[n_layers - 1], total_intermediate_mm);
         $display("  Wall: %0d cycles", ($time - t_start)/10);
         $display("============================================================");
+        // =====================================================================
+        // 机读性能 tag 行 (gen_perf_report.py 解析 → CSV). 架构无关:
+        //   layers/cores/ddrs 自描述, parser 不写死维度. wall 单位 = cycle (10ns/cy).
+        // =====================================================================
+        $display("PERF_RUN result=%s layers=%0d cores=%0d ddrs=%0d wall_cyc=%0d clk_mhz=100",
+                 (mismatches == 0 && total_intermediate_mm == 0) ? "PASS" : "FAIL",
+                 n_layers, NUM_CORES, NUM_CORES, ($time - t_start)/10);
+        for (int dd = 0; dd < NUM_CORES; dd++) begin
+            int bc, awf, wbt, arf, rbt;
+            case (dd)
+                0: begin bc=u_dut.g_sim_mem.gen_mem[0].u_mem.busy_cyc; awf=u_dut.g_sim_mem.gen_mem[0].u_mem.aw_fire; wbt=u_dut.g_sim_mem.gen_mem[0].u_mem.w_beats; arf=u_dut.g_sim_mem.gen_mem[0].u_mem.ar_fire; rbt=u_dut.g_sim_mem.gen_mem[0].u_mem.r_beats; end
+                1: begin bc=u_dut.g_sim_mem.gen_mem[1].u_mem.busy_cyc; awf=u_dut.g_sim_mem.gen_mem[1].u_mem.aw_fire; wbt=u_dut.g_sim_mem.gen_mem[1].u_mem.w_beats; arf=u_dut.g_sim_mem.gen_mem[1].u_mem.ar_fire; rbt=u_dut.g_sim_mem.gen_mem[1].u_mem.r_beats; end
+                2: begin bc=u_dut.g_sim_mem.gen_mem[2].u_mem.busy_cyc; awf=u_dut.g_sim_mem.gen_mem[2].u_mem.aw_fire; wbt=u_dut.g_sim_mem.gen_mem[2].u_mem.w_beats; arf=u_dut.g_sim_mem.gen_mem[2].u_mem.ar_fire; rbt=u_dut.g_sim_mem.gen_mem[2].u_mem.r_beats; end
+                3: begin bc=u_dut.g_sim_mem.gen_mem[3].u_mem.busy_cyc; awf=u_dut.g_sim_mem.gen_mem[3].u_mem.aw_fire; wbt=u_dut.g_sim_mem.gen_mem[3].u_mem.w_beats; arf=u_dut.g_sim_mem.gen_mem[3].u_mem.ar_fire; rbt=u_dut.g_sim_mem.gen_mem[3].u_mem.r_beats; end
+            endcase
+            $display("PERF_DDR d=%0d busy_cyc=%0d aw_fire=%0d w_beats=%0d ar_fire=%0d r_beats=%0d",
+                     dd, bc, awf, wbt, arf, rbt);
+        end
         $finish;
     end
 
@@ -1084,7 +1125,7 @@ module tb_smc_chain;
             $display("[t=%0t] done=%b", $time, done_per_core);
             for (int c = 0; c < NUM_CORES; c++) begin
                 case (c)
-                    0: $display("  C0 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
+                    0: begin $display("  C0 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
                                 u_dut.gen_core[0].u_core.u_sequencer.state,
                                 u_dut.gen_core[0].u_core.idma_done,
                                 u_dut.gen_core[0].u_core.odma_done,
@@ -1098,7 +1139,15 @@ module tb_smc_chain;
                                 u_dut.gen_core[0].u_core.g_odma_sg.u_odma_sg.state,
                                 u_dut.gen_core[0].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
                                 u_dut.gen_core[0].u_core.g_odma_sg.u_odma_sg.r_rows_drained);
-                    1: $display("  C1 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
+                       if (u_dut.gen_core[0].u_core.u_sequencer.state == 4 && !u_dut.gen_core[0].u_core.idma_done)
+                         $display("     C0 RACE: cmds_per_row=%0d fires=%0d sts=%0d sts_drained=%b r_done=%b",
+                                u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.cfg_cmds_per_row,
+                                u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.r_cmd_fires_total,
+                                u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.r_sts_collected,
+                                u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.sts_drained,
+                                u_dut.gen_core[0].u_core.g_idma_sg.u_idma_sg.r_done);
+                       end
+                    1: begin $display("  C1 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
                                 u_dut.gen_core[1].u_core.u_sequencer.state,
                                 u_dut.gen_core[1].u_core.idma_done,
                                 u_dut.gen_core[1].u_core.odma_done,
@@ -1112,7 +1161,15 @@ module tb_smc_chain;
                                 u_dut.gen_core[1].u_core.g_odma_sg.u_odma_sg.state,
                                 u_dut.gen_core[1].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
                                 u_dut.gen_core[1].u_core.g_odma_sg.u_odma_sg.r_rows_drained);
-                    2: $display("  C2 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
+                       if (u_dut.gen_core[1].u_core.u_sequencer.state == 4 && !u_dut.gen_core[1].u_core.idma_done)
+                         $display("     C1 RACE: cmds_per_row=%0d fires=%0d sts=%0d sts_drained=%b r_done=%b",
+                                u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.cfg_cmds_per_row,
+                                u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.r_cmd_fires_total,
+                                u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.r_sts_collected,
+                                u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.sts_drained,
+                                u_dut.gen_core[1].u_core.g_idma_sg.u_idma_sg.r_done);
+                       end
+                    2: begin $display("  C2 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
                                 u_dut.gen_core[2].u_core.u_sequencer.state,
                                 u_dut.gen_core[2].u_core.idma_done,
                                 u_dut.gen_core[2].u_core.odma_done,
@@ -1126,7 +1183,15 @@ module tb_smc_chain;
                                 u_dut.gen_core[2].u_core.g_odma_sg.u_odma_sg.state,
                                 u_dut.gen_core[2].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
                                 u_dut.gen_core[2].u_core.g_odma_sg.u_odma_sg.r_rows_drained);
-                    3: $display("  C3 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
+                       if (u_dut.gen_core[2].u_core.u_sequencer.state == 4 && !u_dut.gen_core[2].u_core.idma_done)
+                         $display("     C2 RACE: cmds_per_row=%0d fires=%0d sts=%0d sts_drained=%b r_done=%b",
+                                u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.cfg_cmds_per_row,
+                                u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.r_cmd_fires_total,
+                                u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.r_sts_collected,
+                                u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.sts_drained,
+                                u_dut.gen_core[2].u_core.g_idma_sg.u_idma_sg.r_done);
+                       end
+                    3: begin $display("  C3 seq=%0d idma=%b odma=%b rdma=%b | iSG st=%0d cmd=%0d/%0d done=%0d row_av=%0d row_co=%0d | oSG st=%0d cmd=%0d row_dr=%0d",
                                 u_dut.gen_core[3].u_core.u_sequencer.state,
                                 u_dut.gen_core[3].u_core.idma_done,
                                 u_dut.gen_core[3].u_core.odma_done,
@@ -1140,6 +1205,14 @@ module tb_smc_chain;
                                 u_dut.gen_core[3].u_core.g_odma_sg.u_odma_sg.state,
                                 u_dut.gen_core[3].u_core.g_odma_sg.u_odma_sg.r_cmd_idx,
                                 u_dut.gen_core[3].u_core.g_odma_sg.u_odma_sg.r_rows_drained);
+                       if (u_dut.gen_core[3].u_core.u_sequencer.state == 4 && !u_dut.gen_core[3].u_core.idma_done)
+                         $display("     C3 RACE: cmds_per_row=%0d fires=%0d sts=%0d sts_drained=%b r_done=%b",
+                                u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.cfg_cmds_per_row,
+                                u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.r_cmd_fires_total,
+                                u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.r_sts_collected,
+                                u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.sts_drained,
+                                u_dut.gen_core[3].u_core.g_idma_sg.u_idma_sg.r_done);
+                       end
                 endcase
             end
         end

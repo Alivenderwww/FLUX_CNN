@@ -137,6 +137,13 @@ module idma_sg_dispatcher #(
     logic              r_done;
     logic              r_err;
 
+    // J-7 fix: 提前声明 — FSM always_comb 的 S_DONE 引用 sts_drained, ModelSim 单遍
+    // 编译需前置声明 (赋值逻辑仍在下方 sts collector / drain 段).
+    logic [15:0]       r_cmd_fires_total;   // 累计 mm2s_cmd_tvalid&ready 次数 (= 总 cmd 数)
+    logic [15:0]       r_sts_collected;     // 累计 sts_fire 次数
+    logic              sts_drained;
+    assign sts_drained = (r_cmd_fires_total == r_sts_collected);
+
     assign busy = (st != S_IDLE) && (st != S_DONE);
     assign done = r_done && !start;
     assign err  = r_err;
@@ -221,7 +228,10 @@ module idma_sg_dispatcher #(
                 if (r_last_cmd || (r_cmd_idx >= cfg_cmd_count))           st_next = S_DONE;
                 else                                                       st_next = S_FETCH_CMD_ISS;
             end
-            S_DONE          : st_next = S_IDLE;
+            // J-7 fix: 停留 S_DONE 直到 sts_drained, 否则末 cmd STS 在途时 r_done
+            // 漏置 (S_DONE 仅 1 拍), idma_done 永 0 → sequencer 死等 (tb_smc N=4 hang).
+            // board N=2: 进 S_DONE 时 sts 已排空, 立即回 S_IDLE, 行为不变 (no-op).
+            S_DONE          : if (sts_drained) st_next = S_IDLE;
             default         : st_next = S_IDLE;
         endcase
     end
@@ -315,8 +325,6 @@ module idma_sg_dispatcher #(
     //   实际更简单: r_cmds_done 单独 count, S_DONE 时检查 sts_pending = 0.
     //   sts_pending = (cmd_fire 计数 - sts_fire 计数), 只在 0 时才真 done.
     // =========================================================================
-    logic [15:0] r_cmd_fires_total;     // 累计 mm2s_cmd_tvalid&ready 次数 (= 总 cmd 数)
-    logic [15:0] r_sts_collected;       // 累计 sts_fire 次数
     always_ff @(posedge clk) begin
         if (!rst_n || start) begin
             r_cmd_fires_total <= '0;
@@ -337,8 +345,6 @@ module idma_sg_dispatcher #(
     //   sts_pending = r_cmd_fires_total - r_sts_collected (in-flight cmd 数)
     //   pending = 0 才允许 r_done = 1
     // =========================================================================
-    logic sts_drained;
-    assign sts_drained = (r_cmd_fires_total == r_sts_collected);
     always_ff @(posedge clk) begin
         if      (!rst_n)                              r_done <= 1'b0;
         else if (start)                               r_done <= 1'b0;

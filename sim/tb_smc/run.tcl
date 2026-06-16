@@ -99,7 +99,7 @@ vlog -sv -work work -mfcu -suppress 2902,13314 \
     ../../RTL/multicore_top_smc.sv \
     tb_smc_chain.sv
 
-vsim -c -voptargs="+acc" \
+vsim -c -onfinish stop -voptargs="+acc" \
     -L work -L xil_defaultlib \
     -L axi_datamover_v5_1_30 \
     -L fifo_generator_v13_2_8 \
@@ -112,4 +112,17 @@ vsim -c -voptargs="+acc" \
     -L unisims_ver \
     "+CASE_DIR=$CASE_DIR_REL" work.tb_smc_chain xil_defaultlib.glbl
 run -all
+
+# 自动生成性能报告 CSV: 解析 transcript 的 PERF_* tag 行 (gen_perf_report.py).
+# 架构无关 — 任何模型/层数/输入跑完都自动出 CSV. 也可事后手动:
+#   python toolchain/gen_perf_report.py <log> --out-dir <case_dir> --case <name>
+set _perf_py "../../toolchain/gen_perf_report.py"
+if {[file exists $_perf_py] && [file exists transcript]} {
+    set _case [file tail $CASE_DIR_REL]
+    if {[catch {exec python $_perf_py transcript --out-dir $CASE_DIR_REL --case $_case} _po]} {
+        puts "\[PERF\] report gen failed: $_po"
+    } else {
+        puts $_po
+    }
+}
 quit -f

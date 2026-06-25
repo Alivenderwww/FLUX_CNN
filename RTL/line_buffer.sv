@@ -187,14 +187,16 @@ module line_buffer #(
     //   DATA → PAD_RIGHT 以 kx 为自然维度）由 is_pad_{top/bot/left/right} 组合
     //   信号隐式表达，无需独立 state 寄存器。
     // =========================================================================
-    // iss_pos_s = iss_pos * stride（继承原 ifb_rd_offset 的 shift 实现，支持 stride 1/2）
+    // iss_pos_s = iss_pos * stride（W 维输出位置 × W stride，给 pad/边界判定的 src_x 用）。
+    // 通用乘法支持任意 cfg_stride 1..7（与 H 维 y_row_base += cfg_stride_h 的通用加法对称）。
+    // 原仅 case 1/2，非方/重叠 pool（如 AvgPool kw8 sw7）需要 >2 的 W stride。
+    // 注：IFB 物理读地址走 iss_offset += cfg_iss_step（cfg_iss_step = stride×cin_slices，
+    // 由编译器算，本就通用），此处只是 src_x 坐标。iss_pos≤63、cfg_stride≤7 → 积≤441，12b 够。
+    logic [11:0]        iss_pos_mul;
     logic signed [16:0] iss_pos_s;
     always_comb begin
-        case (cfg_stride)
-            3'd1:    iss_pos_s = $signed({11'd0, iss_pos});
-            3'd2:    iss_pos_s = $signed({10'd0, iss_pos, 1'b0});
-            default: iss_pos_s = $signed({11'd0, iss_pos});
-        endcase
+        iss_pos_mul = iss_pos * cfg_stride;          // 12b lhs 上下文，无截断
+        iss_pos_s   = $signed({5'd0, iss_pos_mul});
     end
 
     logic signed [16:0] current_src_y, current_src_x;

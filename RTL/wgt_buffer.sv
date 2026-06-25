@@ -149,10 +149,19 @@ module wgt_buffer #(
     logic [5:0] cur_valid_w;
     assign cur_valid_w = (tile_cnt == cfg_num_tiles_d - 8'd1) ? cfg_last_valid_w_d : cfg_tile_w_d;
 
+    // 非末 round 长度: 均匀切 (rounds==2 时 = ceil(kk/2), 跟 toolchain round_len_last=floor(kk/2)
+    // 互补, 和 = kk). 避免 32+短 的不均匀切——short round 紧接 next-cins long round 时, loader
+    // 在 small-output 下来不及把 long round 低 slot 预取完, compute 读 stale 权重 (kk>32 + cin_slices>1
+    // + 小 H_OUT×W_OUT 三者同时才触发). rounds≥3 (kk>64 极罕见) 退回原 32 分块.
+    logic [5:0] round_len_nonlast;
+    assign round_len_nonlast = (cfg_rounds_per_cins == 3'd2)
+                             ? (cfg_kk[6:0] + 7'd1) >> 1     // ceil(kk/2), kk≤64 → ≤32
+                             : 6'd32;
+
     logic [5:0] c_cur_round_len;    // compute 侧当前 round 长度
     logic [5:0] l_cur_round_len;    // load 侧当前 round 长度
-    assign c_cur_round_len = (round_cnt == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : 6'd32;
-    assign l_cur_round_len = (l_round   == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : 6'd32;
+    assign c_cur_round_len = (round_cnt == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : round_len_nonlast;
+    assign l_cur_round_len = (l_round   == cfg_rounds_per_cins - 3'd1) ? cfg_round_len_last : round_len_nonlast;
 
     logic [9:0] cur_load_len;       // cold_load 灌 round 0
     assign cur_load_len = {4'd0, c_cur_round_len};
@@ -189,7 +198,7 @@ module wgt_buffer #(
     logic [5:0] l_cur_round_len_next;
     assign l_round_next_id      = l_round_is_last ? 3'd0 : (l_round + 3'd1);
     assign l_cur_round_len_next = (l_round_next_id == cfg_rounds_per_cins - 3'd1)
-                                ? cfg_round_len_last : 6'd32;
+                                ? cfg_round_len_last : round_len_nonlast;
 
     // 下一 target round 起点：若下一 round_len > 刚装完的，从 l_cur_round_len 起步
     // （先写 compute 本 round 不读的高 slot），否则从 0 顺序写。

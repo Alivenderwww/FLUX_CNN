@@ -167,6 +167,8 @@ sim/tb_smc/run_gui.bat
 sim/tb_smc/run_gui.do
 sim/tb_smc/wave_demo.do
 
-docs/frnet_n4_perf.md
+# docs/frnet_n4_perf.md
 plan2.md
 CNN-SPSCD-single-v17-QAT-grid-classification-2x2DualDONN8-img480x270.py
+
+sim/tb_core_dma/*.log

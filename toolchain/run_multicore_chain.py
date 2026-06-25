@@ -109,6 +109,40 @@ def _per_mem_ifb_size(layer, chain_data_entry, per_core_plan, n_cores):
     return full_bytes
 
 
+def _per_mem_ofm_size(layer, chain_data_entry, per_core_plan, n_cores):
+    """计算 layer OFM 在单个 mem 内最大占用 byte 数 (mode 敏感, 对称于 _per_mem_ifb_size).
+
+    - mode A (单核独占): 整图 ofb_words*16
+    - mode C cout slice: 每 mem 装本核 cout 段, per-mem 取 h_out × w_out × max(my_cs) × 16
+    - mode W (W slice): 每 mem 装本核输出列段, per-mem 取 h_out × max(my_w_out) × cout_slices × 16
+    """
+    cout_slices = (layer.c_out + 16 - 1) // 16
+    full_bytes  = layer.h_out * layer.w_out * cout_slices * 16
+    layer_idx   = chain_data_entry['layer_idx']
+    for c in range(n_cores):
+        for step in per_core_plan[c]:
+            if step.layer_idx != layer_idx:
+                continue
+            n_split = len(step.cores_all)
+            if step.mode == 'C_w_slice' and n_split > 1:
+                from backend import hw_cfg_derive as _hw
+                h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
+                pad_e = 0 if layer.force_s2d else layer.pad
+                max_wout = 0
+                for slice_idx in range(n_split):
+                    geom = _hw.compute_w_slice_geom(
+                        W_full=w_in_e, K=k_e, stride=stride_e,
+                        pad_left_full=pad_e, my_core=slice_idx, n_split=n_split)
+                    max_wout = max(max_wout, geom['my_w_out'])
+                return layer.h_out * max_wout * cout_slices * 16
+            elif step.mode == 'C_cout_slice' and n_split > 1:
+                _, _, cs = mesh_cmd.compute_cout_segments(layer.c_out, n_split)
+                return layer.h_out * layer.w_out * max(cs) * 16
+            else:
+                return full_bytes
+    return full_bytes
+
+
 def _compute_root_ifb_offsets(layers, chain_data, per_core_plan, n_cores,
                               root_ifb_idx, region_capacity_bytes):
     """动态分配 root layer IFB 在 mem 内的 byte offset (相对 SMC_INPUT_BASE).
@@ -136,13 +170,143 @@ def _compute_root_ifb_offsets(layers, chain_data, per_core_plan, n_cores,
     return offsets
 
 
-def smc_layer_data_addr(mem_id: int, layer_idx: int) -> int:
-    """layer i 的 IFM/OFM 段在 mem[mem_id] 内紧凑 layout 起点 (全局地址)"""
-    return smc_global_addr(mem_id, SMC_IFM_OFM_BASE + layer_idx * SMC_LAYER_DATA_OFFSET)
+# 每层 OFM 在 DATA 区内的 byte offset. 生命周期感知 + 按实际 per-mem 大小密排:
+# 替代固定 layer_idx × 512KB (松散且不复用). set_data_layer_offsets() 用 input_src/
+# shortcut_src 推依赖图 (通用, 不写死任何网络结构), 线性扫描分配, 死亡区域复用.
+_DATA_LAYER_OFFSETS: list = []
 
+def set_data_layer_offsets(layers, chain_data, per_core_plan, n_cores,
+                           name_to_idx, region_capacity_bytes) -> None:
+    """生命周期感知的 DATA 区分配 (通用): 每层 OFM 按 per-mem 实际大小密排, OFM 被最后
+    一个消费者读完后区域回收复用. 依赖图从 layer.input_src / shortcut_src 推 (不写死).
+    末层 OFM 走 FINAL 区, 不在 DATA 分配. 设 global _DATA_LAYER_OFFSETS。"""
+    global _DATA_LAYER_OFFSETS
+    n = len(layers)
+    PAGE = 0x1000  # 4KB 对齐 (密排; 不用 512KB)
+    # last_use[p] = 读 layer p 的 OFM 的最后一层 index (无消费者则 = p 自己)
+    last_use = list(range(n))
+    for j, ly in enumerate(layers):
+        for srcname in (ly.input_src, getattr(ly, 'shortcut_src', '') or ''):
+            if srcname and srcname in name_to_idx:
+                p = name_to_idx[srcname]
+                last_use[p] = max(last_use[p], j)
+    size = [((_per_mem_ofm_size(layers[i], chain_data[i], per_core_plan, n_cores)
+              + PAGE - 1) & ~(PAGE - 1)) for i in range(n)]
+    offsets = [0] * n
+    free = []            # 空闲块 [off, size]
+    active = {}          # layer_idx -> [off, size]
+    high = 0
+    for L in range(n):
+        # 释放 last_use < L 的 OFM 区
+        for p in [p for p in active if last_use[p] < L]:
+            free.append(active.pop(p))
+        # 合并相邻空闲块降碎片
+        free.sort()
+        merged = []
+        for blk in free:
+            if merged and merged[-1][0] + merged[-1][1] == blk[0]:
+                merged[-1][1] += blk[1]
+            else:
+                merged.append(list(blk))
+        free = merged
+        if L == n - 1:   # 末层 → FINAL 区, 不占 DATA
+            continue
+        sz = size[L]
+        pick = next((b for b in free if b[1] >= sz), None)   # first-fit
+        if pick is not None:
+            off = pick[0]
+            if pick[1] == sz:
+                free.remove(pick)
+            else:
+                pick[0] += sz; pick[1] -= sz
+        else:
+            off = high; high += sz
+        offsets[L] = off
+        active[L] = [off, sz]
+    if high > region_capacity_bytes:
+        raise RuntimeError(f"DATA 区溢出: 高水位 {high:#x} > 容量 {region_capacity_bytes:#x}")
+    print(f"  [DATA alloc] 生命周期分配: 峰值高水位 {high/1024:.1f} KB/mem "
+          f"(旧固定 {n}×512 = {n*512} KB)")
+    _DATA_LAYER_OFFSETS = offsets
+
+def smc_layer_data_addr(mem_id: int, layer_idx: int) -> int:
+    """layer i 的 IFM/OFM 段在 mem[mem_id] 内 layout 起点 (全局地址). 生命周期分配 offset."""
+    off = (_DATA_LAYER_OFFSETS[layer_idx] if _DATA_LAYER_OFFSETS
+           else layer_idx * SMC_LAYER_DATA_OFFSET)   # fallback: 旧固定 (offsets 未设时)
+    return smc_global_addr(mem_id, SMC_IFM_OFM_BASE + off)
+
+
+# 每层 WB 在 mem 内的累积 byte offset (相对 SMC_WB_BASE). 动态紧凑排布: 替代固定
+# layer_idx × SMC_LAYER_WB_OFFSET —— 固定 64KB/层 = 256 word, 但 depthwise (如 AdaPool 64ch
+# kk40 → 640 word) WB 远超, 会被下一层 WB 覆盖. 累积偏移按实际 wb_words 排, 任意大小不重叠.
+# set_wb_layer_offsets() 在 chain_data 建好后调用一次; smc_layer_wb_addr + TB preload 都用它.
+_WB_LAYER_OFFSETS: list = []
+
+def set_wb_layer_offsets(chain_data) -> None:
+    global _WB_LAYER_OFFSETS
+    offs, cum = [], 0
+    for cd in chain_data:
+        offs.append(cum)
+        cum += cd['wb_words'] * 256        # 1 WB word = 2048 bit = 256 byte
+    if cum > (SMC_RDMA_BASE - SMC_WB_BASE):
+        raise RuntimeError(f"WB 区溢出: 累积 {cum:#x} > {SMC_RDMA_BASE - SMC_WB_BASE:#x} "
+                           f"(SMC_WB_BASE..SMC_RDMA_BASE). 需扩 WB 区或减层.")
+    _WB_LAYER_OFFSETS = offs
 
 def smc_layer_wb_addr(mem_id: int, layer_idx: int) -> int:
-    return smc_global_addr(mem_id, SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET)
+    off = (_WB_LAYER_OFFSETS[layer_idx] if _WB_LAYER_OFFSETS
+           else layer_idx * SMC_LAYER_WB_OFFSET)   # fallback: 旧固定 (offsets 未设时)
+    return smc_global_addr(mem_id, SMC_WB_BASE + off)
+
+
+def _gen_wslice_gather_cmds(prev_layer, prev_cores, prev_idx, h_in, cin_slices,
+                            row_words, ifb_ring_words=0):
+    """W slice 前驱 → gather 整图进 IFB: 读 prev 各核的 W-段(散布 4 mem)拼成整图,
+    每段落在自己列偏移. cout_slice 各核都调一次(各读全部段). **row-major**(每行所有段)→
+    dispatcher rows_pushed 按行计数正确(否则 ring 背压死锁). 返回 (cmds, cmds_per_row=prev_n)."""
+    from backend import hw_cfg_derive as _hw
+    _, prev_w, prev_k, _, prev_s = prev_layer.s2d_eff()
+    prev_n = len(prev_cores)
+    slice_info, accum_w = [], 0
+    for sidx, mem_id in enumerate(prev_cores):
+        geom = _hw.compute_w_slice_geom(W_full=prev_w, K=prev_k, stride=prev_s,
+                                        pad_left_full=prev_layer.pad,
+                                        my_core=sidx, n_split=prev_n)
+        slice_info.append((mem_id, geom['my_w_out'], accum_w))
+        accum_w += geom['my_w_out']
+    cmds, total, idx = [], h_in * prev_n, 0
+    for r in range(h_in):
+        for sidx, (mem_id, sub_w_out, w_start) in enumerate(slice_info):
+            src = smc_layer_data_addr(mem_id, prev_idx) + r * sub_w_out * cin_slices * 16
+            off = (r * row_words) + (w_start * cin_slices)
+            off_eff = (off % ifb_ring_words) if ifb_ring_words > 0 else off
+            cmds.append(mesh_cmd.SgCmd(src_addr=src, btt=sub_w_out * cin_slices * 16,
+                                       sram_offset=off_eff, last_cmd=(idx == total - 1),
+                                       name=f"r{r}_s{sidx}_gather"))
+            idx += 1
+    return cmds, prev_n
+
+
+def _gen_coutslice_gather_cmds(prev_cores, prev_cs_per_core, prev_cs_start, prev_idx,
+                               h_in, w_in, cin_slices, ifb_ring_words=0):
+    """prev cout slice → gather 整图: prev 各核存自己 cout 段(= 若干 cin slice, NHWC compact,
+    每核 mem = h_in×w_in×my_cs word). 读回拼成整图 cin(落 cin-slice 偏移 prev_cs_start[c]).
+    **row-major**(每行: w_in 像素 × prev_n 核)→ rows_pushed 正确. 返回 (cmds, cmds_per_row)."""
+    prev_n = len(prev_cores)
+    cmds, total, idx = [], h_in * w_in * prev_n, 0
+    for r in range(h_in):
+        for cx in range(w_in):
+            p = r * w_in + cx
+            for ci, mem_id in enumerate(prev_cores):
+                my_cs = prev_cs_per_core[ci]
+                cs0   = prev_cs_start[ci]
+                src = smc_layer_data_addr(mem_id, prev_idx) + p * my_cs * 16
+                off = p * cin_slices + cs0
+                off_eff = (off % ifb_ring_words) if ifb_ring_words > 0 else off
+                cmds.append(mesh_cmd.SgCmd(src_addr=src, btt=my_cs * 16, sram_offset=off_eff,
+                                           last_cmd=(idx == total - 1), name=f"r{r}_p{cx}_c{ci}_gather"))
+                idx += 1
+    return cmds, w_in * prev_n
 
 
 def smc_layer_rdma_addr(core_id: int, layer_idx: int) -> int:
@@ -335,6 +499,10 @@ def run_chain_data_gen(layers, out_dir, ddr_planner, seed_base=42, input_image=N
             pad_top=layer.pad, pad_left=layer.pad, strip_rows=0,
             out_dir=layer_dir, case_name=full_name,
             ky_fold=False, s2d=layer.force_s2d, residual=residual,
+            depthwise=getattr(layer, 'depthwise', False),
+            avgpool=getattr(layer, 'avgpool', False),
+            KY=(getattr(layer, 'ky', 0) or None),
+            stride_h=layer.sh_eff, stride_w=layer.sw_eff,
             ifm_arr_in=ifm_arr_in,
             shortcut_arr_in=shortcut_arr_in,
             wb_arr_in=wb_arr_in,
@@ -407,6 +575,12 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
     # gen_isa_test 内部也做同 s2d 重排, 两边维度必须一致 → DDR 数据 ↔ cfg 才匹配.
     h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
     pad_e = 0 if layer.force_s2d else layer.pad
+    # 异型 kernel: ky 方向核高度 (s2d 后是方核用 k_e, 否则用 layer.ky_eff). SMC cfg 派生必须带 KY,
+    # 否则 H_OUT 用 K(kx) 算错 → ODMA/OFB 行数跟 golden(用 KY) 不一致 → final mismatch.
+    ky_e = k_e if layer.force_s2d else getattr(layer, 'ky_eff', k_e)
+    # 独立 H/W stride: s2d 折叠后 stride=1; 否则用 layer.sh_eff/sw_eff (AvgPool sh≠sw).
+    sh_e = 1 if layer.force_s2d else layer.sh_eff
+    sw_e = 1 if layer.force_s2d else layer.sw_eff
 
     cin_slices  = (c_in_e      + 16 - 1) // 16
     cout_slices = (layer.c_out + 16 - 1) // 16
@@ -414,10 +588,15 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
     # 决定本核实际跑的 sub-layer 维度 + per-core IDMA/ODMA 偏移.
     # step.my_core 是物理核 ID (e.g. 2), derive_w_slice_cfg 要的是切片 index (0..n_split-1).
     # 物理 → 切片 index: cores_all.index(my_core).
-    if step.mode == 'C_w_slice':
+    # n_split==1 的 C_w_slice 退化为 mode A: IDMA cmd gen (n_split==1 分支) 一律按 MODE_A
+    # 满宽 (W_IN=w_in_e) 逐行搬整图 IFM 进 IFB, 但 derive_w_slice_cfg 会把 IFM 段裁成 sub_W
+    # (stride>1 时 sub_W = W - (未用的尾列), 例 W=32 K=3 s2 → sub_W=31). 两者 W_IN 不一致时
+    # line_buffer 读 IFB 的 ky 行步进 (IFB_KY_STEP=W_IN) 跟物理 32 列布局错位 → 第 1 行起整体
+    # off-by-one. stride=1 时 sub_W==W 巧合一致, 故只在 stride>1 暴露. 单核无切片本就该走 mode A.
+    if step.mode == 'C_w_slice' and n_split > 1:
         slice_idx = step.cores_all.index(step.my_core)
         cfg = hw_files.derive_w_slice_cfg(
-            H_IN=h_in_e, W_full=w_in_e, K=k_e,
+            H_IN=h_in_e, W_full=w_in_e, K=k_e, KY=ky_e,
             NUM_CIN=c_in_e, NUM_COUT=layer.c_out, stride=stride_e,
             pad_top=pad_e, pad_left_full=pad_e,
             my_core=slice_idx, n_split=n_split,
@@ -445,8 +624,9 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         # (W 维不切). cfg['cout_slices'] 是本核段的 cs 数 (整图 cs 的一段).
         slice_idx = step.cores_all.index(step.my_core)
         cfg = hw_files.derive_cout_slice_cfg(
-            H_IN=h_in_e, W_IN=w_in_e, K=k_e,
+            H_IN=h_in_e, W_IN=w_in_e, K=k_e, KY=ky_e,
             NUM_CIN=c_in_e, NUM_COUT_full=layer.c_out, stride=stride_e,
+            stride_h=sh_e, stride_w=sw_e,
             pad_top=pad_e, pad_left=pad_e,
             my_core=slice_idx, n_split=n_split,
             TILE_W=32, streaming=True,
@@ -457,9 +637,10 @@ def build_step_cfg_dict(step, layers, ddr_planner, n_layers,
         cout_slices = cfg['cout_slices']
     else:  # mode A
         cfg = hw_files.derive_layer_cfg(
-            H_IN=h_in_e, W_IN=w_in_e, K=k_e,
+            H_IN=h_in_e, W_IN=w_in_e, K=k_e, KY=ky_e,
             NUM_CIN=c_in_e, NUM_COUT=layer.c_out,
-            stride=stride_e, pad_top=pad_e, pad_left=pad_e,
+            stride=stride_e, stride_h=sh_e, stride_w=sw_e,
+            pad_top=pad_e, pad_left=pad_e,
             TILE_W=32, streaming=True,
         )
         ifb_w_start = 0
@@ -634,8 +815,17 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                                      weights_per_layer=weights_per_layer,
                                      biases_per_layer=biases_per_layer)
 
+    # WB 动态累积 offset (替代固定 64KB/层, 防 depthwise 大 WB 被下层覆盖). 必须在
+    # smc_layer_wb_addr 被用于生成 descriptor 之前设好.
+    set_wb_layer_offsets(chain_data)
+
     # name → layer index 索引 (ResNet 用 input_src/shortcut_src 找上游 layer 的 DDR 区)
     name_to_idx = {l.name: i for i, l in enumerate(layers)}
+
+    # DATA 区生命周期分配 (替代固定 512KB/层): 每层 OFM 按实际 per-mem 大小密排 + 死亡复用.
+    # 必须在 smc_layer_data_addr 被用于生成 descriptor 之前设好.
+    set_data_layer_offsets(layers, chain_data, per_core_plan, n_cores, name_to_idx,
+                           region_capacity_bytes=(SMC_WB_BASE - SMC_IFM_OFM_BASE))
 
     # Root layer (i>0 但 ifb_is_root=True) 各自独占 ROOT_IFB 区, 避开上层 OFM 覆盖.
     # layer 0 (整网入口) 用 INPUT 区, 不归 ROOT_IFB.
@@ -706,6 +896,9 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                 layer_idx = step.layer_idx
                 h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
                 pad_e = 0 if layer.force_s2d else layer.pad
+                ky_e = k_e if layer.force_s2d else getattr(layer, 'ky_eff', k_e)  # 异型 kernel ky 高度
+                sh_e = 1 if layer.force_s2d else layer.sh_eff   # 独立 H/W stride (AvgPool sh≠sw)
+                sw_e = 1 if layer.force_s2d else layer.sw_eff
                 cin_slices  = (c_in_e + 16 - 1) // 16
                 cout_slices = (layer.c_out + 16 - 1) // 16
                 n_split = len(step.cores_all)
@@ -719,16 +912,17 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                     # 集中放在一个 mem), seg_w_starts_in=[0,...], seg_widths_in=[w_full,0,...] 不行,
                     # 改成单段表示整图.
                     w_full_eff = w_in_e
-                    h_out_eff_a = (h_in_e + 2 * pad_e - k_e) // stride_e + 1
-                    w_out_eff_a = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
+                    h_out_eff_a = (h_in_e + 2 * pad_e - ky_e) // sh_e + 1   # ky 方向用 ky_e + H stride
+                    w_out_eff_a = (w_in_e + 2 * pad_e - k_e) // sw_e + 1     # kx 方向 + W stride
 
                     # mode A IDMA: 一行一条 cmd, 整图 W; W slice→mode A stitch 时每行 N 条 cmd 跨 mem 拼
                     idma_cmds = []
                     sram_offset_a = 0
                     row_words_a = w_full_eff * cin_slices
                     _mode_a_cfg = hw_files.derive_layer_cfg(
-                        H_IN=h_in_e, W_IN=w_in_e, K=k_e,
+                        H_IN=h_in_e, W_IN=w_in_e, K=k_e, KY=ky_e,
                         NUM_CIN=c_in_e, NUM_COUT=layer.c_out, stride=stride_e,
+                        stride_h=sh_e, stride_w=sw_e,
                         pad_top=pad_e, pad_left=pad_e, streaming=True,
                     )
                     _ifb_ring_words_a = _mode_a_cfg.get('ifb_ring_words', 0)
@@ -764,22 +958,28 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                         #   a) prev mode A 单核 (cores_all=[c])   → 整图在 mem[c], 一行一条 cmd
                         #   b) prev W slice (cores_all=[c0..cN-1]) → 散布 N mem, 每行 N 条 cmd 跨 mem
                         #   c) prev cout slice (cores_all=[..])    → 暂不实现 mode A 接 cout slice
+                        # 残差/非线性链: 输入来自 layer.input_src 指定层 (≠ layer_idx-1, 如 ResNet ds
+                        # 读 block 输入). 用 input_src 定位真实输入层, 否则默认 layer_idx-1 (线性链).
+                        if layer.input_src and layer.input_src in name_to_idx:
+                            _prev_idx = name_to_idx[layer.input_src]
+                        else:
+                            _prev_idx = layer_idx - 1
                         # 找 prev step (任意一核 plan 里都有 prev layer 的 step, 取 cores_all 一致)
                         prev_step = None
                         for c in range(n_cores):
                             for s in per_core_plan[c]:
-                                if s.layer_idx == layer_idx - 1:
+                                if s.layer_idx == _prev_idx:
                                     prev_step = s; break
                             if prev_step is not None: break
                         if prev_step is None:
-                            raise RuntimeError(f"mode A layer {layer.name}: prev layer {layer_idx-1} 没找到 step")
+                            raise RuntimeError(f"mode A layer {layer.name}: prev layer {_prev_idx} 没找到 step")
                         prev_mode = prev_step.mode
                         prev_cores = prev_step.cores_all
                         prev_n = len(prev_cores)
                         if (prev_mode == 'A_single' and prev_n == 1) or \
                            (prev_mode == 'C_w_slice' and prev_n == 1):
                             # 单核 prev (mode A 或 W slice n=1, 都是整图单 mem): 直接拉
-                            ifb_mem_base = smc_layer_data_addr(prev_cores[0], layer_idx - 1)
+                            ifb_mem_base = smc_layer_data_addr(prev_cores[0], _prev_idx)
                             for r in range(h_in_e):
                                 sram_offset_eff = (sram_offset_a % _ifb_ring_words_a) if _ifb_ring_words_a > 0 else sram_offset_a
                                 idma_cmds.append(mesh_cmd.SgCmd(
@@ -795,7 +995,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                             # cmd 顺序 = "per-mem 一整块" (mem[0] all rows → mem[1] all rows ...),
                             # 避免 axi_master 在 mem 间 round-robin 触发 axi_noc AR/R 不平衡 bug.
                             # 等价数据: 每核拉自己 sub_w_out 段, 用 sram_offset 写到正确 IFB 位置.
-                            prev_layer = layers[layer_idx - 1]
+                            prev_layer = layers[_prev_idx]
                             prev_h_in, prev_w_in, prev_k, prev_c_in, prev_stride = prev_layer.s2d_eff()
                             from backend import hw_cfg_derive as _hw
                             # 预计算每核 sub_w_out + 在 IFB 整图中的列起点
@@ -815,7 +1015,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                             for slice_idx, (mem_id, sub_w_out, w_start) in enumerate(slice_info):
                                 btt = sub_w_out * cin_slices * 16
                                 for r in range(h_in_e):
-                                    src = smc_layer_data_addr(mem_id, layer_idx - 1) \
+                                    src = smc_layer_data_addr(mem_id, _prev_idx) \
                                           + r * sub_w_out * cin_slices * 16
                                     # 在 IFB 整图布局中, 本核数据落在 row=r, col=[w_start, w_start+sub_w_out)
                                     sram_off_local = (r * row_words_a) + (w_start * cin_slices)
@@ -906,27 +1106,62 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                     # 要求: 上层 IFM 集中存放 (layer 是 ifb_is_root 或 layer_idx=0,
                     # 或上层是 mode A). 不支持上层 W slice → cout slice (复杂 stitch).
                     # ============================================================
-                    h_out_eff_c = (h_in_e + 2 * pad_e - k_e) // stride_e + 1
-                    w_out_eff_c = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
+                    h_out_eff_c = (h_in_e + 2 * pad_e - ky_e) // sh_e + 1   # ky/sh 方向 (avgpool 异型)
+                    w_out_eff_c = (w_in_e + 2 * pad_e - k_e)  // sw_e + 1   # kx/sw 方向
+                    row_words_c = w_in_e * cin_slices
 
-                    # IFM 源 mem: 必须是集中存放
-                    if layer_idx == 0:
-                        ifb_mem_base = smc_global_addr(0, SMC_INPUT_BASE + root_ifb_offset[0])
-                    elif chain_data[layer_idx]['ifb_is_root']:
-                        ifb_mem_base = smc_global_addr(0, SMC_INPUT_BASE + root_ifb_offset[layer_idx])
+                    # prev step (input_src 兼容残差/非线性; 默认 layer_idx-1)
+                    _prev_idx_c = (name_to_idx[layer.input_src]
+                                   if (layer.input_src and layer.input_src in name_to_idx)
+                                   else layer_idx - 1)
+                    _prev_step_c = None
+                    for _c in range(n_cores):
+                        for _s in per_core_plan[_c]:
+                            if _s.layer_idx == _prev_idx_c:
+                                _prev_step_c = _s; break
+                        if _prev_step_c is not None: break
+
+                    # IFM 源: root 集中 / prev W slice gather / prev cout slice gather / prev mode A 单核
+                    _cout_cmds_per_row = 1
+                    if layer_idx == 0 or chain_data[layer_idx]['ifb_is_root']:
+                        _off = root_ifb_offset[0 if layer_idx == 0 else layer_idx]
+                        ifb_mem_base = smc_global_addr(0, SMC_INPUT_BASE + _off)
+                        idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_cout_slice(
+                            h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices, ifb_mem_base=ifb_mem_base)
+                    elif (_prev_step_c is not None and _prev_step_c.mode == 'C_w_slice'
+                          and len(_prev_step_c.cores_all) > 1):
+                        # W slice → cout slice: 本核 gather 整图 (读 prev 各核 W-段拼整图进自己 IFB).
+                        # 4 核都 gather 同一份整图 (cout slice 各核需全 cin).
+                        ifb_mem_base = smc_layer_data_addr(_prev_step_c.cores_all[0], _prev_idx_c)  # header 用
+                        idma_cmds, _cout_cmds_per_row = _gen_wslice_gather_cmds(
+                            prev_layer=layers[_prev_idx_c], prev_cores=_prev_step_c.cores_all,
+                            prev_idx=_prev_idx_c, h_in=h_in_e, cin_slices=cin_slices,
+                            row_words=row_words_c, ifb_ring_words=0)
+                    elif (_prev_step_c is not None and _prev_step_c.mode == 'C_cout_slice'
+                          and len(_prev_step_c.cores_all) > 1):
+                        # cout slice → cout slice: prev 各核存了自己 cout 段(= 若干 cin slice),
+                        # 本核 gather 拼成整图 cin.
+                        _pc_starts, _pc_widths, _pc_cs = mesh_cmd.compute_cout_segments(
+                            layers[_prev_idx_c].c_out, len(_prev_step_c.cores_all))
+                        _pc_cs_start = [s // 16 for s in _pc_starts]   # cout 段起点是 NUM_COL=16 倍数 → cin slice idx
+                        ifb_mem_base = smc_layer_data_addr(_prev_step_c.cores_all[0], _prev_idx_c)  # header 用
+                        idma_cmds, _cout_cmds_per_row = _gen_coutslice_gather_cmds(
+                            prev_cores=_prev_step_c.cores_all, prev_cs_per_core=_pc_cs,
+                            prev_cs_start=_pc_cs_start, prev_idx=_prev_idx_c,
+                            h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices, ifb_ring_words=0)
                     else:
-                        # 上层是 mode A 在 mem[prev_my_core] 整图. 否则不支持.
+                        # prev mode A 单核 (整图集中在 mem[c])
                         prev_mode_a_core = None
-                        for s in per_core_plan[0]:   # 任一核扫: mode A layer 在所有核 plan 里只 1 个 step
-                            if s.layer_idx == layer_idx - 1 and len(s.cores_all) == 1:
-                                prev_mode_a_core = s.my_core
-                                break
+                        for s in per_core_plan[0]:
+                            if s.layer_idx == _prev_idx_c and len(s.cores_all) == 1:
+                                prev_mode_a_core = s.my_core; break
                         if prev_mode_a_core is None:
                             raise NotImplementedError(
-                                f"SMC cout slice layer {layer.name}: prev layer {layer_idx-1} 必须 mode A "
-                                f"集中存放或 layer 是 root, 当前 W slice → cout slice 不支持"
-                            )
-                        ifb_mem_base = smc_layer_data_addr(prev_mode_a_core, layer_idx - 1)
+                                f"SMC cout slice layer {layer.name}: prev layer {_prev_idx_c} 既非 W slice "
+                                f"也非 mode A / root, 不支持")
+                        ifb_mem_base = smc_layer_data_addr(prev_mode_a_core, _prev_idx_c)
+                        idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_cout_slice(
+                            h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices, ifb_mem_base=ifb_mem_base)
 
                     # 本核 cout 段
                     seg_cout_starts, seg_widths_cout, seg_cs_per_core = \
@@ -934,12 +1169,6 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                     my_cs       = seg_cs_per_core[slice_idx]
                     my_cout_lo  = seg_cout_starts[slice_idx]
                     my_cout_hi  = my_cout_lo + seg_widths_cout[slice_idx]
-
-                    # IDMA: 整图 IFM, 4 核 cmd 相同 (都从 ifb_mem_base 拉)
-                    idma_cmds = mesh_cmd.gen_idma_sg_cmd_list_cout_slice(
-                        h_in=h_in_e, w_in=w_in_e, cin_slices=cin_slices,
-                        ifb_mem_base=ifb_mem_base,
-                    )
                     idma_cmd_path = os.path.join(core_dir, f'layer{layer_idx:02d}_idma_sg.hex')
                     mesh_cmd.write_sg_cmd_list(idma_cmd_path, idma_cmds, header_lines=[
                         f"core={core_id} layer={layer.name} (idx={layer_idx}) COUT_SLICE",
@@ -949,7 +1178,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                     ])
                     smc_per_layer_cmds[('idma', core_id, layer_idx)] = {
                         'ptr': smc_core_layer_idma_cmd_addr(core_id, layer_idx),
-                        'count': len(idma_cmds), 'cmds_per_row': 1,
+                        'count': len(idma_cmds), 'cmds_per_row': _cout_cmds_per_row,
                         'file': os.path.relpath(idma_cmd_path, out_dir),
                     }
 
@@ -1180,6 +1409,10 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
             f.write(f"LAYER_{i}_DIR = {cd['layer_dir']}\n")
             f.write(f"LAYER_{i}_IFB_WORDS = {cd['ifb_words']}\n")
             f.write(f"LAYER_{i}_WB_WORDS = {cd['wb_words']}\n")
+            # 动态 WB byte offset (相对 SMC_WB_BASE), TB preload 用 (替代固定 layer×64KB)
+            f.write(f"LAYER_{i}_WB_OFFSET = 0x{_WB_LAYER_OFFSETS[i]:08x}\n")
+            # 动态 DATA byte offset (相对 SMC_IFM_OFM_BASE), 生命周期分配 + 密排. TB 逐层 OFM 校验用.
+            f.write(f"LAYER_{i}_DATA_OFFSET = 0x{(_DATA_LAYER_OFFSETS[i] if _DATA_LAYER_OFFSETS else i*SMC_LAYER_DATA_OFFSET):08x}\n")
             f.write(f"LAYER_{i}_OFB_WORDS = {cd['ofb_words']}\n")
             f.write(f"LAYER_{i}_RDMA_WORDS = {cd['rdma_words']}\n")  # bias + opt shortcut
             f.write(f"LAYER_{i}_PRELOAD_IFB = {1 if cd['ifb_is_root'] else 0}\n")
@@ -1262,6 +1495,7 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                 f.write(f"SMC_LAYER_{i}_C_OUT_SLICES = {cout_slices}\n")
                 f.write(f"SMC_LAYER_{i}_PAD = {pad_e}\n")
                 f.write(f"SMC_LAYER_{i}_K   = {k_e}\n")
+                f.write(f"SMC_LAYER_{i}_KY  = {layer.ky_eff}\n")   # kh (异型核 avgpool); 方核=K. cout slice WB 切片用 kk=K×KY
                 f.write(f"SMC_LAYER_{i}_STRIDE = {stride_e}\n")
                 f.write(f"SMC_LAYER_{i}_MODE = {layer_smc_mode[i]}\n")
                 f.write(f"SMC_LAYER_{i}_MODE_A_CORE = {layer_smc_my_core[i]}\n")
@@ -1298,10 +1532,11 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
                     layer_idx = step.layer_idx
                     h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
                     pad_e = 0 if layer.force_s2d else layer.pad
+                    sw_e = 1 if layer.force_s2d else layer.sw_eff   # W stride
                     n_split = len(step.cores_all)
                     slice_idx = step.cores_all.index(step.my_core)
                     geom = hw_files.compute_w_slice_geom(
-                        W_full=w_in_e, K=k_e, stride=stride_e,
+                        W_full=w_in_e, K=k_e, stride=sw_e,
                         pad_left_full=pad_e,
                         my_core=slice_idx, n_split=n_split,
                     )
@@ -1314,7 +1549,8 @@ def run_multicore_chain(layers, n_cores, out_dir, smc=False, input_image=None,
             for i, layer in enumerate(layers):
                 h_in_e, w_in_e, k_e, c_in_e, stride_e = layer.s2d_eff()
                 pad_e = 0 if layer.force_s2d else layer.pad
-                w_out_full = (w_in_e + 2 * pad_e - k_e) // stride_e + 1
+                sw_e = 1 if layer.force_s2d else layer.sw_eff   # W stride (AvgPool sw≠sh)
+                w_out_full = (w_in_e + 2 * pad_e - k_e) // sw_e + 1
                 ifm_starts, ifm_widths = mesh_cmd.compute_smc_w_segments(w_in_e,    n_cores)
                 ofm_starts, ofm_widths = mesh_cmd.compute_smc_w_segments(w_out_full, n_cores)
                 f.write(f"SMC_LAYER_{i}_IFM_SEG_WIDTHS = {' '.join(str(x) for x in ifm_widths)}\n")
@@ -1561,9 +1797,10 @@ def _layers_for_demo(args):
         #   等价于丢弃最后 2 行只用前 268 行 (s2d 折叠要求 H 被 stride 整除). W=480 已被 4 整除 → 120.
         # 维度核对 (Python 源码 ResNetSmallDualHead base_ch=8 layers=(1,1,1,1) pool_hw=(2,2)):
         #   stem 67×120×8 → L2 34×60×16 → L3 17×30×32 → L4 9×15×64 → adapool 2×2 → FC.
-        # 结构: stem(K4S4 8→8, s2d 自动) + L2/L3/L4 残差块(8→16→32→64) + FC.
-        # AvgPool(9×15→2×2) 暂不实现 (FLUX 不跑 pool, 等效深度卷积 TODO); FC 是 root preload.
-        # FC: flatten 256 后 cls(13)+grid(100) 两头合并成 1 层 cout=113 (root preload).
+        # 结构: stem(K4S4 8→8, s2d 自动) + L2/L3/L4 残差块(8→16→32→64) + AdaPool + FC, 全连接进链.
+        # AdaPool(9×15→2×2): 单层 depthwise kh5 kw8 sh4 sw7 ÷40 (kk>WRF 均匀round + WB动态offset 修复后链上 PASS).
+        # FC: flatten(2×2×64=256)+cls(13)+grid(100) 合并 ≡ kernel=2×2 卷积 (2×2×64 → 1×1×113).
+        # n_cores=1 全链 bit-exact PASS; n_cores>1 因 tiny-tail W_slice→cout_slice 转换未实现需走单核 tail.
         from run_regression import Chain, resnet_block
         # shift 标定: 合成数据 IFM∈[0,7] wgt∈[-3,3] 很小, 旧 shift(抄 resnet11 的 11~13)
         # 对小 cin 层是 /2048 → 中间激活全塌缩为 0 (假阳性). 按参考单层 case 重估 (k3 cin8
@@ -1580,9 +1817,61 @@ def _layers_for_demo(args):
         _stem = _c.conv('Stem', k=4, c=8,  s=4, pad=0, shift=_stem_sh)
         _l2   = resnet_block(_stem, 'L2', c=16, shifts=_l2_sh)
         _l3   = resnet_block(_l2,   'L3', c=32, shifts=_l3_sh)
-        _l4   = resnet_block(_l3,   'L4', c=64, shifts=_l4_sh)
-        _c.root('FC', k=1, c_in=256, c_out=113, h=1, w=1, shift=_fc_sh)
+        _l4   = resnet_block(_l3,   'L4', c=64, shifts=_l4_sh)   # → 9×15×64
         layers = scheduler.chain_to_layers(_c.cases)
+        # AdaptiveAvgPool2d((2,2)): 9×15×64 → 2×2×64. 单层 depthwise kh5 kw8 sh4 sw7 ÷40.
+        #   kk=40>WRF 均匀切 round 修复 + WB 动态累积 offset 修复 (640-word WB 不再被下层覆盖) 后,
+        #   单层 monolithic 链上 bit-exact PASS. ÷40 = sdp_mult=410 shift14 定点倒数.
+        # FC: flatten(256)+Linear ≡ kernel=2×2 普通卷积 (2×2×64 → 1×1×113), 全连接进链 (不再 root preload).
+        _l4_name = _l4.name   # 'L4.B2.ds'
+        layers.append(scheduler.Layer('AdaPool', k=8, ky=5, c_in=64, c_out=64,
+                                      h_in=9, w_in=15, stride=1, stride_h=4, stride_w=7,
+                                      pad=0, sdp_shift=14, sdp_mult=410, sdp_round_en=1, avgpool=True,
+                                      input_src=_l4_name))
+        layers.append(scheduler.Layer('FC', k=2, c_in=64, c_out=113,
+                                      h_in=2, w_in=2, stride=1, pad=0,
+                                      sdp_shift=_fc_sh, input_src='AdaPool'))
+    elif args.demo == 'dw_single':
+        # 单核单层 depthwise 验证: C16 K3, 权重对角化 (零 RTL/ISA), 复用普通卷积数据流.
+        layers = [scheduler.Layer('DW', k=3, c_in=16, c_out=16, h_in=32, w_in=32,
+                                  stride=1, pad=1, sdp_shift=1, depthwise=True)]
+    elif args.demo == 'asym_single':
+        # 异型 kernel (kh≠kw) 验证. 默认 kh=3 kw=5 on 32×32×16. hw 原生支持 (line_buffer cfg_k/cfg_ky).
+        # 可经 ASYM_CFG="kh,kw,stride,pad,c,h,w,shift" 环境变量覆盖做多组测试.
+        import os as _os
+        _a = _os.environ.get('ASYM_CFG')
+        if _a:
+            _kh, _kw, _s, _p, _c, _h, _w, _sh = [int(x) for x in _a.split(',')]
+        else:
+            _kh, _kw, _s, _p, _c, _h, _w, _sh = 3, 5, 1, 0, 16, 32, 32, 3
+        layers = [scheduler.Layer('ASYM', k=_kw, ky=_kh, c_in=_c, c_out=_c, h_in=_h, w_in=_w,
+                                  stride=_s, pad=_p, sdp_shift=_sh)]
+    elif args.demo == 'avgpool_single':
+        # 规整方核 AvgPool 等价验证: 2×2 s2 AvgPool on 32×32×16 → 16×16×16.
+        # = depthwise 对角权重全 1 (窗口求和) + sdp_shift=2 (÷4) + round → 均值. 零 RTL/ISA.
+        layers = [scheduler.Layer('AVGPOOL', k=2, c_in=16, c_out=16, h_in=32, w_in=32,
+                                  stride=2, pad=0, sdp_shift=2, sdp_round_en=1, avgpool=True)]
+    elif args.demo == 'adapool_single':
+        # FRNet AdaptiveAvgPool2d((2,2)) 等价验证: 9×15×64 → 2×2×64.
+        # PyTorch 自适应窗口 (oH=oW=2 恒均匀): H 9→2 = [0:5)[4:9) kh5 sh4; W 15→2 = [0:8)[7:15) kw8 sw7.
+        # 单层 depthwise kh5 kw8 sh4 sw7 ÷40. kk=40>WRF=32 多 round 已由 wgt_buffer 均匀切 round 修复.
+        # 窗口重叠 (kernel>stride) → native 大 stride (非 S2D). ÷40 用 sdp_mult=410 shift14 定点倒数.
+        import os as _os
+        _ac = int(_os.environ.get('ADAPOOL_C', '64'))
+        _ada = scheduler.Layer('AdaPool', k=8, ky=5, c_in=_ac, c_out=_ac,
+                               h_in=9, w_in=15, stride=1, stride_h=4, stride_w=7,
+                               pad=0, sdp_shift=14, sdp_mult=410, sdp_round_en=1, avgpool=True)
+        # ADAPOOL_DS=1: 3 层链回归 (ds k1s2 → adapool → FC). 曾复现 WB 区重叠 bug —— adapool 的
+        #   640-word WB > 固定 SMC_LAYER_WB_OFFSET(256 word), 被 FC 的 WB preload 覆盖 word 256+,
+        #   只在 adapool 非末层时触发. WB 动态累积 offset 修复后 PASS. 见 memory/adaptive_avgpool_separable.md.
+        if _os.environ.get('ADAPOOL_DS') == '1':
+            _ds = scheduler.Layer('DS', k=1, c_in=32, c_out=_ac, h_in=17, w_in=30,
+                                  stride=2, pad=0, sdp_shift=4)
+            _ada.input_src = 'DS'
+            _fc = scheduler.Layer('FC', k=2, c_in=_ac, c_out=113, h_in=2, w_in=2,
+                                  stride=1, pad=0, sdp_shift=5, input_src='AdaPool')
+            return [_ds, _ada, _fc]
+        layers = [_ada]
     else:
         # 其他 demo (simple2/wslice*/patch_*/resnet*) 转交给老 main if/elif (避免 in-process 调用时 sys.exit)
         # 重要: 用 sys.argv 复制 args 让原 main 的 if/elif 跑一次后退出
@@ -1621,7 +1910,7 @@ if __name__ == '__main__':
                                  'wslice_mixed', 'wslice_stride2', 'wslice_oddw',
                                  'wslice_smallw', 'wslice_k7', 'wslice_k1',
                                  'patch1', 'patch_small', 'patch_s2d', 'patch_s2d_resnet',
-                                 'resnet_block1', 'resnet_residual_wslice', 'resnet11', 'frnet',
+                                 'resnet_block1', 'resnet_residual_wslice', 'resnet11', 'frnet', 'dw_single', 'avgpool_single', 'adapool_single', 'asym_single',
                                  # board sweep 单层 demo (本地新增)
                                  'sw_h64_w32', 'sw_h96_w32', 'sw_h128_w32',
                                  'sw_h32_w32_s2', 'sw_h64_w32_s2', 'sw_h64_w75_s2'],

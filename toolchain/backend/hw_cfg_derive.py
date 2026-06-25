@@ -409,23 +409,30 @@ def compute_expected_ofm(
     sdp_mult, sdp_shift, sdp_zp_out, sdp_clip_min, sdp_clip_max,
     sdp_round_en, sdp_relu_en,
     residual_en=False, shortcut_arr=None, shortcut_mult=0, shortcut_shift=0,
+    KY=None, stride_h=None, stride_w=None,
 ):
     """
     模拟硬件一轮 Conv + SDP 量化流水. 返回 [H_OUT][W_OUT][NUM_COUT] 8-bit int.
     R.1: residual_en=True 时把 shortcut_arr[yout][px][cout] (INT8) 经 mult/shift
          rescale 后加到 SDP 量化结果上, 再 ReLU/clip.
+    KY: ky 方向核高度, 默认 = K (方核). 异型 kernel KY≠K (跟 derive_layer_cfg 一致).
+    stride_h/stride_w: 独立 H/W stride, 默认 = stride. AvgPool sh≠sw 时分开 (跟 derive_layer_cfg 一致).
     """
-    H_OUT = (H_IN + 2 * pad_top - K) // stride + 1    # 假设对称 pad
-    W_OUT = (W_IN + 2 * pad_left - K) // stride + 1
+    if KY is None:
+        KY = K
+    if stride_h is None: stride_h = stride
+    if stride_w is None: stride_w = stride
+    H_OUT = (H_IN + 2 * pad_top - KY) // stride_h + 1    # ky 方向用 KY + H stride
+    W_OUT = (W_IN + 2 * pad_left - K) // stride_w + 1    # kx 方向用 K + W stride (假设对称 pad)
     ofm = [[[0] * NUM_COUT for _ in range(W_OUT)] for _ in range(H_OUT)]
     for yout in range(H_OUT):
         for px in range(W_OUT):
             for cout in range(NUM_COUT):
                 psum = bias_arr[cout] if bias_arr is not None else 0
-                for ky in range(K):
+                for ky in range(KY):
                     for kx in range(K):
-                        iy = yout * stride + ky - pad_top
-                        ix = px   * stride + kx - pad_left
+                        iy = yout * stride_h + ky - pad_top
+                        ix = px   * stride_w + kx - pad_left
                         if 0 <= iy < H_IN and 0 <= ix < W_IN:
                             for cin in range(NUM_CIN):
                                 psum += ifm_arr[iy][ix][cin] * w_arr[ky][kx][cout][cin]
@@ -687,7 +694,8 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
                      IFB_SRAM_WORDS=_PARAMS_IFB_DEPTH,
                      OFB_SRAM_WORDS=_PARAMS_OFB_DEPTH,
                      streaming=None, KY=None,
-                     pad_right=None, pad_bot=None):
+                     pad_right=None, pad_bot=None,
+                     stride_h=None, stride_w=None):
     """
     派生 conv layer 的所有硬件 cfg 字段。返回 dict。
 
@@ -704,12 +712,16 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         KY = K
     if pad_bot   is None: pad_bot   = pad_top
     if pad_right is None: pad_right = pad_left
+    # 独立 H/W stride (默认 = stride). AvgPool/AdaptiveAvgPool 的 sh≠sw (如 adapool sh4 sw7).
+    # cfg_to_dict 会用 _STRIDE_H/_STRIDE_W 算 STRIDE/STRIDE_H/IFB_ROW_STEP/IFB_ISS_STEP/TILE_PIX_STEP.
+    if stride_h is None: stride_h = stride
+    if stride_w is None: stride_w = stride
 
     cin_slices  = (NUM_CIN  + HW_PE  - 1) // HW_PE
     cout_slices = (NUM_COUT + HW_COL - 1) // HW_COL
 
-    H_OUT = (H_IN + pad_top + pad_bot - KY) // stride + 1
-    W_OUT = (W_IN + pad_left + pad_right - K) // stride + 1
+    H_OUT = (H_IN + pad_top + pad_bot - KY) // stride_h + 1
+    W_OUT = (W_IN + pad_left + pad_right - K) // stride_w + 1
     if H_OUT <= 0 or W_OUT <= 0:
         raise ValueError(f"invalid output {H_OUT}x{W_OUT}")
 
@@ -718,7 +730,7 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
 
     # ARF reuse: cur_fill_len = cur_valid_w + K - 1 ≤ ARF_DEPTH → tile_w ≤ 33-K
     # ARF 复用是 x 方向滑窗, 只受 Kx (=K) 约束, 与 Ky 无关
-    arf_reuse_en = (stride == 1 and K > 1)
+    arf_reuse_en = (stride_w == 1 and K > 1)   # ARF 滑窗复用是 W 方向, 受 W stride 约束
     max_tile_w = (ARF_DEPTH - K + 1) if arf_reuse_en else ARF_DEPTH
     if max_tile_w < 1:
         max_tile_w = 1
@@ -751,11 +763,18 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
     last_valid_w = W_OUT - (num_tiles - 1) * TILE_W
 
     rounds_per_cins = (kk + WRF_DEPTH - 1) // WRF_DEPTH
-    round_len_last  = kk - (rounds_per_cins - 1) * WRF_DEPTH
+    # 均匀切 round (避免短 round 紧接长 round 时 wgt_buffer loader 在 small-output 下来不及
+    # 预取长 round 低 slot → compute 读到 stale 权重). rounds==2 时 非末=ceil(kk/2)、末=floor(kk/2),
+    # 与 wgt_buffer RTL 派生的 round_len_nonlast=(kk+1)>>1 一致 (两者和=kk). rounds≥3 (kk>64, 极罕见)
+    # 保持原 32 分块 (RTL 兜底同). 详见 memory/wgt_buffer_uneven_round_stale.md.
+    if rounds_per_cins == 2:
+        round_len_last = kk // 2                                 # floor(kk/2); 非末 = ceil(kk/2)
+    else:
+        round_len_last = kk - (rounds_per_cins - 1) * WRF_DEPTH   # rounds 1: =kk; rounds≥3: 旧 32 分块
 
-    IFB_ROW_STEP  = stride * W_IN * cin_slices
+    IFB_ROW_STEP  = stride_h * W_IN * cin_slices         # H 方向行步进
     WB_COUT_STEP  = kk * cin_slices
-    TILE_IN_STEP  = TILE_W * stride * cin_slices
+    TILE_IN_STEP  = TILE_W * stride_w * cin_slices        # W 方向 tile 步进
 
     ifb_words = H_IN * W_IN * cin_slices
     wb_words  = kk * cout_slices * cin_slices              # 纯 weight, bias 走 rdma
@@ -821,6 +840,7 @@ def derive_layer_cfg(H_IN, W_IN, K, NUM_CIN, NUM_COUT, stride,
         'rounds_per_cins': rounds_per_cins, 'round_len_last': round_len_last,
         'num_tiles': num_tiles, 'last_valid_w': last_valid_w,
         'TILE_W': TILE_W, 'stride': stride,
+        '_STRIDE_H': stride_h, '_STRIDE_W': stride_w,   # 独立 H/W stride (cfg_to_dict 用)
         'pad_top': pad_top, 'pad_bot': pad_bot,
         'pad_left': pad_left, 'pad_right': pad_right,
         'arf_reuse_en': arf_reuse_en,

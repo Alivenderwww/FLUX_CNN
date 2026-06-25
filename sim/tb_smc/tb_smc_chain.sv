@@ -106,6 +106,8 @@ module tb_smc_chain;
     int layer_c_out [0:31];
     int layer_ifb_words [0:31];
     int layer_wb_words  [0:31];
+    longint layer_wb_offset [0:31];   // 动态 WB byte offset (相对 SMC_WB_BASE), 替代固定 layer×64KB
+    longint layer_data_offset [0:31]; // 动态 DATA byte offset (相对 SMC_IFM_OFM_BASE), 生命周期分配复用
     int layer_ofb_words [0:31];
     int layer_rdma_words[0:31];
     int layer_preload_ifb[0:31];
@@ -128,6 +130,7 @@ module tb_smc_chain;
     int     smc_layer_cout_slices[0:31];
     int     smc_layer_pad        [0:31];
     int     smc_layer_k          [0:31];
+    int     smc_layer_ky         [0:31];   // kh (异型核); 方核=K. cout slice WB 切片 kk=K×KY
     int     smc_layer_stride     [0:31];
     string  smc_layer_mode       [0:31];   // "W" or "A"
     int     smc_layer_mode_a_core[0:31];
@@ -263,6 +266,7 @@ module tb_smc_chain;
                             else if (suffix == "C_OUT_SLICES")  smc_layer_cout_slices[layer_id] = val;
                             else if (suffix == "PAD")           smc_layer_pad        [layer_id] = val;
                             else if (suffix == "K")             smc_layer_k          [layer_id] = val;
+                            else if (suffix == "KY")            smc_layer_ky         [layer_id] = val;
                             else if (suffix == "STRIDE")        smc_layer_stride     [layer_id] = val;
                             else if (suffix == "MODE_A_CORE")   smc_layer_mode_a_core[layer_id] = $signed(val[31:0]);
                             else if (suffix == "ROOT_SLOT")     smc_layer_root_slot  [layer_id] = $signed(val[31:0]);
@@ -321,6 +325,8 @@ module tb_smc_chain;
                     case (suffix)
                         "IFB_WORDS"  : layer_ifb_words[layer_id] = val;
                         "WB_WORDS"   : layer_wb_words[layer_id] = val;
+                        "WB_OFFSET"  : layer_wb_offset[layer_id] = val;
+                        "DATA_OFFSET": layer_data_offset[layer_id] = val;
                         "OFB_WORDS"  : layer_ofb_words[layer_id] = val;
                         "RDMA_WORDS" : layer_rdma_words[layer_id] = val;
                         "PRELOAD_IFB": layer_preload_ifb[layer_id] = val;
@@ -490,7 +496,8 @@ module tb_smc_chain;
         if (smc_layer_mode[layer_idx] == "C") begin
             // cout slice: 每核自己段. 整图 cs_total = smc_layer_cout_slices[layer_idx],
             //   每 cs 占 (kk × cin_slices) 个 wb-rows.
-            kk_e = smc_layer_k[layer_idx] * smc_layer_k[layer_idx];   // K^2
+            kk_e = (smc_layer_ky[layer_idx] ? smc_layer_ky[layer_idx]
+                                            : smc_layer_k[layer_idx]) * smc_layer_k[layer_idx];   // kh×kw (异型核 avgpool)
             cins = smc_layer_cin_slices[layer_idx];
             wb_per_cs = kk_e * cins;
             for (int i = 0; i < NUM_CORES; i++) begin
@@ -501,7 +508,7 @@ module tb_smc_chain;
                 my_cs_n = (smc_cout_seg_widths[layer_idx][i] + NUM_COL - 1) / NUM_COL;
                 my_wb_lo = my_cs_start * wb_per_cs;
                 my_wb_n  = my_cs_n   * wb_per_cs;
-                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET;
+                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_wb_offset[layer_idx];
                 for (int wi = 0; wi < my_wb_n; wi++)
                     for (int sub = 0; sub < 16; sub++) begin
                         longint dst_byte = base_byte + (wi*16 + sub) * 16;
@@ -511,7 +518,7 @@ module tb_smc_chain;
         end else begin
             // mode A / W: broadcast 整图 wb 到 4 mem
             for (int i = 0; i < NUM_CORES; i++) begin
-                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_idx * SMC_LAYER_WB_OFFSET;
+                base_byte = (i * SMC_MEM_STRIDE) + SMC_WB_BASE + layer_wb_offset[layer_idx];
                 // WB layout: 一行 = NUM_COL × NUM_PE × DATA_WIDTH = 2048 bit = 16 个 BUS_DATA_W word
                 for (int wi = 0; wi < n_words; wi++)
                     for (int sub = 0; sub < 16; sub++) begin
@@ -663,11 +670,11 @@ module tb_smc_chain;
         ldir    = layer_dirs[layer_idx];
         if (ldir == "") ldir = $sformatf("%s/chain_data/layer%02d", case_dir, layer_idx);
 
-        // 决定 mem 内的 base offset
+        // 决定 mem 内的 base offset (中间层用生命周期分配的动态 DATA offset)
         if (layer_idx == n_layers - 1)
             base_offset = SMC_FINAL_OFM_BASE;
         else
-            base_offset = layer_idx * SMC_LAYER_DATA_OFFSET;
+            base_offset = layer_data_offset[layer_idx];
 
         $readmemh($sformatf("%s/expected_ofm.txt", ldir), exp_arr);
         mismatches = 0;
@@ -837,6 +844,8 @@ module tb_smc_chain;
         r_dfe_preload_done[0] = 1'b1;
 
         // ---- 3. host stage barrier 主循环 ----
+        // 中间层 OFM 校验改为逐层即时累加 (run 结束后 DATA 区被生命周期复用覆盖, 不能再回读).
+        total_intermediate_mm = 0;
         for (int l = 0; l < n_layers; l++) begin
             t_layer_start = $time;
 
@@ -1063,24 +1072,19 @@ module tb_smc_chain;
                 end
             end
 
-            // 中间层 OFM check (last layer 在主循环外另算 final)
+            // 中间层 OFM check: 该层刚完成、DATA 区数据新鲜 (零仿真时间内回读, 远早于
+            // 后续层复用覆盖) → 即时校验并累加, 作为权威结果. (last layer 另算 final)
             if (l < n_layers - 1) begin
                 check_layer_ofm(case_dir, l, $sformatf("L%0d post", l), layer_mm);
                 $display("    POST-LAYER %0d OFM check: mismatches=%0d / %0d",
                          l, layer_mm, layer_ofb_words[l]);
+                total_intermediate_mm += layer_mm;
             end
         end
 
         $display("  ALL layers done @ t=%0t (total cycles=%0d)", $time, ($time - t_start)/10);
 
-        // 全局中间层 + final 检查
-        total_intermediate_mm = 0;
-        for (int l = 0; l < n_layers - 1; l++) begin
-            check_layer_ofm(case_dir, l, $sformatf("L%0d", l), layer_mm);
-            $display("  Layer %0d intermediate OFM mismatches=%0d / %0d",
-                     l, layer_mm, layer_ofb_words[l]);
-            total_intermediate_mm += layer_mm;
-        end
+        // final 层 OFM (FINAL 区, 不被复用). 中间层已逐层即时校验 (total_intermediate_mm 累计).
         check_layer_ofm(case_dir, n_layers - 1, "FINAL", mismatches);
 
         $display("");
@@ -1116,7 +1120,6 @@ module tb_smc_chain;
         end
         $finish;
     end
-
     // 周期 dump (含 SMC SG dispatcher 内部状态)
     initial begin
         @(posedge rst_n);

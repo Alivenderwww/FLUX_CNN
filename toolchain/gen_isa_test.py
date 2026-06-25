@@ -48,6 +48,12 @@ def parse_args():
                    help='stride>=2 时启用 Space-to-Depth: 把 (kx%stride, ky%stride) 相位折到 cin, 等价 stride=1 conv. K 不被 stride 整除时内核补零.')
     p.add_argument('--residual', action='store_true',
                    help='R.2: 启用 SDP 残差 fusion. 生成随机 shortcut 张量, 经 mult=1/shift=0 (1:1 rescale) 加到 SDP 量化结果上.')
+    p.add_argument('--depthwise', action='store_true',
+                   help='深度卷积: 权重对角化 (仅 cin==cout 非零), 复用普通卷积数据流 (零 RTL/ISA 改动). 要求 num_cin==num_cout.')
+    p.add_argument('--avgpool', action='store_true',
+                   help='AvgPool 等价: depthwise + 对角权重全 1 (窗口求和), 配 --shift=log2(K²) 由 SDP 求均值.')
+    p.add_argument('--ky', type=int, default=None,
+                   help='ky 方向核高度 (异型 kernel kh≠kw). 默认 = --k (方核). hw 原生支持 (derive_layer_cfg KY).')
     p.add_argument('--out-dir',  default=DEFAULT_OUT_DIR,
                    help='output directory (default: ../sim/tb_core_dma/)')
     p.add_argument('--case-name', default="",
@@ -57,10 +63,10 @@ def parse_args():
 
 def generate_random(
     H_IN, W_IN, K, NUM_CIN, NUM_COUT, TILE_W, seed,
-    shift_amt=0, stride=1, HW_PE=16, HW_COL=16,
+    shift_amt=0, stride=1, KY=None, stride_h=None, stride_w=None, HW_PE=16, HW_COL=16,
     streaming=False, pad_top=0, pad_left=0, strip_rows=0,
     out_dir=DEFAULT_OUT_DIR, case_name="", ky_fold=False, s2d=False,
-    residual=False,
+    residual=False, depthwise=False, avgpool=False,
     # ---- chained-CASES overrides (run_regression in-process call) ----
     ifm_arr_in=None,        # [H_IN][W_IN][NUM_CIN] int (skip random gen if 不为 None)
     shortcut_arr_in=None,   # [H_OUT][W_OUT][NUM_COUT] int (residual 时, 优先于随机)
@@ -91,11 +97,27 @@ def generate_random(
 
     if stride < 1 or stride > 7:
         sys.exit(f"ERROR: stride={stride} out of range [1..7].")
+    if KY is None:
+        KY = K   # 方核默认; 异型 kernel (kh≠kw) 时 KY=ky 高度, K=kx 宽度 (hw 原生支持)
+    # 独立 H/W stride (默认 = stride). AvgPool/AdaptiveAvgPool 的 sh≠sw (如 adapool sh4 sw7).
+    if stride_h is None: stride_h = stride
+    if stride_w is None: stride_w = stride
+    if not (1 <= stride_h <= 7 and 1 <= stride_w <= 7):
+        sys.exit(f"ERROR: stride_h={stride_h}/stride_w={stride_w} out of range [1..7].")
+
+    # AvgPool = depthwise + 权重全 1 (算 K×K 窗口和), 再由 SDP mult/shift 实现 ÷N 求均值.
+    #   N=K² (方核). N 为 2 的幂时 shift 精确 (K=2→shift2), 否则 mult/shift 近似.
+    if avgpool:
+        depthwise = True
+    # depthwise: 权重对角化 (cin==cout 才非零), 复用普通卷积数据流. 要求 cin==cout.
+    if depthwise and NUM_CIN != NUM_COUT:
+        sys.exit(f"ERROR: depthwise 要求 NUM_CIN==NUM_COUT, got cin={NUM_CIN} cout={NUM_COUT}")
 
     # ---- 派生 cfg ----
     _cfg_kwargs = dict(
-        H_IN=H_IN, W_IN=W_IN, K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
-        stride=stride, pad_top=pad_top, pad_left=pad_left,
+        H_IN=H_IN, W_IN=W_IN, K=K, KY=KY, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
+        stride=stride, stride_h=stride_h, stride_w=stride_w,
+        pad_top=pad_top, pad_left=pad_left,
         TILE_W=TILE_W, HW_PE=HW_PE, HW_COL=HW_COL,
         streaming=streaming)
     if ifb_sram_words_override is not None:
@@ -155,18 +177,24 @@ def generate_random(
     else:
         # 生成 random w_arr: [K][K][NUM_COUT][NUM_CIN] int (-3..3, small)
         w_arr = [[[[0] * NUM_CIN for _ in range(NUM_COUT)]
-                  for _ in range(K)] for _ in range(K)]
+                  for _ in range(K)] for _ in range(KY)]
         for cs in range(cout_slices):
             local_cout = min(HW_COL, NUM_COUT - cs * HW_COL)
             for cins in range(cin_slices):
                 local_cin = min(HW_PE, NUM_CIN - cins * HW_PE)
-                for ky in range(K):
+                for ky in range(KY):
                     for kx in range(K):
                         for lc in range(local_cout):
                             cout = cs * HW_COL + lc
                             for cin_local in range(local_cin):
                                 cin = cins * HW_PE + cin_local
-                                w_arr[ky][kx][cout][cin] = random.randint(-3, 3)
+                                # depthwise: 只在对角 (cin==cout) 填真权重, 其余保持 0.
+                                # 普通卷积数据流的 mac_col 加法树自动把 off-diag 的 0 加掉,
+                                # col c 输出 = act[c]×w[c] = 单通道 depthwise 乘积.
+                                if depthwise and cin != cout:
+                                    continue
+                                # avgpool: 对角权重全 1 (窗口求和); 否则普通/depthwise random 权重.
+                                w_arr[ky][kx][cout][cin] = 1 if avgpool else random.randint(-3, 3)
 
     # ---- SDP 参数: 优先 override, 否则 F-1a 默认 (mult=1, clip[0,255], ReLU on, no round)
     if sdp_mult     is None: sdp_mult     = 1
@@ -215,7 +243,8 @@ def generate_random(
         sdp_clip_min=sdp_clip_min, sdp_clip_max=sdp_clip_max,
         sdp_round_en=sdp_round_en, sdp_relu_en=sdp_relu_en,
         residual_en=residual, shortcut_arr=shortcut_arr,
-        shortcut_mult=shortcut_mult, shortcut_shift=shortcut_shift)
+        shortcut_mult=shortcut_mult, shortcut_shift=shortcut_shift, KY=KY,
+        stride_h=stride_h, stride_w=stride_w)
     assert _H == H_OUT and _W == W_OUT
 
     # ---- S2D 变换 (软件层): stride>=2 时把 stride 维折到 cin
@@ -235,6 +264,7 @@ def generate_random(
                 ifm_arr, H_IN, W_IN, NUM_CIN, pad_top, pad_left, stride)
             w_arr = hw_files.s2d_weights(w_arr, K, NUM_CIN_pre_s2d, NUM_COUT, stride)
             K = K_new
+            KY = K_new   # s2d 产出方核 K_new×K_new; KY 必须跟 K 一起缩, 否则 write_wb 按旧 KY 越界
             stride = 1
             pad_top = 0    # pad 已 absorb 到 pre-pad 输入
             pad_left = 0
@@ -311,7 +341,7 @@ def generate_random(
         hw_files.write_ifb(out_dir, ifm_arr, H_IN, W_IN, NUM_CIN, HW_PE)
         hw_files.write_wb(out_dir, w_arr,
                           K=K, NUM_CIN=NUM_CIN, NUM_COUT=NUM_COUT,
-                          HW_PE=HW_PE, HW_COL=HW_COL)
+                          HW_PE=HW_PE, HW_COL=HW_COL, KY=KY)
         H_IN_hw = H_IN
         pad_top_hw = pad_top
 
@@ -393,4 +423,4 @@ if __name__ == '__main__':
         strip_rows=args.strip_rows,
         out_dir=args.out_dir, case_name=args.case_name,
         ky_fold=args.ky_fold, s2d=args.s2d,
-        residual=args.residual)
+        residual=args.residual, depthwise=args.depthwise, avgpool=args.avgpool, KY=args.ky)

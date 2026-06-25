@@ -13,6 +13,8 @@
 > 长期项目状态见 `README.md`, 模块细节见 `docs/`, 编码规范见 `RTL代码编写原则.md`,
 > 历史经验教训见 `memory/`.
 > **🆕 2026-06-16: tb_smc N=4 hang 修复 + frnet N=4 SMC 跑通 + 系统性假阳性发现**, 见 §0.
+> **🆕 2026-06-21: FRNet 带 AdaPool 多核跑通 (cout_slice gather), N=4 bit-exact 4.19×**, 见 §0.6.
+> **🆕 2026-06-25: DATA 区生命周期分配 (通用 liveness + 密排), FRNet N=4 中间特征图峰值 48 KB/mem (旧 6144 KB, 降 128×)**, 见 §0.6.
 
 ---
 
@@ -50,6 +52,67 @@
 - 架构无关: cores/layers/ddrs 由 PERF_RUN 自描述, parser 用通用 key=value 解析 (新字段自动进 header).
   `mac_pipe_pct = Σfire/(cores×wall)` 是硬件 pipe 利用率. 新 TB 照样打印 PERF_* 即可复用同一 parser.
 - 手动: `python toolchain/gen_perf_report.py <log> --out-dir <case_dir> --case <name>`. 文档见 `docs/simulation.md` §5.5.
+
+### 0.5 深度卷积 (depthwise) 支持 — 零 RTL, 对角权重
+- depthwise = **对角权重的普通卷积** (零 RTL/ISA/cfg 改动). 编译器铺对角 `wgt[ky][kx][co][ci]=(ci==co)?w:0`,
+  mac_col 加法树自动加掉 off-diag 0, col c = act[c]×w[c] = 单通道 depthwise. 完全复用 CONV 流程.
+- 实现: `gen_isa_test --depthwise`; `scheduler.Layer.depthwise`; `run_multicore_chain --demo dw_single`.
+- 验证: tb_smc `dw_single` (C16 K3 s1) bit-exact PASS, 10339 cy. 详见 `memory/depthwise_diagonal_weight.md`.
+- C>16 等价但 off-diag slice 空跑浪费 (待调度优化).
+- **AvgPool 等价转换** (已实现+验证): 规整方核 AvgPool = depthwise + 对角权重全 1 (窗口求和) + SDP shift (÷N 均值).
+  实现 `gen_isa_test --avgpool` / `scheduler.Layer.avgpool` / `--demo avgpool_single`. 验证: tb_smc (2×2 s2 C16)
+  bit-exact PASS 2182 cy + python 核对 golden=真窗口均值.
+- **非方 kernel (kh≠kw) 已验证**: line_buffer RTL **原生支持** (cfg_k=Kx / cfg_ky=Ky 独立端口). 卡点全在 toolchain
+  写死用 K 算 H_OUT, 已修 (gen_isa_test `--ky` / golden / scheduler.Layer.ky / build_step W-slice+mode A + SMC cmd).
+  `--demo asym_single` (kh=3 kw=5) bit-exact PASS. sweep: **非方 + stride>1 全 PASS** (3×5/5×3/5×5/5×7 s2 + 带pad + 方核 2×2/3×3 s2 共 7 组 bit-exact; stride=1 不回归).
+  **stride>1 全错 bug 已修** (原以为是 RTL valid 链, 实为 toolchain 双路径不一致): n_split==1 时 cfg 派生走
+  W-slice 裁列 (`W_IN=sub_W`, stride>1 尾列不采样 → 31) 而 IDMA 走 MODE_A 满宽 (32), IFB 行 stride 错位 off-by-one.
+  stride=1 时 sub_W==W 巧合相等掩盖了它. 修复: `build_step_cfg_dict` 条件加 `and n_split>1` 让单核落 mode A.
+  排查靠 $display 逐拍 dump line_buffer 地址 + 一次性 dump IFB SRAM 对照 ifb.txt (非波形). 详见
+  `memory/wslice_nsplit1_modea_mismatch.md` + `memory/depthwise_diagonal_weight.md`.
+- ⚠️ tb_core_dma **已淘汰**, 验证一律用 tb_smc.
+
+### 0.6 AdaptiveAvgPool 硬件加速 + FRNet 整网带 pool 跑通 (2026-06-19)
+- **FRNet 只有 1 个 pool 层** = `AdaptiveAvgPool2d((2,2))` on 9×15×64 → 2×2×64 (之前误记两层; "(5,8)/(4,7)" 是单层 kh/kw × sh/sw).
+  PyTorch 自适应窗口 oH=oW=2 恒均匀 → 等价 depthwise kh5 kw8 **sh4 sw7** ÷40 (窗口重叠 kernel>stride, 不能 S2D).
+- **新增能力 (RTL+编译器)**:
+  1. **W 维通用 stride** (`line_buffer.sv` iss_pos_s 改通用乘法, 支持 1~7, 与 H 维对称). 原仅 case 1/2.
+  2. **独立 stride_h≠stride_w** 贯通 (scheduler.Layer.stride_h/w + sh_eff/sw_eff; derive_layer_cfg/compute_expected_ofm
+     加 stride_h/stride_w → _STRIDE_H/_STRIDE_W; run_multicore_chain 各 mode A/meta 处 plumb). avgpool 不走 S2D.
+  3. **÷N (非 2 幂) 除数** 用已有 SDP_MULT 定点倒数 (÷5 → mult=3277 shift14, 误差 0.005%).
+  4. **kk>WRF(32) wgt_buffer bug 已修** (`wgt_buffer.sv`): `kk>32 + cin_slices>1 + 小输出` 时短 round 紧接长 round,
+     loader 预取来不及 → compute 读 stale 权重 (cout_slice 全错). 单层 5×8 kk=40 中招. **修法=均匀切 round**
+     (32+8 → 20+20, RTL 派生 round_len_nonlast=ceil(kk/2) 零新增 CSR + toolchain round_len_last=floor(kk/2)).
+     monolithic AdaPool kk40 C16/C32/C64 standalone 修后全 PASS. 详见 `memory/wgt_buffer_uneven_round_stale.md`.
+  5. **WB 区固定 offset 太小 → 下层 WB 覆盖上层 (已修)**: adapool 的 WB = kk40×cout4×cin4 = **640 word**
+     (depthwise 浪费), 但 `SMC_LAYER_WB_OFFSET` 固定 64KB=256 word. 每层 WB 放 `SMC_WB_BASE + layer×0x10000`,
+     adapool(layer i) 的 WB word256+ 被 layer i+1 (FC) 的 WB preload 覆盖成随机权重 garbage → off-diagonal
+     cins2/cins3 贡献非零 → cout slice cs1/cs2 错. **只在 adapool 非末层(后有 FC)触发** (standalone/2层 PASS,
+     3层 ds→adapool→FC FAIL). 跟 ResNet11 layer0-33byte 同类. **修=WB 动态累积 offset** (`set_wb_layer_offsets`
+     按 wb_words 累加, 写 meta `LAYER_i_WB_OFFSET`, toolchain+TB 都用; frnet 13层 WB 总和~416KB 装进现有 1MB 区).
+     定位手法: 注入链上数据到 standalone→PASS 排除数据/竞态; 逐 probe 证 mem/IFB/act↔weight配对全对(act_buf tag);
+     parf acc_out 出**负值**(avgpool全正不可能)→累加garbage; 追到 loader 给 cs1 cins2 装 garbage; WB SRAM word256+ garbage
+     → 算出 256×256=0x10000=SMC_LAYER_WB_OFFSET. **(一度误判成 streaming 竞态/要拆 2 阶段, 实为此 WB 重叠)**.
+- **flatten+FC ≡ kernel=2×2 卷积** (2×2×64 → 1×1×113), 故 pool→FC 全连接进链, 不再 root preload.
+- **FRNet 整网 12 层 (含单层 monolithic AdaptiveAvgPool) n_cores=1 bit-exact PASS**, Wall 268140 cy.
+  resnet11 N=4 / dw / avgpool / adapool / asym(含 kk40) 全回归 PASS. (不需可分离 2 阶段, monolithic 直接跑通)
+- **附带修 2 个通用 bug**: (a) s2d 路径 `K=K_new` 后 **KY 没跟着缩** → write_wb 越界;
+  (b) mode A IDMA 写死 `prev=layer_idx-1`, **残差层 input_src≠相邻层时读错输入**. 两者修后 resnet11 N=4 仍 PASS.
+- **✅ FRNet 多核已跑通 (2026-06-21)**: tiny-tail (AdaPool/FC) `w_out<n_split` 走 cout_slice, 原本
+  prev=W_slice/cout_slice 转换未实现 → **新增两种 IDMA gather** (`run_multicore_chain._gen_wslice_gather_cmds`
+  W_slice→cout_slice, `_gen_coutslice_gather_cmds` cout_slice→cout_slice; 各核 gather 整图). 两个坑:
+  (a) gather 必须 **row-major + 正确 cmds_per_row** (否则 dispatcher 行计数错→IFB ring 背压 hang);
+  (b) TB `preload_wb_smc` mode C 切 WB 用 `kk=K²` 对**异型核 kh≠kw 错位** → emit `SMC_LAYER_i_KY`, TB 用 `K×KY`.
+  **FRNet N=4 全12层 bit-exact 64046 cy = 4.19× (超线性), N=2 125211 = 2.14×, N=1 268140 不变.**
+  resnet11 N=4 (方核 FC cout_slice) 无回归.
+- **✅ DATA 区生命周期分配 (2026-06-25)**: 替代固定 512KB/层 (松散不复用). `set_data_layer_offsets`
+  通用 liveness allocator: 依赖图从 `input_src/shortcut_src` 推 (不写死任何网络), 每层 OFM 按
+  `_per_mem_ofm_size` 实际 per-mem 大小密排 (4KB 对齐), OFM 被最后消费者读完即回收复用 (线性扫描 +
+  first-fit + 空闲块合并). 残差 shortcut 跨多层存活由 last_use 自然处理. emit `LAYER_i_DATA_OFFSET`,
+  `smc_layer_data_addr` + TB `check_layer_ofm` 都用. TB 逐层 OFM 校验改即时累加 (run 结束后区域被复用覆盖,
+  不能再回读; host stage barrier 保证逐层校验时数据新鲜). **FRNet N=4 峰值 48 KB/mem (旧 6144, 降 128×),
+  resnet11 N=4 192 KB (旧 5632), 全 bit-exact, wall 不变.**
+- 详见 `memory/data_region_liveness_alloc.md` + `memory/wslice_coutslice_gather.md` + `memory/adaptive_avgpool_separable.md` + `memory/wgt_buffer_uneven_round_stale.md`.
 
 ---
 

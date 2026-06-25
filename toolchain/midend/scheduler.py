@@ -65,11 +65,36 @@ class Layer:
     # Residual 缩放
     shortcut_mult: int = 0
     shortcut_shift: int = 0
+    # 深度卷积: 权重对角化 (cin==cout 非零), 复用普通卷积数据流 (零 RTL/ISA). 要求 c_in==c_out.
+    depthwise: bool = False
+    # AvgPool 等价: depthwise + 对角权重全 1 (窗口求和), 配 sdp_shift=log2(K²) 由 SDP 求均值.
+    avgpool: bool = False
+    # 异型 kernel: ky 方向核高度 (kh≠kw). 0=方核(用 k=kx). hw 原生支持 (derive_layer_cfg KY).
+    ky: int = 0
+    # 独立 H/W stride (0=用 stride). AvgPool/AdaptiveAvgPool 的窗口在 H/W 上 stride 不同
+    # (如 adapool 9×15→2×2: sh=4 sw=7). line_buffer 原生支持 (cfg_stride/cfg_stride_h 独立端口).
+    stride_h: int = 0
+    stride_w: int = 0
+
+    @property
+    def ky_eff(self) -> int:
+        return self.ky if self.ky else self.k
+
+    @property
+    def sh_eff(self) -> int:
+        return self.stride_h if self.stride_h else self.stride
+
+    @property
+    def sw_eff(self) -> int:
+        return self.stride_w if self.stride_w else self.stride
 
     @property
     def force_s2d(self) -> bool:
         """stride>=3 + K>=stride: line_buffer 不原生支持, 强制 S2D 转 stride=1 conv.
-        Patch (K=4 s=4) 这种触发, 跟 run_regression force_s2d 同条件."""
+        Patch (K=4 s=4) 这种触发, 跟 run_regression force_s2d 同条件.
+        AvgPool 例外: 窗口重叠 (kernel>stride) 且 H/W stride 不同, S2D 折不了, 走 native 大 stride."""
+        if self.avgpool:
+            return False
         return self.stride >= 3 and self.k >= self.stride
 
     def s2d_eff(self) -> tuple:
@@ -90,11 +115,11 @@ class Layer:
 
     @property
     def h_out(self) -> int:
-        return (self.h_in + 2 * self.pad - self.k) // self.stride + 1
+        return (self.h_in + 2 * self.pad - self.ky_eff) // self.sh_eff + 1
 
     @property
     def w_out(self) -> int:
-        return (self.w_in + 2 * self.pad - self.k) // self.stride + 1
+        return (self.w_in + 2 * self.pad - self.k) // self.sw_eff + 1
 
     @property
     def cin_slices(self) -> int:
@@ -107,7 +132,7 @@ class Layer:
     @property
     def macs(self) -> int:
         """理论 MAC 数 (假设所有 PE 都干活, 即 cin 跟 cout 都是 16 倍数)."""
-        return self.h_out * self.w_out * self.c_out * self.k * self.k * self.c_in
+        return self.h_out * self.w_out * self.c_out * self.ky_eff * self.k * self.c_in
 
     @property
     def cycles_estimate(self) -> int:
@@ -125,7 +150,7 @@ class Layer:
     @property
     def wb_words(self) -> int:
         """单核装载整个 weight 需要的 WB SRAM word 数."""
-        return self.k * self.k * self.cout_slices * self.cin_slices
+        return self.ky_eff * self.k * self.cout_slices * self.cin_slices
 
     @property
     def ofb_words(self) -> int:
@@ -141,7 +166,7 @@ class Layer:
     def fits_in_one_core_streaming(self) -> bool:
         """streaming 模式: 只要 IFB strip + WB + OFB strip 装得下就行 (ring 模式).
         IFB strip 至少 K 行, OFB strip 至少 1 行. 大网络都是 streaming 模式."""
-        ifb_strip_min = (self.k + 1) * self.w_in * self.cin_slices
+        ifb_strip_min = (self.ky_eff + 1) * self.w_in * self.cin_slices
         ofb_strip_min = 1 * self.w_out * self.cout_slices
         return (ifb_strip_min <= IFB_SRAM_WORDS
                 and self.wb_words <= WB_SRAM_WORDS
